@@ -1,0 +1,279 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ------------------------------------------------------------------ */
+/* Vouch design tokens                                                 */
+/* Brand palette: deep navy + off-white, amber = needs your eyes,      */
+/* calm green = vouched / safe to pay, muted red = confirmed problem.  */
+/* ------------------------------------------------------------------ */
+
+@theme inline {
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* shadcn semantic colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Vouch brand scale */
+  --color-navy-50: var(--navy-50);
+  --color-navy-100: var(--navy-100);
+  --color-navy-200: var(--navy-200);
+  --color-navy-400: var(--navy-400);
+  --color-navy-600: var(--navy-600);
+  --color-navy-800: var(--navy-800);
+  --color-navy-900: var(--navy-900);
+  --color-navy-950: var(--navy-950);
+  --color-ivory: var(--ivory);
+
+  /* Vouch status colors (text/icon) and soft fills */
+  --color-vouched: var(--vouched);
+  --color-vouched-soft: var(--vouched-soft);
+  --color-vouched-ring: var(--vouched-ring);
+  --color-attention: var(--attention);
+  --color-attention-soft: var(--attention-soft);
+  --color-attention-ring: var(--attention-ring);
+  --color-problem: var(--problem);
+  --color-problem-soft: var(--problem-soft);
+  --color-problem-ring: var(--problem-ring);
+
+  /* Radius scale (12–16px cards) */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.333);
+  --radius-2xl: calc(var(--radius) * 1.666);
+  --radius-3xl: calc(var(--radius) * 2);
+  --radius-4xl: calc(var(--radius) * 2.5);
+
+  /* Shadows (soft, low-contrast) */
+  --shadow-card: var(--shadow-card);
+  --shadow-card-hover: var(--shadow-card-hover);
+  --shadow-sheet: var(--shadow-sheet);
+
+  /* Motion */
+  --ease-vouch: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 250ms;
+}
+
+:root {
+  --radius: 0.75rem; /* 12px base; xl = 16px */
+
+  /* Brand scale */
+  --navy-950: oklch(0.17 0.035 262);
+  --navy-900: oklch(0.22 0.045 262);
+  --navy-800: oklch(0.28 0.055 262);
+  --navy-600: oklch(0.42 0.07 262);
+  --navy-400: oklch(0.62 0.06 262);
+  --navy-200: oklch(0.84 0.03 262);
+  --navy-100: oklch(0.92 0.018 262);
+  --navy-50: oklch(0.965 0.01 262);
+  --ivory: oklch(0.985 0.004 85);
+
+  /* Semantic (light) */
+  --background: oklch(0.982 0.004 85);
+  --foreground: oklch(0.22 0.045 262);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.045 262);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.045 262);
+  --primary: oklch(0.26 0.055 262);
+  --primary-foreground: oklch(0.985 0.004 85);
+  --secondary: oklch(0.955 0.008 262);
+  --secondary-foreground: oklch(0.26 0.055 262);
+  --muted: oklch(0.955 0.006 85);
+  --muted-foreground: oklch(0.48 0.03 262);
+  --accent: oklch(0.945 0.012 262);
+  --accent-foreground: oklch(0.26 0.055 262);
+  --destructive: oklch(0.5 0.16 25);
+  --border: oklch(0.905 0.008 262);
+  --input: oklch(0.89 0.01 262);
+  --ring: oklch(0.55 0.08 262);
+  --chart-1: oklch(0.52 0.12 155);
+  --chart-2: oklch(0.6 0.13 70);
+  --chart-3: oklch(0.42 0.07 262);
+  --chart-4: oklch(0.72 0.05 262);
+  --chart-5: oklch(0.5 0.16 25);
+  --sidebar: oklch(0.975 0.005 85);
+  --sidebar-foreground: oklch(0.22 0.045 262);
+  --sidebar-primary: oklch(0.26 0.055 262);
+  --sidebar-primary-foreground: oklch(0.985 0.004 85);
+  --sidebar-accent: oklch(0.945 0.012 262);
+  --sidebar-accent-foreground: oklch(0.26 0.055 262);
+  --sidebar-border: oklch(0.905 0.008 262);
+  --sidebar-ring: oklch(0.55 0.08 262);
+
+  /* Status (light) — text colors meet 4.5:1 on their soft fills */
+  --vouched: oklch(0.47 0.11 155);
+  --vouched-soft: oklch(0.95 0.035 155);
+  --vouched-ring: oklch(0.82 0.08 155);
+  --attention: oklch(0.5 0.12 65);
+  --attention-soft: oklch(0.96 0.045 85);
+  --attention-ring: oklch(0.84 0.1 80);
+  --problem: oklch(0.48 0.15 25);
+  --problem-soft: oklch(0.955 0.025 25);
+  --problem-ring: oklch(0.84 0.07 25);
+
+  --shadow-card: 0 1px 2px oklch(0.22 0.045 262 / 0.04), 0 4px 16px oklch(0.22 0.045 262 / 0.05);
+  --shadow-card-hover: 0 2px 4px oklch(0.22 0.045 262 / 0.05), 0 10px 28px oklch(0.22 0.045 262 / 0.09);
+  --shadow-sheet: 0 -8px 40px oklch(0.22 0.045 262 / 0.14);
+}
+
+.dark {
+  --background: oklch(0.165 0.03 262);
+  --foreground: oklch(0.955 0.008 85);
+  --card: oklch(0.215 0.032 262);
+  --card-foreground: oklch(0.955 0.008 85);
+  --popover: oklch(0.225 0.032 262);
+  --popover-foreground: oklch(0.955 0.008 85);
+  --primary: oklch(0.94 0.01 85);
+  --primary-foreground: oklch(0.2 0.04 262);
+  --secondary: oklch(0.27 0.035 262);
+  --secondary-foreground: oklch(0.955 0.008 85);
+  --muted: oklch(0.26 0.03 262);
+  --muted-foreground: oklch(0.72 0.02 262);
+  --accent: oklch(0.28 0.035 262);
+  --accent-foreground: oklch(0.955 0.008 85);
+  --destructive: oklch(0.72 0.13 22);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.68 0.06 262);
+  --chart-1: oklch(0.76 0.13 155);
+  --chart-2: oklch(0.82 0.13 80);
+  --chart-3: oklch(0.72 0.05 262);
+  --chart-4: oklch(0.5 0.05 262);
+  --chart-5: oklch(0.72 0.13 22);
+  --sidebar: oklch(0.19 0.032 262);
+  --sidebar-foreground: oklch(0.955 0.008 85);
+  --sidebar-primary: oklch(0.94 0.01 85);
+  --sidebar-primary-foreground: oklch(0.2 0.04 262);
+  --sidebar-accent: oklch(0.28 0.035 262);
+  --sidebar-accent-foreground: oklch(0.955 0.008 85);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.68 0.06 262);
+
+  --vouched: oklch(0.8 0.13 155);
+  --vouched-soft: oklch(0.47 0.11 155 / 0.18);
+  --vouched-ring: oklch(0.55 0.11 155 / 0.5);
+  --attention: oklch(0.85 0.13 82);
+  --attention-soft: oklch(0.6 0.13 70 / 0.18);
+  --attention-ring: oklch(0.7 0.12 75 / 0.5);
+  --problem: oklch(0.78 0.12 22);
+  --problem-soft: oklch(0.55 0.15 25 / 0.2);
+  --problem-ring: oklch(0.6 0.13 25 / 0.5);
+
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.2), 0 4px 16px oklch(0 0 0 / 0.25);
+  --shadow-card-hover: 0 2px 4px oklch(0 0 0 / 0.25), 0 10px 28px oklch(0 0 0 / 0.35);
+  --shadow-sheet: 0 -8px 40px oklch(0 0 0 / 0.5);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    @apply outline-none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility money {
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.01em;
+}
+
+@utility card-surface {
+  background-color: var(--card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border);
+  transition: box-shadow var(--duration-base) var(--ease-vouch), transform var(--duration-base) var(--ease-vouch);
+}
+
+@keyframes vouch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes vouch-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes vouch-draw {
+  from { stroke-dashoffset: 48; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes vouch-pop {
+  0% { transform: scale(0.85); opacity: 0; }
+  60% { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@utility animate-draw {
+  stroke-dasharray: 48;
+  animation: vouch-draw 600ms var(--ease-vouch) forwards;
+}
+
+@utility animate-pop {
+  animation: vouch-pop 450ms var(--ease-vouch) both;
+}

@@ -1,0 +1,179 @@
+export type CountryCode = 'US' | 'MX' | 'PL' | 'BR'
+
+/** What Vouch concluded after its checks. */
+export type VouchStatus = 'vouched' | 'quick_check' | 'verify'
+
+/** Where the payment is in the owner's workflow. */
+export type Lifecycle = 'pending' | 'approved' | 'held' | 'appealed' | 'settled'
+
+export type RiskType = 'changed_bank' | 'duplicate_or_split' | 'unrecognized_vendor' | 'none'
+
+export interface Vendor {
+  id: string
+  name: string
+  city: string
+  country: CountryCode
+  since: string // ISO date of first payment
+  paymentsCompleted: number
+}
+
+export interface EvidenceFactor {
+  id: string
+  /** Plain-English contribution, e.g. "Bank account changed 2 days ago". */
+  label: string
+  /** 0..1 magnitude of the contribution. */
+  weight: number
+  /** "concern" renders amber, "reassuring" renders green. */
+  direction: 'concern' | 'reassuring'
+}
+
+export interface TimelineEvent {
+  id: string
+  date: string
+  title: string
+  detail?: string
+  kind: 'payment' | 'change' | 'onboard' | 'check' | 'note'
+}
+
+export interface ChecklistItem {
+  id: string
+  text: string
+  done: boolean
+}
+
+export interface RingNode {
+  id: string
+  label: string
+  kind: 'vendor' | 'bank' | 'phone' | 'address'
+  focus?: boolean
+}
+
+export interface RingEdge {
+  from: string
+  to: string
+}
+
+export interface RingGraph {
+  nodes: RingNode[]
+  edges: RingEdge[]
+}
+
+export interface AuditNote {
+  id: string
+  at: string
+  text: string
+  author: string
+}
+
+export interface Payment {
+  id: string
+  vendor: Vendor
+  invoiceNumber: string
+  amount: number
+  currency: 'USD'
+  dueDate: string
+  status: VouchStatus
+  lifecycle: Lifecycle
+  risk: RiskType
+  /** 0..100 */
+  trustScore: number
+  reason: string
+  fastPayEligible: boolean
+  evidence: EvidenceFactor[]
+  timeline: TimelineEvent[]
+  checklist: ChecklistItem[]
+  ring?: RingGraph
+  auditNotes: AuditNote[]
+}
+
+export type FundingChoice = 'now' | 'scheduled'
+
+export interface SettlementLine {
+  paymentId: string
+  vendorName: string
+  invoiceNumber: string
+  amount: number
+}
+
+export interface SettlementReceipt {
+  batchId: string
+  txId: string
+  explorerUrl: string
+  settledAt: string
+  funding: FundingChoice
+  scheduledFor?: string
+  totalAmount: number
+  lines: SettlementLine[]
+  network: string
+  feeUsd: number
+}
+
+export interface NetworkHop {
+  id: string
+  from: string
+  to: string
+  p50Ms: number
+  p95Ms: number
+  isPrivate: boolean
+}
+
+export interface NetworkStatus {
+  hops: NetworkHop[]
+  modelVersion: string
+  tokens: { promptToday: number; completionToday: number; perPaymentAvg: number }
+  policyChecks: { passed: number; total: number }
+  region: string
+  updatedAt: string
+}
+
+export interface RedTeamCase {
+  id: number
+  prompt: string
+  category: string
+  blocked: boolean
+  rule: string
+}
+
+export interface RedTeamReport {
+  cases: RedTeamCase[]
+  modelVersion: string
+  runAt: string
+}
+
+export interface CountryParity {
+  country: CountryCode
+  label: string
+  payments: number
+  heldShare: number
+  avgDelayDays: number
+}
+
+export interface FairnessReport {
+  period: string
+  fraudCaught: { count: number; amount: number; examples: string[] }
+  honestAffected: { blocked: number; quickChecks: number; avgResolveMinutes: number }
+  heldShare: number
+  avgDelayDays: number
+  newSmallVendorsOnTime: number
+  parity: CountryParity[]
+}
+
+export interface HealthStatus {
+  ok: boolean
+  version?: string
+  latencyMs?: number
+}
+
+export interface VouchApi {
+  readonly mode: 'mock' | 'live'
+  listPayments(): Promise<Payment[]>
+  getPayment(id: string): Promise<Payment>
+  approvePayment(id: string, note?: string): Promise<Payment>
+  holdPayment(id: string, note?: string): Promise<Payment>
+  appealPayment(id: string, note?: string): Promise<Payment>
+  settleBatch(paymentIds: string[], funding: FundingChoice): Promise<SettlementReceipt>
+  getNetwork(): Promise<NetworkStatus>
+  getRedTeam(): Promise<RedTeamReport>
+  getFairness(): Promise<FairnessReport>
+  getHealth(): Promise<HealthStatus>
+}

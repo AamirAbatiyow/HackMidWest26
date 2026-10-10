@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Vouch — every payment, vouched for. A payment trust layer for business owners." />
+    <meta name="theme-color" content="#1b2340" />
+    <title>Vouch · Every payment, vouched for</title>
+    <script>
+      try {
+        var q = new URLSearchParams(location.search).get('theme');
+        var t = q === 'dark' || q === 'light' ? q : localStorage.getItem('vouch.theme');
+        if (t === 'dark') document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
