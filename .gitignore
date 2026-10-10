@@ -1,0 +1,17 @@
+# Root-level ignores shared by frontend/ and backend/ (each keeps its own .gitignore too).
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Terraform state / variables must never land in git.
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+**/.terraform/

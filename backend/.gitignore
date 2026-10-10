@@ -1,0 +1,32 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Local state (SQLite, attachments, embedding cache). Synthetic samples live in
+# projects/vouch/samples and ARE committed.
+data/
+*.sqlite3
+*.sqlite3-journal
+
+# Secrets - never commit the inference key or Linode token.
+.env
+.env.*
+!.env.example
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+*.tfplan
+crash.log
