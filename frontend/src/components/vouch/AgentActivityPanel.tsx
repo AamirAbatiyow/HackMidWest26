@@ -42,7 +42,7 @@ export function AgentActivityPanel({ open, onClose, runKey, subjectLabel }: Agen
       aria-label="Agent activity"
       aria-hidden={!open}
       className={cn(
-        'fixed inset-y-0 right-0 z-40 flex w-[340px] max-w-full flex-col border-l bg-sidebar text-sidebar-foreground shadow-card-hover transition-transform duration-250 ease-[var(--ease-vouch)]',
+        'fixed top-16 right-0 bottom-0 z-20 flex w-[340px] max-w-full flex-col border-l bg-sidebar text-sidebar-foreground shadow-card-hover transition-transform duration-250 ease-[var(--ease-vouch)]',
         open ? 'translate-x-0' : 'translate-x-full',
       )}
     >

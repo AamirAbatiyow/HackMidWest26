@@ -1,5 +1,5 @@
 import { BadgeCheck, HandHeart, Loader2, PauseCircle, PhoneCall, ScrollText } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Payment } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,7 @@ export function EvidenceDrawer({ payment, open, onOpenChange }: EvidenceDrawerPr
   // The note is scoped to one payment; switching payments starts fresh.
   const [draft, setDraft] = useState<{ forId: string; text: string }>({ forId: '', text: '' })
   const [pending, setPending] = useState<Action | null>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
   if (!payment) return null
 
@@ -84,6 +85,12 @@ export function EvidenceDrawer({ payment, open, onOpenChange }: EvidenceDrawerPr
         side="right"
         className="w-full gap-0 border-l-0 bg-background p-0 sm:max-w-[560px] data-[side=right]:sm:max-w-[560px]"
         aria-describedby={undefined}
+        ref={contentRef}
+        // Land focus on the sheet itself rather than the first checkbox.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          contentRef.current?.focus()
+        }}
       >
         <SheetHeader className="border-b bg-card px-6 pt-6 pb-5">
           <div className="flex items-start justify-between gap-4 pr-8">
