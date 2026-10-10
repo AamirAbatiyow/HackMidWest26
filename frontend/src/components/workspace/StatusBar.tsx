@@ -61,7 +61,7 @@ export function StatusBar() {
       <Cell label="tokens today" value={tokens == null || tokens <= 0 ? '—' : formatInt(tokens)} />
       <Cell label="policy" value={policy ?? '—'} title="No payout executes without explicit owner approval." />
       <span
-        className={cn('ml-auto inline-flex h-4 items-center rounded-xs border px-1 text-2xs tracking-[0.04em]', mode === 'live' ? 'border-accent-cool/50 text-accent-cool' : 'border-amber/50 text-amber')}
+        className={cn('ml-auto inline-flex h-4 items-center rounded-xs border px-1 text-2xs tracking-[0.04em]', mode === 'live' ? 'border-green/50 text-green' : 'border-amber/50 text-amber')}
         title={mode === 'live' ? liveTitle : mockTitle}
         aria-label={mode === 'live' ? liveTitle : mockTitle}
       >

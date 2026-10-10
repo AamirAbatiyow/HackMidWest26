@@ -11,7 +11,7 @@
 /*                                                                     */
 /* Direction: near-black #0B0D10, hairline borders #1F242B, Geist for  */
 /* labels, JetBrains Mono for numbers and IDs, one cool accent for     */
-/* selection, amber/red only for risk, 2–4px radii, no shadows or      */
+/* selection, green for clear, amber/red for risk, 2–4px radii, no    */
 /* glows, 4px spacing grid, 30px rows. Light theme remaps the same     */
 /* tokens. Nothing visual is defined outside this file.                */
 /* ------------------------------------------------------------------ */
@@ -95,10 +95,13 @@
   --color-amber-soft: var(--amber-soft);
   --color-red: var(--red);
   --color-red-soft: var(--red-soft);
+  /* Clear: vouched, live */
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
 
-  /* Status aliases. Vouched is neutral: color is reserved for risk. */
-  --color-vouched: var(--vouched);
-  --color-vouched-soft: var(--vouched-soft);
+  /* Status aliases. Vouched is green, so a clear payment reads at a glance. */
+  --color-vouched: var(--green);
+  --color-vouched-soft: var(--green-soft);
   --color-attention: var(--amber);
   --color-attention-soft: var(--amber-soft);
   --color-problem: var(--red);
@@ -147,8 +150,10 @@
   --amber-soft: rgb(226 163 59 / 0.12);
   --red: #e5574f;
   --red-soft: rgb(229 87 79 / 0.12);
-  --vouched: #a7b0ba;
-  --vouched-soft: rgb(167 176 186 / 0.08);
+  --green: #5fb381;
+  --green-soft: rgb(95 179 129 / 0.12);
+  --vouched: var(--green);
+  --vouched-soft: var(--green-soft);
 
   --primary: var(--accent-cool);
   --primary-foreground: #0b0d10;
@@ -196,8 +201,10 @@
   --amber-soft: rgb(154 100 0 / 0.1);
   --red: #c2322a;
   --red-soft: rgb(194 50 42 / 0.08);
-  --vouched: #4b5563;
-  --vouched-soft: rgb(75 85 99 / 0.08);
+  --green: #167a46;
+  --green-soft: rgb(22 122 70 / 0.1);
+  --vouched: var(--green);
+  --vouched-soft: var(--green-soft);
 
   --primary: var(--accent-cool);
   --primary-foreground: #ffffff;

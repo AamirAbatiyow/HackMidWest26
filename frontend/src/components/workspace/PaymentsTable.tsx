@@ -78,7 +78,7 @@ export function PaymentsTable({ className }: { className?: string }) {
     <section className={cn('flex min-h-0 min-w-0 flex-1 flex-col', className)} aria-label="Payment queue">
       <div className="flex h-8 shrink-0 items-center justify-between gap-4 border-b px-3">
         <p className="num truncate text-xs text-foreground/85">
-          {open.length} payments · {formatMoney(totalAll)} · {count('vouched')} vouched · {count('quick_check')} quick check · {count('verify')} verify
+          {open.length} payments · {formatMoney(totalAll)} · <span className="text-green">{count('vouched')} vouched</span> · {count('quick_check')} quick check · {count('verify')} verify
         </p>
         {checkedRows.length > 0 ? (
           <div className="flex shrink-0 items-center gap-1" role="toolbar" aria-label="Bulk actions">
@@ -153,6 +153,8 @@ export function PaymentsTable({ className }: { className?: string }) {
   )
 }
 
+const LANE_MARK: Record<VouchStatus, string> = { vouched: 'bg-green', quick_check: 'bg-amber', verify: 'bg-amber' }
+
 function LaneGroup({ lane, onToggleChecked }: { lane: Lane; onToggleChecked: () => void }) {
   const ui = useUi()
   const meta = STATUS_META[lane.status]
@@ -170,6 +172,7 @@ function LaneGroup({ lane, onToggleChecked }: { lane: Lane; onToggleChecked: () 
             <span className="num w-2 text-2xs text-muted-foreground" aria-hidden="true">
               {lane.collapsed ? '▸' : '▾'}
             </span>
+            <span className={cn('h-3 w-0.5 shrink-0', LANE_MARK[lane.status])} aria-hidden="true" />
             <span className="text-xs font-medium">{meta.label}</span>
             <span className="num text-2xs text-muted-foreground">
               {lane.rows.length} · {formatMoney(lane.total)}

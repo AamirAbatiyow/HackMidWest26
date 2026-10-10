@@ -56,7 +56,7 @@ export function buildMatrix(p: Payment): MatrixRow[] {
 }
 
 const resultMeta: Record<Result, { label: string; icon: typeof Check; className: string }> = {
-  pass: { label: 'pass', icon: Check, className: 'text-accent-cool' },
+  pass: { label: 'pass', icon: Check, className: 'text-green' },
   flag: { label: 'flag', icon: TriangleAlert, className: 'text-amber' },
   na: { label: 'n/a', icon: Minus, className: 'text-muted-foreground' },
 }
@@ -102,7 +102,7 @@ export function DecisionMatrix({ payment }: { payment: Payment }) {
             <td colSpan={2} className="px-2 py-1 text-muted-foreground">
               {flags} flag{flags === 1 ? '' : 's'} · trust <span className="num">{payment.trustScore}</span>
             </td>
-            <td colSpan={2} className={cn('px-2 py-1 text-right font-medium', payment.status === 'vouched' ? 'text-accent-cool' : 'text-amber')}>
+            <td colSpan={2} className={cn('px-2 py-1 text-right font-medium', payment.status === 'vouched' ? 'text-green' : 'text-amber')}>
               {recommendation}
             </td>
           </tr>

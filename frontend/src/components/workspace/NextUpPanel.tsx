@@ -26,8 +26,8 @@ export function NextUpPanel({ className }: { className?: string }) {
           </span>
         </div>
         <div className="flex h-6 items-center justify-between border-b text-xs">
-          <span className="text-muted-foreground">Ready to approve</span>
-          <span className="num text-foreground">
+          <span className="text-green">Ready to approve</span>
+          <span className="num text-green">
             {batchReady.length} · {formatMoney(batchReady.reduce((s, p) => s + p.amount, 0))}
           </span>
         </div>

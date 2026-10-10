@@ -88,10 +88,11 @@ Defined once in `src/index.css` and reused everywhere; nothing visual is set per
 | `--surface-1/2/3` | `#0F1216` / `#13171C` / `#181D23` | group rows · hover · active chip |
 | `--border` | `#1F242B` | 1px hairlines everywhere |
 | `--foreground` / `--muted-foreground` | `#E6E8EB` / `#8B949E` | text · labels |
-| `--accent-cool` (+ `-soft`) | `#6EA8FE` | the one accent: selection, focus, primary button |
+| `--accent-cool` (+ `-soft`) | `#6EA8FE` | selection, focus, primary button — nothing else |
+| `--green` (+ `-soft`) | `#5FB381` (light `#167A46`) | clear: Vouched tag, row border, lane marker, vouched count, ready-to-approve line, reassuring LIME bars, `live` tag. AA on `#0B0D10` (7.6:1) |
 | `--amber` (+ `-soft`) | `#E2A33B` | quick check · verify · concern bars · BANK-CHG · DUP-SPLIT |
 | `--red` (+ `-soft`) | `#E5574F` | UNREC ring · shared-detail nodes · errors |
-| `--vouched` | `#A7B0BA` | vouched tag, neutral by design |
+| `--vouched` (+ `-soft`) | → `--green` | status alias, same pattern as `--attention` → amber |
 | `--font-sans` / `--font-mono` | Geist · JetBrains Mono | labels · money, IDs, codes (`num` utility, tabular) |
 | type scale | 10 / 11 / 12 / 13 / 14 px | `text-2xs` … `text-lg`; `label-caps` = 10px caps |
 | spacing | 4px grid | `--spacing-topbar` 36 · `--spacing-strip` 24 · `--spacing-row` 30 · header 28 · `--spacing-panel` 40% |
