@@ -1,17 +1,19 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="Vouch — every payment, vouched for. A payment trust layer for business owners." />
-    <meta name="theme-color" content="#1b2340" />
-    <title>Vouch · Every payment, vouched for</title>
+    <meta name="description" content="Vouch — every payment, vouched for. Operator command center for payment trust." />
+    <meta name="theme-color" content="#0f1114" />
+    <title>Vouch · command center</title>
     <script>
       try {
         var q = new URLSearchParams(location.search).get('theme');
         var t = q === 'dark' || q === 'light' ? q : localStorage.getItem('vouch.theme');
-        if (t === 'dark') document.documentElement.classList.add('dark');
+        var light = t === 'light';
+        document.documentElement.classList.toggle('light', light);
+        document.documentElement.classList.toggle('dark', !light);
       } catch (e) {}
     </script>
   </head>

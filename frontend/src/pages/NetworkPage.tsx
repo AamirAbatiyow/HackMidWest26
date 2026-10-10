@@ -1,213 +1,177 @@
-import { Cpu, Database, Globe, Lock, RefreshCw, Server, Smartphone, Waypoints } from 'lucide-react'
-import { useEffect, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useApi } from '@/api/ApiProvider'
 import { useAsync } from '@/api/useAsync'
-import { Button } from '@/components/ui/button'
-import { ErrorState, StatSkeleton } from '@/components/vouch/States'
-import { formatInt } from '@/lib/format'
+import { Sparkline } from '@/components/vouch/Sparkline'
+import { ErrorState, LoadingRows } from '@/components/vouch/States'
+import { Block, DenseTable, PageFrame, Td, Th } from '@/components/vouch/Table'
+import { series } from '@/data/series'
+import { formatDateTime, formatInt } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { usePayments } from '@/store/PaymentsProvider'
+import { useUi } from '@/store/UiProvider'
 
-const NODES = [
-  { id: 'owner', label: 'Owner app', icon: Smartphone, x: 60 },
-  { id: 'lb', label: 'NodeBalancer', icon: Waypoints, x: 290 },
-  { id: 'api', label: 'API', icon: Server, x: 520 },
-  { id: 'model', label: 'Private model server', icon: Cpu, x: 790, y: 60 },
-  { id: 'db', label: 'Postgres', icon: Database, x: 790, y: 190 },
-] as const
-
-function Stat({ label, value, hint, icon }: { label: string; value: ReactNode; hint?: string; icon: ReactNode }) {
-  return (
-    <div className="card-surface p-5">
-      <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-        <span aria-hidden="true">{icon}</span>
-        {label}
-      </p>
-      <p className="mt-2 text-2xl font-semibold tracking-[-0.02em] money">{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
-    </div>
-  )
+/** Fixed topology for the diagram: nodes by name, laid out left to right. */
+const LAYOUT: Record<string, { x: number; y: number }> = {
+  'Owner app': { x: 16, y: 70 },
+  NodeBalancer: { x: 250, y: 70 },
+  API: { x: 484, y: 70 },
+  'Private model server': { x: 740, y: 30 },
+  Postgres: { x: 740, y: 110 },
 }
-
-function Topology({ privateHops }: { privateHops: Set<string> }) {
-  const W = 900
-  const H = 250
-  const y = 125
-  const node = (id: string) => NODES.find((n) => n.id === id)!
-  const pos = (id: string) => {
-    const n = node(id)
-    return { x: n.x, y: 'y' in n ? n.y : y }
-  }
-  const links: Array<[string, string]> = [
-    ['owner', 'lb'],
-    ['lb', 'api'],
-    ['api', 'model'],
-    ['api', 'db'],
-  ]
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby="topo-title topo-desc">
-      <title id="topo-title">Vouch corridor topology</title>
-      <desc id="topo-desc">
-        Owner app connects to the NodeBalancer over TLS. The balancer, API, private model server, and Postgres sit on a private network with locked links.
-      </desc>
-      {links.map(([a, b]) => {
-        const pa = pos(a)
-        const pb = pos(b)
-        const isPrivate = privateHops.has(`${a}-${b}`)
-        const mx = (pa.x + pb.x) / 2
-        const my = (pa.y + pb.y) / 2
-        return (
-          <g key={`${a}-${b}`}>
-            <path
-              d={`M${pa.x + 80},${pa.y} C${mx},${pa.y} ${mx},${pb.y} ${pb.x - 80},${pb.y}`}
-              fill="none"
-              className={cn(isPrivate ? 'stroke-vouched' : 'stroke-navy-400')}
-              strokeWidth="2"
-              strokeDasharray={isPrivate ? undefined : '6 4'}
-            />
-            <g transform={`translate(${mx - 11}, ${my - 11})`}>
-              <circle cx="11" cy="11" r="11" className={cn(isPrivate ? 'fill-vouched-soft stroke-vouched-ring' : 'fill-card stroke-border')} />
-              <foreignObject width="22" height="22">
-                <div className="flex size-[22px] items-center justify-center">
-                  {isPrivate ? <Lock className="size-3 text-vouched" aria-label="Private link" /> : <Globe className="size-3 text-muted-foreground" aria-label="Public TLS" />}
-                </div>
-              </foreignObject>
-            </g>
-          </g>
-        )
-      })}
-      <rect x="200" y="12" width="690" height="226" rx="16" className="fill-vouched-soft/40 stroke-vouched-ring" strokeDasharray="4 4" />
-      <text x="214" y="34" className="fill-vouched text-[11px] font-semibold">
-        Private network · no public ingress
-      </text>
-      {NODES.map((n) => {
-        const p = pos(n.id)
-        const Icon = n.icon
-        return (
-          <g key={n.id} transform={`translate(${p.x - 80}, ${p.y - 26})`}>
-            <rect width="160" height="52" rx="12" className="fill-card stroke-border" />
-            <foreignObject width="160" height="52">
-              <div className="flex h-[52px] items-center gap-2.5 px-3.5">
-                <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <Icon className="size-4" aria-hidden="true" />
-                </span>
-                <span className="text-[13px] leading-tight font-medium">{n.label}</span>
-              </div>
-            </foreignObject>
-          </g>
-        )
-      })}
-    </svg>
-  )
-}
+const NODE_W = 140
+const NODE_H = 28
 
 export function NetworkPage() {
   const { api } = useApi()
-  const { data, loading, error, reload } = useAsync(() => api.getNetwork(), [api])
+  const { data, error, loading, reload } = useAsync(() => api.getNetwork(), [api])
+  const { receipts } = usePayments()
+  const { lastSettlementId } = useUi()
+  const lastId = lastSettlementId ?? Object.keys(receipts).at(-1) ?? '—'
 
-  useEffect(() => {
-    const t = setInterval(reload, 8000)
-    return () => clearInterval(t)
-  }, [reload])
+  if (error) return <ErrorState message={error.message} onRetry={reload} />
+  if (loading || !data) return <LoadingRows count={6} />
 
-  const privateHops = new Set<string>()
-  if (data) {
-    const key: Record<string, string> = {
-      'Owner app': 'owner',
-      NodeBalancer: 'lb',
-      API: 'api',
-      'Private model server': 'model',
-      Postgres: 'db',
-    }
-    for (const h of data.hops) if (h.isPrivate) privateHops.add(`${key[h.from] ?? h.from}-${key[h.to] ?? h.to}`)
-  }
+  const p50 = data.hops.reduce((s, h) => s + h.p50Ms, 0)
+  const p95 = data.hops.reduce((s, h) => s + h.p95Ms, 0)
+  const publicHops = data.hops.filter((h) => !h.isPrivate).length
+  const names = Array.from(new Set(data.hops.flatMap((h) => [h.from, h.to])))
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.02em]">The corridor</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            The path an invoice takes from your screen to a decision. Every hop inside the dashed box is private.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {data && <span>Updated {new Date(data.updatedAt).toLocaleTimeString()}</span>}
-          <Button variant="outline" size="sm" onClick={reload} disabled={loading}>
-            <RefreshCw data-icon="inline-start" className={cn(loading && 'animate-spin')} aria-hidden="true" />
-            Refresh
-          </Button>
-        </div>
-      </header>
+    <PageFrame
+      summary={`${data.region} · ${data.hops.length} hops · p50 ${p50}ms · p95 ${p95}ms · ${publicHops} public hop · ${data.hops.length - publicHops} private`}
+      aside={<span>updated {formatDateTime(data.updatedAt)}</span>}
+    >
+      <Block title="Topology" meta="p50 / p95 per hop · dashed = private network">
+        <svg viewBox="0 0 900 150" className="block h-auto w-full max-w-[1000px]" role="img" aria-label="Request path from the owner app to the model server and database">
+          {data.hops.map((h) => {
+            const a = LAYOUT[h.from]
+            const b = LAYOUT[h.to]
+            if (!a || !b) return null
+            const x1 = a.x + NODE_W
+            const y1 = a.y + NODE_H / 2
+            const x2 = b.x
+            const y2 = b.y + NODE_H / 2
+            const mx = (x1 + x2) / 2
+            const my = (y1 + y2) / 2
+            return (
+              <g key={h.id}>
+                <line x1={x1} y1={y1} x2={x2} y2={y2} className={cn('stroke-foreground/40')} strokeWidth={1} strokeDasharray={h.isPrivate ? '3 3' : undefined} />
+                <text x={mx} y={my - 6} textAnchor="middle" fontSize={9.5} fontFamily="var(--font-mono)" className="fill-foreground/85">
+                  {h.p50Ms} / {h.p95Ms} ms
+                </text>
+              </g>
+            )
+          })}
+          {names.map((n) => {
+            const p = LAYOUT[n]
+            if (!p) return null
+            const isModel = /model/i.test(n)
+            return (
+              <g key={n} transform={`translate(${p.x}, ${p.y})`}>
+                <rect width={NODE_W} height={NODE_H} rx={2} className={cn('fill-background', isModel ? 'stroke-accent-cool' : 'stroke-border')} strokeWidth={1} />
+                <text x={8} y={18} fontSize={11} fontFamily="var(--font-sans)" className="fill-foreground">
+                  {n}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </Block>
 
-      {error ? (
-        <ErrorState message={error.message} onRetry={reload} />
-      ) : !data ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {Array.from({ length: 4 }, (_, i) => (
-            <StatSkeleton key={i} />
-          ))}
-        </div>
-      ) : (
-        <>
-          <section className="card-surface p-6" aria-label="Topology">
-            <Topology privateHops={privateHops} />
-          </section>
+      <Block title="Hops" meta="latency by segment">
+        <DenseTable>
+          <thead>
+            <tr>
+              <Th width={48}>#</Th>
+              <Th>From</Th>
+              <Th>To</Th>
+              <Th width={88} right>
+                p50
+              </Th>
+              <Th width={88} right>
+                p95
+              </Th>
+              <Th width={120}>60 min</Th>
+              <Th width={96}>Network</Th>
+              <Th>Note</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.hops.map((h, i) => (
+              <tr key={h.id} className="row-interactive">
+                <Td num muted className="text-xs">
+                  {i + 1}
+                </Td>
+                <Td className="text-foreground">{h.from}</Td>
+                <Td className="text-foreground">{h.to}</Td>
+                <Td num right className="text-foreground">
+                  {h.p50Ms} ms
+                </Td>
+                <Td num right className={cn(h.p95Ms > 400 ? 'text-amber' : undefined)}>
+                  {h.p95Ms} ms
+                </Td>
+                <Td>
+                  <Sparkline values={series(h.id, 24, h.p50Ms, h.p50Ms * 0.6)} label={`${h.from} to ${h.to} p50 trend`} />
+                </Td>
+                <Td num className="text-xs">
+                  {h.isPrivate ? 'private' : 'public'}
+                </Td>
+                <Td muted className="text-xs">
+                  {/model/i.test(h.to) ? 'model inference dominates; amounts never pass through the model' : h.isPrivate ? 'VPC only · no public egress' : 'TLS 1.3 · owner session'}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </DenseTable>
+      </Block>
 
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat label="Model version" value={<span className="text-base">{data.modelVersion}</span>} hint={`Region ${data.region}`} icon={<Cpu className="size-4" />} />
-            <Stat
-              label="Policy checks passed"
-              value={`${formatInt(data.policyChecks.passed)} / ${formatInt(data.policyChecks.total)}`}
-              hint="Today, across all payments"
-              icon={<Lock className="size-4" />}
-            />
-            <Stat
-              label="Tokens today"
-              value={formatInt(data.tokens.promptToday + data.tokens.completionToday)}
-              hint={`${formatInt(data.tokens.promptToday)} in · ${formatInt(data.tokens.completionToday)} out`}
-              icon={<Waypoints className="size-4" />}
-            />
-            <Stat label="Tokens per payment" value={formatInt(data.tokens.perPaymentAvg)} hint="Average, read-and-explain only" icon={<Server className="size-4" />} />
-          </div>
-
-          <section className="card-surface overflow-hidden" aria-labelledby="latency-heading">
-            <div className="border-b px-6 py-4">
-              <h2 id="latency-heading" className="text-sm font-semibold">
-                Live latency per hop
-              </h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">p50 is the typical round trip; p95 is the slow end.</p>
-            </div>
-            <ul className="divide-y">
-              {data.hops.map((h) => {
-                const maxP95 = Math.max(...data.hops.map((x) => x.p95Ms))
-                return (
-                  <li key={h.id} className="grid items-center gap-x-6 gap-y-2 px-6 py-4 sm:grid-cols-[1fr_auto_auto_12rem]">
-                    <p className="flex items-center gap-2 text-sm font-medium">
-                      {h.isPrivate ? (
-                        <Lock className="size-3.5 text-vouched" aria-label="Private link" />
-                      ) : (
-                        <Globe className="size-3.5 text-muted-foreground" aria-label="Public TLS link" />
-                      )}
-                      {h.from} <span className="text-muted-foreground">→</span> {h.to}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      p50 <span className="font-medium text-foreground money">{h.p50Ms} ms</span>
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      p95 <span className="font-medium text-foreground money">{h.p95Ms} ms</span>
-                    </p>
-                    <div className="relative h-2 w-full overflow-hidden rounded-full bg-foreground/[0.06]" aria-hidden="true">
-                      <div className="absolute inset-y-0 left-0 rounded-full bg-navy-200 dark:bg-navy-600 transition-[width] duration-500" style={{ width: `${(h.p95Ms / maxP95) * 100}%` }} />
-                      <div className="absolute inset-y-0 left-0 rounded-full bg-primary transition-[width] duration-500" style={{ width: `${(h.p50Ms / maxP95) * 100}%` }} />
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
-        </>
-      )}
-    </div>
+      <Block title="Runtime" meta={data.modelVersion}>
+        <DenseTable>
+          <thead>
+            <tr>
+              <Th>Metric</Th>
+              <Th width={260} right>
+                Value
+              </Th>
+              <Th>Note</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ['Latency p50 / p95 (end to end)', `${p50} / ${p95} ms`, 'sum of hops'],
+              ['Model', data.modelVersion, 'private weights · no third-party inference'],
+              ['Region', data.region, 'single region · data never leaves'],
+              ['Prompt tokens today', formatInt(data.tokens.promptToday), 'PII masked before context'],
+              ['Completion tokens today', formatInt(data.tokens.completionToday), 'model writes explanations only'],
+              ['Tokens per payment (avg)', formatInt(data.tokens.perPaymentAvg), ''],
+              ['Policy checks', `${formatInt(data.policyChecks.passed)} / ${formatInt(data.policyChecks.total)}`, 'code-enforced · default-deny'],
+              ['Policy mode', 'default-deny', 'nothing moves without owner approval'],
+              ['Last settlement ID', lastId, 'this session'],
+            ].map(([k, v, note]) => (
+              <tr key={k} className="row-interactive">
+                <Td>{k}</Td>
+                <Td num right className="text-foreground">
+                  {v}
+                </Td>
+                <Td muted className="text-xs">
+                  {note}
+                </Td>
+              </tr>
+            ))}
+            <tr className="row-interactive">
+              <Td>Design tokens</Td>
+              <Td right>
+                <Link to="/tokens" className="num text-xs text-accent-cool underline-offset-2 hover:underline">
+                  /tokens
+                </Link>
+              </Td>
+              <Td muted className="text-xs">
+                colors, type, spacing, radii · defined once in src/index.css
+              </Td>
+            </tr>
+          </tbody>
+        </DenseTable>
+      </Block>
+    </PageFrame>
   )
 }

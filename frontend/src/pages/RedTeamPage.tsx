@@ -1,92 +1,123 @@
-import { ShieldCheck, ShieldOff } from 'lucide-react'
+import { useState } from 'react'
 import { useApi } from '@/api/ApiProvider'
 import { useAsync } from '@/api/useAsync'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { ErrorState } from '@/components/vouch/States'
+import { ErrorState, LoadingRows } from '@/components/vouch/States'
+import { Block, DenseTable, PageFrame, Td, Th } from '@/components/vouch/Table'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 export function RedTeamPage() {
   const { api } = useApi()
-  const { data, loading, error, reload } = useAsync(() => api.getRedTeam(), [api])
-  const blocked = data?.cases.filter((c) => c.blocked).length ?? 0
-  const total = data?.cases.length ?? 0
-  const allBlocked = total > 0 && blocked === total
+  const { data, error, loading, reload } = useAsync(() => api.getRedTeam(), [api])
+  const [openId, setOpenId] = useState<number | null>(null)
+
+  if (error) return <ErrorState message={error.message} onRetry={reload} />
+  if (loading || !data) return <LoadingRows count={10} />
+
+  const blocked = data.cases.filter((c) => c.blocked).length
+  const rules = new Map<string, number>()
+  for (const c of data.cases) rules.set(c.rule, (rules.get(c.rule) ?? 0) + 1)
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.02em]">Red-team results</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            We tried to talk the system into misbehaving. Each attempt below was stopped by a written policy rule, not by luck.
-            {data && <> Last run {formatDateTime(data.runAt)} on {data.modelVersion}.</>}
-          </p>
-        </div>
-        {data && (
-          <span
-            className={cn(
-              'inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm font-semibold ring-1 ring-inset',
-              allBlocked ? 'bg-vouched-soft text-vouched ring-vouched-ring' : 'bg-attention-soft text-attention ring-attention-ring',
-            )}
-            role="status"
-          >
-            {allBlocked ? <ShieldCheck className="size-4" aria-hidden="true" /> : <ShieldOff className="size-4" aria-hidden="true" />}
-            {blocked} of {total} blocked
-          </span>
-        )}
-      </header>
+    <PageFrame summary={`${blocked}/${data.cases.length} blocked · ${rules.size} rules fired · ${data.modelVersion}`} aside={<span>run {formatDateTime(data.runAt)}</span>}>
+      <Block title="Cases" meta="click a row for the full prompt">
+        <DenseTable>
+          <thead>
+            <tr>
+              <Th width={40}>#</Th>
+              <Th width={176}>Category</Th>
+              <Th>Prompt</Th>
+              <Th width={88}>Result</Th>
+              <Th width={300}>Rule</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.cases.map((c) => {
+              const open = openId === c.id
+              return (
+                <tr key={c.id} className="row-interactive cursor-default" data-active={open} onClick={() => setOpenId(open ? null : c.id)}>
+                  <Td num muted className="text-xs">
+                    {String(c.id).padStart(2, '0')}
+                  </Td>
+                  <Td className="text-foreground">{c.category}</Td>
+                  <Td num className={cn('text-xs text-foreground/85', open ? 'h-auto py-1.5 whitespace-pre-wrap break-words' : 'truncate')}>
+                    {c.prompt}
+                  </Td>
+                  <Td>
+                    <span className={cn('num inline-flex h-[18px] items-center rounded-xs border px-1 text-2xs tracking-[0.04em]', c.blocked ? 'border-border text-foreground/85' : 'border-red/50 text-red')}>{c.blocked ? 'BLOCKED' : 'PASSED'}</span>
+                  </Td>
+                  <Td num muted className="truncate text-xs">
+                    {c.rule}
+                  </Td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </DenseTable>
+      </Block>
 
-      {error ? (
-        <ErrorState message={error.message} onRetry={reload} />
-      ) : loading || !data ? (
-        <div className="card-surface space-y-3 p-6" aria-busy="true">
-          {Array.from({ length: 6 }, (_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
-        </div>
-      ) : (
-        <section className="card-surface overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12 pl-6">#</TableHead>
-                <TableHead>Adversarial prompt</TableHead>
-                <TableHead className="w-44">Category</TableHead>
-                <TableHead className="w-28">Result</TableHead>
-                <TableHead className="w-80 pr-6">Policy rule that stopped it</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.cases.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="pl-6 text-muted-foreground money">{c.id}</TableCell>
-                  <TableCell className="max-w-md">
-                    <p className="font-mono text-[12.5px] leading-relaxed break-words whitespace-normal text-foreground/90">“{c.prompt}”</p>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{c.category}</TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        'inline-flex h-6 items-center gap-1 rounded-full px-2 text-xs font-medium ring-1 ring-inset',
-                        c.blocked ? 'bg-vouched-soft text-vouched ring-vouched-ring' : 'bg-problem-soft text-problem ring-problem-ring',
-                      )}
-                    >
-                      {c.blocked ? <ShieldCheck className="size-3.5" aria-hidden="true" /> : <ShieldOff className="size-3.5" aria-hidden="true" />}
-                      {c.blocked ? 'Blocked' : 'Got through'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="pr-6 text-sm whitespace-normal">
-                    <span className="font-medium text-foreground">{c.rule.split(' · ')[0]}</span>
-                    {c.rule.includes(' · ') && <span className="text-muted-foreground"> · {c.rule.split(' · ').slice(1).join(' · ')}</span>}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </section>
-      )}
-    </div>
+      <Block title="Rules fired" meta={`${rules.size} distinct`}>
+        <DenseTable>
+          <thead>
+            <tr>
+              <Th width={64}>Rule</Th>
+              <Th>Statement</Th>
+              <Th width={96} right>
+                Cases
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from(rules.entries())
+              .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+              .map(([rule, n]) => {
+                const [code, text] = rule.split(' · ')
+                return (
+                  <tr key={rule} className="row-interactive">
+                    <Td num className="text-xs text-foreground">
+                      {code}
+                    </Td>
+                    <Td>{text}</Td>
+                    <Td num right>
+                      {n}
+                    </Td>
+                  </tr>
+                )
+              })}
+          </tbody>
+        </DenseTable>
+      </Block>
+
+      <Block title="Boundary" meta="what the model can and cannot do">
+        <DenseTable>
+          <thead>
+            <tr>
+              <Th width={200}>Capability</Th>
+              <Th width={120}>Model</Th>
+              <Th>Enforced by</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ['Read invoice text and records', 'yes', 'read-only context · PII masked'],
+              ['Write plain-English explanations', 'yes', 'output is text only'],
+              ['Compute amounts', 'no', 'verified calculation service'],
+              ['Approve, hold or move money', 'no', 'owner action + signed approval'],
+              ['Change bank details or trust', 'no', 'call-back and evidence pipeline'],
+            ].map(([k, v, note]) => (
+              <tr key={k} className="row-interactive">
+                <Td className="text-foreground">{k}</Td>
+                <Td num className={cn('text-xs', v === 'no' ? 'text-muted-foreground' : 'text-foreground')}>
+                  {v}
+                </Td>
+                <Td muted className="text-xs">
+                  {note}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </DenseTable>
+      </Block>
+    </PageFrame>
   )
 }

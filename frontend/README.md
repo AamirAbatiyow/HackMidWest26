@@ -60,45 +60,66 @@ GET  /fairness                (optional; falls back to the reference report on 4
 
 | Route | Screen |
 |---|---|
-| `/` | Payables desk (home). `?payment=<id>` opens the evidence drawer. |
-| `/payments/:id` | Redirects to the desk with that payment's drawer open. |
-| `/approve` | Owner approval sheet (mobile-first) with slide-to-approve. |
-| `/receipt/:batchId` | Settlement progress, then receipt. Add `?instant=1` to skip the animation. |
-| `/fairness` | Fairness and harm panel. |
-| `/network` | The corridor: latency per hop, tokens, model version, topology. |
-| `/redteam` | Red-team results, 15 of 15 blocked. |
-| `/tokens` | Design-token reference and component gallery. |
+| `/` | Payables queue (home). Dense, lane-grouped table. `?payment=<id>` opens the detail panel. |
+| `/payments/:id` | Redirects to the queue with that payment's panel open. |
+| `/approve` | Owner approval: batch table + slide-to-approve. Reached from bulk approve, `a`, or the palette. |
+| `/receipt/:batchId` | Settlement receipt. |
+| `/fairness` | Harm ledger, parity by country, bounding rules. |
+| `/network` | Topology with p50/p95 per hop, hop table, runtime (model, tokens, policy mode, last settlement ID). |
+| `/redteam` | Red-team cases, 15 of 15 blocked, rules fired. |
+| `/tokens` | Design-token reference (not in the top nav; reachable from the palette or Network). |
 
-Add `?theme=dark` or `?theme=light` to any URL to force a theme (also saved to `localStorage`). The agent activity panel is toggled with the robot icon in the header and opens automatically when you expand a payment.
+Add `?theme=dark` or `?theme=light` to any URL to force a theme (also saved to `localStorage`). Dark is the design target.
+
+## Keyboard
+
+`j` / `k` move · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` agent log · `?` all shortcuts · `g` then `p a f n r t` to switch views.
 
 ## Click-through demo
 
-1. On the desk, expand **Warsaw Steel** → read the evidence → tick the call-back checklist → **Mark as verified**.
-2. Expand **Nova Trade LLC** to see the shared-details mini-graph. Leave it on hold.
-3. **Approve batch** → pick funding → slide to approve.
-4. Watch the settlement progress, copy the transaction ID, open the explorer link.
+1. On the queue, press `j` to **Warsaw Steel** and `Enter` → read the three factors → tick the call-back checklist → **Verify**.
+2. Open **Nova Trade LLC** to see the shared-detail ring (bank, phone, address) in the panel. Leave it on hold.
+3. Select the three vouched rows (`x`) → **Approve 3 ($13,200)** → pick funding → slide to approve.
+4. Copy the transaction ID from the receipt; the settlement ID also appears on the Network tab.
 
 ## Project layout
 
 ```
 src/
   api/          types, mock + live clients, ApiProvider (toggle), useAsync
-  data/         demo payments, network, red-team, fairness, agent steps, token reference
+  data/         demo payments, feed script, network, red-team, fairness, token reference
   components/
     ui/         shadcn/ui primitives
-    brand/      logo mark + wordmark
-    layout/     AppShell (header, nav, theme + API toggles, agent panel)
-    vouch/      PaymentCard, StatusChip, RiskTag, TrustMeter, EvidenceBar,
-                VendorTimelineRow, EvidenceDrawer, NetworkMiniGraph,
-                SlideToApprove, AgentActivityPanel, States (empty/error/skeleton)
+    vouch/      StatusChip, RiskTag, TrustMeter, EvidenceBar, VendorTimelineRow,
+                SlideToApprove, Sparkline, Table (DenseTable/Th/Td/Block/PageFrame), States
+    workspace/  Shell, TopBar, StatusBar, AgentFeed (rail), PaymentsTable,
+                DetailPanel, RingGraph, DecisionMatrix, CommandPalette, dialogs
   pages/        one file per route
-  store/        PaymentsProvider (list + actions + batch), UiProvider
-  theme/        ThemeProvider (light/dark)
-  index.css     design tokens as CSS variables + Tailwind @theme
+  store/        PaymentsProvider (list + actions + batch), UiProvider, useVisibleRows
+  lib/          format, shortcuts, useGlobalShortcuts
+  theme/        ThemeProvider (dark default, light)
+  index.css     every design token, as CSS variables + Tailwind @theme
 ```
 
 ## Design tokens
 
-All colors, radii, shadows and motion live as CSS variables in `src/index.css` (light under `:root`, dark under `.dark`) and are exposed to Tailwind via `@theme inline` (`bg-vouched-soft`, `text-attention`, `shadow-card`, `rounded-xl`, …). The `/tokens` route renders the full reference.
+Defined once in `src/index.css` and reused everywhere; nothing visual is set per screen. `/tokens` renders the live reference and `src/data/tokens.ts` mirrors it.
 
-Status colors are never the only signal: every chip and tag carries an icon and text.
+| Token | Dark | Use |
+|---|---|---|
+| `--background` | `#0B0D10` | canvas |
+| `--surface-1/2/3` | `#0F1216` / `#13171C` / `#181D23` | group rows · hover · active chip |
+| `--border` | `#1F242B` | 1px hairlines everywhere |
+| `--foreground` / `--muted-foreground` | `#E6E8EB` / `#8B949E` | text · labels |
+| `--accent-cool` (+ `-soft`) | `#6EA8FE` | the one accent: selection, focus, primary button |
+| `--amber` (+ `-soft`) | `#E2A33B` | quick check · verify · concern bars · BANK-CHG · DUP-SPLIT |
+| `--red` (+ `-soft`) | `#E5574F` | UNREC ring · shared-detail nodes · errors |
+| `--vouched` | `#A7B0BA` | vouched tag, neutral by design |
+| `--font-sans` / `--font-mono` | Geist · JetBrains Mono | labels · money, IDs, codes (`num` utility, tabular) |
+| type scale | 10 / 11 / 12 / 13 / 14 px | `text-2xs` … `text-lg`; `label-caps` = 10px caps |
+| spacing | 4px grid | `--spacing-topbar` 36 · `--spacing-strip` 24 · `--spacing-row` 30 · header 28 · `--spacing-panel` 40% |
+| radii | 2 / 3 / 4 px | tags · default · dialogs (max) |
+| elevation | none | `--shadow-pop` = 1px hairline; no gradients or glows |
+| motion | 100 / 150 / 200 ms | `--ease-out-quart`; reduced-motion respected |
+
+Status is never color alone: every tag carries text, and rows add a 2px left border. Copy never says "reject" or "denied"; the "never auto-denies" line appears only in the detail panel.

@@ -1,178 +1,133 @@
-import { ArrowLeft, Check, Copy, ExternalLink, Layers } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Link, useLocation, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
-import type { SettlementReceipt } from '@/api/types'
-import { Button } from '@/components/ui/button'
-import { Money } from '@/components/vouch/Money'
+import { useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { EmptyState } from '@/components/vouch/States'
-import { formatDateTime, pluralize, truncateMiddle } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { DenseTable, PageFrame, Td, Th } from '@/components/vouch/Table'
+import { formatDateTime, formatMoney, truncateMiddle } from '@/lib/format'
 import { usePayments } from '@/store/PaymentsProvider'
 
-const STAGES = [
-  { id: 'policy', label: 'Policy check', ms: 700 },
-  { id: 'sign', label: 'Signing on your device', ms: 900 },
-  { id: 'broadcast', label: 'Sending the batch', ms: 1200 },
-  { id: 'settle', label: 'Confirmed on-chain', ms: 800 },
-]
-
-function useSettlementProgress(enabled: boolean) {
-  const [stage, setStage] = useState(0)
-  useEffect(() => {
-    if (!enabled) return
-    let i = 0
-    let t: ReturnType<typeof setTimeout>
-    const next = () => {
-      i += 1
-      setStage(i)
-      if (i < STAGES.length) t = setTimeout(next, STAGES[i]?.ms ?? 600)
-    }
-    t = setTimeout(next, STAGES[0]?.ms ?? 600)
-    return () => clearTimeout(t)
-  }, [enabled])
-  return stage
-}
+const ROW = 'flex h-6 items-center justify-between gap-2 border-b text-xs last:border-b-0'
 
 export function ReceiptPage() {
-  const { batchId = '' } = useParams()
-  const location = useLocation()
+  const { id = '' } = useParams()
   const { receipts } = usePayments()
-  const receipt: SettlementReceipt | undefined =
-    (location.state as { receipt?: SettlementReceipt } | null)?.receipt ?? receipts[batchId]
-  const skipAnimation = new URLSearchParams(location.search).get('instant') === '1'
-  const stage = useSettlementProgress(Boolean(receipt) && !skipAnimation)
-  const done = skipAnimation || stage >= STAGES.length
-  const [copied, setCopied] = useState(false)
+  const receipt = receipts[id]
+  const [copied, setCopied] = useState<string | null>(null)
 
   if (!receipt) {
     return (
-      <div className="mx-auto max-w-md">
-        <EmptyState
-          title="No receipt here"
-          description="This batch may have been settled in another session."
-          action={
-            <Button asChild variant="outline">
-              <Link to="/">Back to desk</Link>
-            </Button>
-          }
-        />
-      </div>
+      <PageFrame summary="receipt · not found">
+        <EmptyState title="No receipt for this ID" description="Receipts live for the session. Settle a batch from Approval to create one." action={<Link to="/approve" className="text-xs underline-offset-2 hover:underline">Approval</Link>} />
+      </PageFrame>
     )
   }
 
-  const copy = async () => {
+  const copy = async (label: string, value: string) => {
     try {
-      await navigator.clipboard.writeText(receipt.txId)
-      setCopied(true)
-      toast.success('Transaction ID copied')
-      setTimeout(() => setCopied(false), 1500)
+      await navigator.clipboard.writeText(value)
+      setCopied(label)
+      setTimeout(() => setCopied(null), 1200)
     } catch {
-      toast.error("Couldn't copy. Select the ID to copy it by hand.")
+      setCopied(null)
     }
   }
 
   return (
-    <div className="mx-auto w-full max-w-md">
-      <Link to="/" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
-        <ArrowLeft className="size-4" aria-hidden="true" /> Back to desk
-      </Link>
-
-      <section aria-live="polite" className="card-surface overflow-hidden rounded-3xl shadow-sheet">
-        <header className={cn('px-6 pt-8 pb-7 text-center transition-colors duration-500', done ? 'bg-vouched text-white dark:text-navy-950' : 'bg-primary text-primary-foreground')}>
-          <span className="mx-auto flex size-16 items-center justify-center rounded-full bg-white/15 ring-1 ring-white/30">
-            {done ? (
-              <svg viewBox="0 0 32 32" className="size-9 animate-pop" aria-hidden="true">
-                <path d="M9 16.5 14 21.5 23.5 11" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="animate-draw" />
-              </svg>
-            ) : (
-              <Layers className="size-7 animate-[vouch-pulse_1.4s_ease-in-out_infinite]" aria-hidden="true" />
-            )}
-          </span>
-          <h1 className="mt-4 text-2xl font-semibold tracking-[-0.02em]">
-            {done ? (receipt.funding === 'scheduled' ? 'Scheduled' : 'Settled') : 'Sending your batch'}
-          </h1>
-          <p className="mt-1 text-sm opacity-80">
-            {done
-              ? `${pluralize(receipt.lines.length, 'payment')} · settled in one batch`
-              : STAGES[Math.min(stage, STAGES.length - 1)]?.label}
-          </p>
-          <Money amount={receipt.totalAmount} className="mt-4 block text-4xl font-semibold tracking-[-0.03em]" />
-        </header>
-
-        <div className="px-5 py-5">
-          <ol className="grid grid-cols-4 gap-2" aria-label="Settlement progress">
-            {STAGES.map((s, i) => {
-              const state = done || i < stage ? 'done' : i === stage ? 'running' : 'pending'
-              return (
-                <li key={s.id} className="space-y-1.5">
-                  <div className="h-1.5 overflow-hidden rounded-full bg-foreground/10">
-                    <div
-                      className={cn(
-                        'h-full rounded-full bg-vouched transition-[width] duration-500 ease-[var(--ease-vouch)]',
-                        state === 'done' ? 'w-full' : state === 'running' ? 'w-1/2 animate-[vouch-pulse_1s_ease-in-out_infinite]' : 'w-0',
-                      )}
-                    />
-                  </div>
-                  <p className={cn('text-[10px] leading-tight', state === 'pending' ? 'text-muted-foreground/70' : 'text-muted-foreground')}>
-                    <span className="sr-only">{state === 'done' ? 'Done: ' : state === 'running' ? 'In progress: ' : 'Pending: '}</span>
-                    {s.label}
-                  </p>
-                </li>
-              )
-            })}
-          </ol>
-
-          <div className={cn('mt-6 space-y-5 transition-opacity duration-300', done ? 'opacity-100' : 'opacity-40')} aria-hidden={!done}>
-            <div className="rounded-2xl border bg-muted/40 p-4">
-              <p className="text-xs font-medium text-muted-foreground">Transaction ID</p>
-              <div className="mt-1.5 flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate font-mono text-[13px] text-foreground" title={receipt.txId}>
-                  {truncateMiddle(receipt.txId, 14, 10)}
-                </code>
-                <Button variant="outline" size="icon-sm" onClick={copy} aria-label="Copy transaction ID" disabled={!done}>
-                  {copied ? <Check className="text-vouched" aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                </Button>
-              </div>
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                <dt className="text-muted-foreground">Network</dt>
-                <dd className="text-right font-medium">{receipt.network}</dd>
-                <dt className="text-muted-foreground">Fees added</dt>
-                <dd className="text-right font-medium money">{receipt.feeUsd === 0 ? 'None' : `$${receipt.feeUsd.toFixed(2)}`}</dd>
-                <dt className="text-muted-foreground">{receipt.funding === 'scheduled' ? 'Scheduled for' : 'Settled at'}</dt>
-                <dd className="text-right font-medium">{formatDateTime(receipt.scheduledFor ?? receipt.settledAt)}</dd>
-              </dl>
-            </div>
-
-            <ul className="divide-y rounded-2xl border" aria-label="Per-vendor lines">
-              {receipt.lines.map((l) => (
-                <li key={l.paymentId} className="flex items-center gap-3 px-4 py-3">
-                  <span className="flex size-6 items-center justify-center rounded-full bg-vouched-soft text-vouched" aria-hidden="true">
-                    <Check className="size-3.5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{l.vendorName}</p>
-                    <p className="text-xs text-muted-foreground tabular-nums">Invoice {l.invoiceNumber}</p>
-                  </div>
-                  <Money amount={l.amount} className="text-sm font-semibold" />
-                </li>
+    <PageFrame summary={`settled · ${receipt.lines.length} payments · ${formatMoney(receipt.totalAmount)} · ${receipt.batchId}`} aside={<span>{formatDateTime(receipt.settledAt)}</span>}>
+      <div className="flex min-h-full">
+        <div className="min-w-0 flex-1">
+          <DenseTable>
+            <thead>
+              <tr>
+                <Th width={32}>#</Th>
+                <Th>Vendor</Th>
+                <Th width={128}>Invoice</Th>
+                <Th width={112} right>
+                  Amount
+                </Th>
+                <Th width={120}>Result</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {receipt.lines.map((l, i) => (
+                <tr key={l.paymentId} className="row-interactive">
+                  <Td num muted className="text-xs">
+                    {i + 1}
+                  </Td>
+                  <Td className="font-medium text-foreground">{l.vendorName}</Td>
+                  <Td num className="text-xs">
+                    {l.invoiceNumber}
+                  </Td>
+                  <Td num right className="text-foreground">
+                    {formatMoney(l.amount)}
+                  </Td>
+                  <Td className="text-xs">
+                    <span className="num inline-flex h-[18px] items-center rounded-xs border px-1 text-2xs tracking-[0.04em] text-muted-foreground">STL</span>
+                    <span className="ml-1.5 text-muted-foreground">settled</span>
+                  </Td>
+                </tr>
               ))}
-            </ul>
-
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button asChild variant="outline" className="h-10 flex-1">
-                <a href={receipt.explorerUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink data-icon="inline-start" aria-hidden="true" />
-                  View on explorer
-                </a>
-              </Button>
-              <Button asChild className="h-10 flex-1">
-                <Link to="/">Back to desk</Link>
-              </Button>
-            </div>
-          </div>
+            </tbody>
+            <tfoot>
+              <tr className="bg-surface-1">
+                <Td colSpan={3} className="text-xs text-muted-foreground">
+                  total · fee {formatMoney(receipt.feeUsd, { cents: true })}
+                </Td>
+                <Td num right className="text-foreground">
+                  {formatMoney(receipt.totalAmount)}
+                </Td>
+                <Td className="text-xs text-muted-foreground">{receipt.network}</Td>
+              </tr>
+            </tfoot>
+          </DenseTable>
         </div>
-      </section>
-    </div>
+
+        <aside className="flex w-panel shrink-0 flex-col border-l" aria-label="Settlement receipt">
+          <div className="flex h-8 items-center justify-between border-b px-3">
+            <h2 className="text-sm font-medium">Settlement receipt</h2>
+            <span className="num text-2xs text-muted-foreground">{receipt.funding === 'now' ? 'funded now' : `scheduled · ${receipt.scheduledFor ? formatDateTime(receipt.scheduledFor) : ''}`}</span>
+          </div>
+          <div className="px-3 py-1">
+            {(
+              [
+                ['Batch ID', receipt.batchId, receipt.batchId],
+                ['Transaction', truncateMiddle(receipt.txId, 12, 10), receipt.txId],
+                ['Network', receipt.network, undefined],
+                ['Settled at', formatDateTime(receipt.settledAt), undefined],
+                ['Total', formatMoney(receipt.totalAmount), undefined],
+                ['Fee', formatMoney(receipt.feeUsd, { cents: true }), undefined],
+                ['Approved by', 'Dana K. · slide-to-approve', undefined],
+              ] as const
+            ).map(([k, v, raw]) => (
+              <div key={k} className={ROW}>
+                <span className="text-muted-foreground">{k}</span>
+                <span className="num flex items-center gap-2 text-foreground/90">
+                  {v}
+                  {raw && (
+                    <button type="button" className="h-4 rounded-xs border px-1 text-2xs text-muted-foreground hover:text-foreground" onClick={() => void copy(k, raw)}>
+                      {copied === k ? 'copied' : 'copy'}
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="border-t px-3 py-2">
+            <p className="label-caps pb-1">Verify</p>
+            <a href={receipt.explorerUrl} target="_blank" rel="noreferrer" className="num block truncate text-xs text-accent-cool underline-offset-2 hover:underline">
+              {receipt.explorerUrl}
+            </a>
+            <p className="pt-1 text-xs text-muted-foreground">Public record of the settlement. Vendor names are not on-chain.</p>
+          </div>
+          <div className="mt-auto flex gap-1 border-t p-2">
+            <Link to="/" className="flex h-7 flex-1 items-center justify-center rounded-xs border text-xs hover:bg-surface-2">
+              Payments
+            </Link>
+            <button type="button" className="flex h-7 flex-1 items-center justify-center rounded-xs border text-xs hover:bg-surface-2" onClick={() => window.print()}>
+              Print
+            </button>
+          </div>
+        </aside>
+      </div>
+    </PageFrame>
   )
 }

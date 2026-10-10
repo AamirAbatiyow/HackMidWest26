@@ -11,12 +11,12 @@ interface SlideToApproveProps {
   className?: string
 }
 
-const KNOB = 52
-const PAD = 4
+const KNOB = 26
+const PAD = 3
 
 /**
- * Slide-to-approve with full keyboard support: Arrow Right/Up nudges, End or
- * Enter/Space confirms, Home resets. Announced via aria-valuetext.
+ * Slide-to-approve. Keyboard: Arrow Right/Up nudges, End or Enter/Space
+ * confirms, Home resets. Progress is announced via aria-valuetext.
  */
 export function SlideToApprove({
   label = 'Slide to approve',
@@ -58,20 +58,16 @@ export function SlideToApprove({
     startOffset.current = x
     setDragging(true)
   }
-
   const onPointerMove = (e: PointerEvent<HTMLButtonElement>) => {
     if (!dragging) return
-    const next = Math.max(0, Math.min(max, startOffset.current + (e.clientX - startX.current)))
-    setX(next)
+    setX(Math.max(0, Math.min(max, startOffset.current + (e.clientX - startX.current))))
   }
-
   const onPointerUp = () => {
     if (!dragging) return
     setDragging(false)
     if (x >= max * 0.9) void complete()
     else setX(0)
   }
-
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (disabled || done) return
     const step = Math.max(8, max / 8)
@@ -109,7 +105,7 @@ export function SlideToApprove({
     <div
       ref={trackRef}
       className={cn(
-        'relative h-[60px] w-full overflow-hidden rounded-full bg-primary text-primary-foreground shadow-card select-none',
+        'relative h-8 w-full overflow-hidden rounded-xs border border-accent-cool/50 bg-surface-1 select-none',
         disabled && 'opacity-50',
         className,
       )}
@@ -117,15 +113,18 @@ export function SlideToApprove({
     >
       <div
         aria-hidden="true"
-        className="absolute inset-0 rounded-full bg-vouched transition-opacity duration-300"
+        className="absolute inset-0 bg-accent-cool transition-opacity duration-(--duration-slow)"
         style={{ opacity: done ? 1 : progress * 0.9 }}
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 flex items-center justify-center text-[15px] font-semibold tracking-[-0.01em] transition-opacity duration-150"
-        style={{ opacity: done ? 1 : 1 - progress * 1.4 }}
+        className={cn(
+          'num pointer-events-none absolute inset-0 flex items-center justify-center text-xs transition-colors duration-(--duration-fast)',
+          done || progress > 0.5 ? 'text-primary-foreground' : 'text-foreground',
+        )}
+        style={{ opacity: done ? 1 : 1 - progress * 0.6 }}
       >
-        {done ? (busy ? 'Sending…' : confirmedLabel) : label}
+        {done ? (busy ? 'Sending' : confirmedLabel) : label}
       </span>
       <button
         type="button"
@@ -134,7 +133,7 @@ export function SlideToApprove({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(progress * 100)}
-        aria-valuetext={done ? confirmedLabel : `${Math.round(progress * 100)}% — press End or Enter to approve`}
+        aria-valuetext={done ? confirmedLabel : `${Math.round(progress * 100)}% — End or Enter approves`}
         aria-disabled={disabled || done}
         disabled={disabled}
         onPointerDown={onPointerDown}
@@ -143,21 +142,17 @@ export function SlideToApprove({
         onPointerCancel={onPointerUp}
         onKeyDown={onKeyDown}
         className={cn(
-          'relative z-10 flex items-center justify-center rounded-full bg-background text-foreground shadow-md outline-none focus-visible:ring-3 focus-visible:ring-ring/60',
-          'touch-none',
-          !dragging && 'transition-transform duration-300 ease-[var(--ease-vouch)]',
+          'relative z-10 flex touch-none items-center justify-center rounded-xs bg-accent-cool text-primary-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          !dragging && 'transition-transform duration-(--duration-slow) ease-(--ease-out-quart)',
           dragging ? 'cursor-grabbing' : 'cursor-grab',
+          done && 'bg-background text-accent-cool',
         )}
         style={{ width: KNOB, height: KNOB, transform: `translateX(${x}px)` }}
       >
         {done ? (
-          busy ? (
-            <Loader2 className="size-5 animate-spin text-vouched" aria-hidden="true" />
-          ) : (
-            <Check className="size-5 text-vouched" aria-hidden="true" />
-          )
+          busy ? <Loader2 className="size-3 animate-spin" aria-hidden="true" /> : <Check className="size-3" aria-hidden="true" />
         ) : (
-          <ChevronsRight className="size-5" aria-hidden="true" />
+          <ChevronsRight className="size-3" aria-hidden="true" />
         )}
       </button>
     </div>

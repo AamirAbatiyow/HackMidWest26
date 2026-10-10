@@ -72,6 +72,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 94,
     reason: 'Same bank account for 3 years. Amount matches the purchase order.',
     fastPayEligible: true,
+    source: 'email',
+    receivedAt: daysFromNow(-2, 8),
     evidence: [
       { id: 'e1', label: 'Same bank account since Feb 2023', weight: 0.9, direction: 'reassuring' },
       { id: 'e2', label: 'Amount matches PO #7731 exactly', weight: 0.7, direction: 'reassuring' },
@@ -100,6 +102,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 71,
     reason: 'Bank details changed 2 days ago. A quick call to your usual contact clears this.',
     fastPayEligible: false,
+    source: 'email',
+    receivedAt: daysFromNow(-1, 11),
     evidence: [
       { id: 'e1', label: 'Bank account changed 2 days ago', weight: 0.95, direction: 'concern' },
       { id: 'e2', label: 'Change request came from a new email address', weight: 0.6, direction: 'concern' },
@@ -135,6 +139,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 96,
     reason: 'Regular monthly pallet order. Everything matches.',
     fastPayEligible: false,
+    source: 'email',
+    receivedAt: daysFromNow(-3, 9),
     evidence: [
       { id: 'e1', label: 'Same bank account since May 2022', weight: 0.9, direction: 'reassuring' },
       { id: 'e2', label: 'Matches the usual monthly amount', weight: 0.7, direction: 'reassuring' },
@@ -162,6 +168,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 96,
     reason: 'Same invoice number and amount as one already in this batch. Likely sent twice.',
     fastPayEligible: false,
+    source: 'email',
+    receivedAt: daysFromNow(-3, 10),
     evidence: [
       { id: 'e1', label: 'Same invoice number as MP-5521 above', weight: 0.9, direction: 'concern' },
       { id: 'e2', label: 'Same amount, arrived 40 minutes later', weight: 0.7, direction: 'concern' },
@@ -191,6 +199,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 62,
     reason: 'One of two invoices just under your $5,000 approval limit, sent 4 minutes apart.',
     fastPayEligible: false,
+    source: 'email',
+    receivedAt: daysFromNow(-1, 14),
     evidence: [
       { id: 'e1', label: 'Two invoices of $4,900 sent 4 minutes apart', weight: 0.85, direction: 'concern' },
       { id: 'e2', label: 'Both sit just under your $5,000 approval limit', weight: 0.7, direction: 'concern' },
@@ -222,6 +232,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 62,
     reason: 'Second of two invoices just under your $5,000 approval limit.',
     fastPayEligible: false,
+    source: 'email',
+    receivedAt: daysFromNow(-1, 14),
     evidence: [
       { id: 'e1', label: 'Pairs with BL-3307, sent 4 minutes earlier', weight: 0.85, direction: 'concern' },
       { id: 'e2', label: 'Together they total $9,800, above the limit', weight: 0.7, direction: 'concern' },
@@ -249,6 +261,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 18,
     reason: 'New vendor whose bank account is also used by two other vendors. Worth a call before paying.',
     fastPayEligible: false,
+    source: 'upload',
+    receivedAt: daysFromNow(-1, 16),
     evidence: [
       { id: 'e1', label: 'Same bank account as two other vendors', weight: 1, direction: 'concern' },
       { id: 'e2', label: 'Same phone number as Apex Supply Co.', weight: 0.75, direction: 'concern' },
@@ -300,6 +314,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     trustScore: 72,
     reason: 'New small vendor. Registration, bank name, and invoice all match. Good to pay today.',
     fastPayEligible: true,
+    source: 'upload',
+    receivedAt: daysFromNow(-1, 10),
     evidence: [
       { id: 'e1', label: 'Business registration matches the bank account name', weight: 0.85, direction: 'reassuring' },
       { id: 'e2', label: 'Bank account verified by call-back on day one', weight: 0.8, direction: 'reassuring' },

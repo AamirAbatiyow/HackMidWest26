@@ -181,6 +181,8 @@ export function normalizePayment(raw: unknown): Payment {
     trustScore: Math.round(trustRaw <= 1 ? trustRaw * 100 : trustRaw),
     reason: str(pick(p, 'reason', 'explanation', 'summary'), ''),
     fastPayEligible: Boolean(pick(p, 'fast_pay_eligible', 'fastPayEligible', 'fast_pay')),
+    source: str(pick(p, 'source', 'channel')).toLowerCase() === 'upload' ? 'upload' : 'email',
+    receivedAt: str(pick(p, 'received_at', 'receivedAt', 'created_at', 'createdAt'), new Date().toISOString()),
     evidence: normalizeEvidence(pick(p, 'evidence', 'factors', 'explanations')),
     timeline: normalizeTimeline(pick(p, 'timeline', 'history')),
     checklist: normalizeChecklist(pick(p, 'checklist', 'callback_checklist')),

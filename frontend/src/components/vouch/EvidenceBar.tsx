@@ -1,44 +1,39 @@
-import { ShieldCheck, TriangleAlert } from 'lucide-react'
 import type { EvidenceFactor } from '@/api/types'
 import { cn } from '@/lib/utils'
 
 interface EvidenceBarProps {
   factor: EvidenceFactor
   className?: string
-  /** Delay the fill-in animation, in ms. */
-  delayMs?: number
+  /** Print the weight. Off in the detail panel; on in the explain dialog. */
+  showWeight?: boolean
 }
 
 /**
- * One LIME-style horizontal contribution bar. Concerns extend right in amber,
- * reassuring factors extend left in green, from a shared center axis.
+ * LIME-style contribution row. Concerns extend right (amber) from the center
+ * axis, reassuring factors extend left (neutral).
  */
-export function EvidenceBar({ factor, className, delayMs = 0 }: EvidenceBarProps) {
+export function EvidenceBar({ factor, className, showWeight = false }: EvidenceBarProps) {
   const pct = Math.round(Math.max(0.06, Math.min(1, factor.weight)) * 100)
   const concern = factor.direction === 'concern'
-  const Icon = concern ? TriangleAlert : ShieldCheck
   return (
-    <div className={cn('grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1', className)}>
-      <p className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
-        <Icon className={cn('size-3.5 shrink-0', concern ? 'text-attention' : 'text-vouched')} aria-hidden="true" />
-        <span className="truncate">{factor.label}</span>
+    <div className={cn('grid h-row items-center gap-3 border-b last:border-b-0', showWeight ? 'grid-cols-[minmax(0,1fr)_120px_36px]' : 'grid-cols-[minmax(0,1fr)_120px]', className)}>
+      <p className="truncate text-sm">
+        <span className={cn('num mr-1.5 text-2xs', concern ? 'text-amber' : 'text-muted-foreground')} aria-hidden="true">
+          {concern ? '+' : '−'}
+        </span>
+        {factor.label}
+        <span className="sr-only">, {concern ? 'raises concern' : 'reassuring'}</span>
       </p>
-      <span className={cn('text-xs font-medium tabular-nums', concern ? 'text-attention' : 'text-vouched')}>
-        {concern ? '+' : '−'}
-        {pct}
-        <span className="sr-only"> {concern ? 'raises concern' : 'reassuring'}</span>
-      </span>
-      <div className="col-span-2 relative h-2.5 w-full overflow-hidden rounded-full bg-foreground/[0.06]">
-        <span className="absolute inset-y-0 left-1/2 w-px bg-foreground/15" aria-hidden="true" />
-        <span
-          aria-hidden="true"
-          className={cn(
-            'absolute inset-y-0 rounded-full transition-[width] duration-500 ease-[var(--ease-vouch)]',
-            concern ? 'left-1/2 bg-attention' : 'right-1/2 bg-vouched',
-          )}
-          style={{ width: `${pct / 2}%`, transitionDelay: `${delayMs}ms` }}
-        />
+      <div className="relative h-[3px] w-full bg-foreground/10" aria-hidden="true">
+        <span className="absolute inset-y-0 left-1/2 w-px bg-foreground/30" />
+        <span className={cn('absolute inset-y-0', concern ? 'left-1/2 bg-amber' : 'right-1/2 bg-foreground/60')} style={{ width: `${pct / 2}%` }} />
       </div>
+      {showWeight && (
+        <span className={cn('num text-right text-xs', concern ? 'text-amber' : 'text-muted-foreground')}>
+          {concern ? '+' : '−'}
+          {pct}
+        </span>
+      )}
     </div>
   )
 }

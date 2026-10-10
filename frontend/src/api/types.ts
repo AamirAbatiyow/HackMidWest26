@@ -79,6 +79,10 @@ export interface Payment {
   trustScore: number
   reason: string
   fastPayEligible: boolean
+  /** How the invoice arrived. */
+  source: 'email' | 'upload'
+  /** When the invoice was received; drives the "age" column. */
+  receivedAt: string
   evidence: EvidenceFactor[]
   timeline: TimelineEvent[]
   checklist: ChecklistItem[]

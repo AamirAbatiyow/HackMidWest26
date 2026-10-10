@@ -12,7 +12,7 @@ interface PaymentsContextValue {
   hold: (id: string, note?: string) => Promise<Payment>
   appeal: (id: string, note?: string) => Promise<Payment>
   toggleChecklist: (paymentId: string, itemId: string) => void
-  /** Payments that are ready to go into a batch (vouched and not yet settled/held). */
+  /** Batch: vouched and not held/settled, plus anything the owner verified. */
   batchReady: Payment[]
   settle: (ids: string[], funding: FundingChoice) => Promise<SettlementReceipt>
   receipts: Record<string, SettlementReceipt>
@@ -98,7 +98,7 @@ export function PaymentsProvider({ children }: { children: ReactNode }) {
   )
 
   const batchReady = useMemo(
-    () => payments.filter((p) => p.status === 'vouched' && (p.lifecycle === 'pending' || p.lifecycle === 'approved' || p.lifecycle === 'appealed')),
+    () => payments.filter((p) => (p.status === 'vouched' && (p.lifecycle === 'pending' || p.lifecycle === 'appealed')) || p.lifecycle === 'approved'),
     [payments],
   )
 

@@ -1,9 +1,11 @@
-/** Design-token reference, mirrored from src/index.css. */
+/** Design-token reference, mirrored from src/index.css. Single source for the Tokens view and the PR. */
 
 export interface ColorToken {
   name: string
   cssVar: string
   tailwind: string
+  dark: string
+  light: string
   role: string
 }
 
@@ -11,76 +13,80 @@ export const COLOR_TOKENS: { group: string; tokens: ColorToken[] }[] = [
   {
     group: 'Surfaces',
     tokens: [
-      { name: 'Background', cssVar: '--background', tailwind: 'bg-background', role: 'Off-white page canvas (navy in dark)' },
-      { name: 'Card', cssVar: '--card', tailwind: 'bg-card', role: 'Soft card surface' },
-      { name: 'Muted', cssVar: '--muted', tailwind: 'bg-muted', role: 'Quiet fills, skeletons' },
-      { name: 'Accent', cssVar: '--accent', tailwind: 'bg-accent', role: 'Hover and selected rows' },
-      { name: 'Border', cssVar: '--border', tailwind: 'border-border', role: 'Hairlines' },
+      { name: 'background', cssVar: '--background', tailwind: 'bg-background', dark: '#0B0D10', light: '#FAFBFC', role: 'Canvas' },
+      { name: 'surface-1', cssVar: '--surface-1', tailwind: 'bg-surface-1', dark: '#0F1216', light: '#FFFFFF', role: 'Group rows, inputs, panels' },
+      { name: 'surface-2', cssVar: '--surface-2', tailwind: 'bg-surface-2', dark: '#13171C', light: '#F3F5F7', role: 'Row hover, popovers' },
+      { name: 'surface-3', cssVar: '--surface-3', tailwind: 'bg-surface-3', dark: '#181D23', light: '#E9ECEF', role: 'Active chip, palette selection' },
+      { name: 'border', cssVar: '--border', tailwind: 'border-border', dark: '#1F242B', light: '#DDE2E8', role: 'Hairlines (1px) everywhere' },
+      { name: 'input', cssVar: '--input', tailwind: 'border-input', dark: '#272D35', light: '#CFD6DE', role: 'Checkbox and field borders' },
     ],
   },
   {
-    group: 'Text and brand',
+    group: 'Text',
     tokens: [
-      { name: 'Foreground', cssVar: '--foreground', tailwind: 'text-foreground', role: 'Deep navy body text' },
-      { name: 'Muted foreground', cssVar: '--muted-foreground', tailwind: 'text-muted-foreground', role: 'Secondary text (AA on background)' },
-      { name: 'Primary', cssVar: '--primary', tailwind: 'bg-primary', role: 'Navy buttons and the logo mark' },
-      { name: 'Navy 900', cssVar: '--navy-900', tailwind: 'bg-navy-900', role: 'Brand navy' },
-      { name: 'Navy 400', cssVar: '--navy-400', tailwind: 'bg-navy-400', role: 'Neutral meters and charts' },
-      { name: 'Ivory', cssVar: '--ivory', tailwind: 'bg-ivory', role: 'Brand off-white' },
+      { name: 'foreground', cssVar: '--foreground', tailwind: 'text-foreground', dark: '#E6E8EB', light: '#14181D', role: 'Primary text, money' },
+      { name: 'muted-foreground', cssVar: '--muted-foreground', tailwind: 'text-muted-foreground', dark: '#8B949E', light: '#5F6B78', role: 'Labels, meta, hints (AA)' },
     ],
   },
   {
-    group: 'Status',
+    group: 'Accent · one cool color',
     tokens: [
-      { name: 'Vouched', cssVar: '--vouched', tailwind: 'text-vouched', role: 'Calm green: vouched, safe to pay' },
-      { name: 'Vouched soft', cssVar: '--vouched-soft', tailwind: 'bg-vouched-soft', role: 'Green chip fill' },
-      { name: 'Attention', cssVar: '--attention', tailwind: 'text-attention', role: 'Warm amber: needs your eyes' },
-      { name: 'Attention soft', cssVar: '--attention-soft', tailwind: 'bg-attention-soft', role: 'Amber chip fill' },
-      { name: 'Problem', cssVar: '--problem', tailwind: 'text-problem', role: 'Muted red: confirmed problems only' },
-      { name: 'Problem soft', cssVar: '--problem-soft', tailwind: 'bg-problem-soft', role: 'Red fill for error states' },
+      { name: 'accent-cool', cssVar: '--accent-cool', tailwind: 'text-accent-cool', dark: '#6EA8FE', light: '#2563EB', role: 'Selection, focus, primary button, live dot' },
+      { name: 'accent-cool-soft', cssVar: '--accent-cool-soft', tailwind: 'bg-accent-cool-soft', dark: 'rgb(110 168 254 / .12)', light: 'rgb(37 99 235 / .10)', role: 'Checked row, bulk toolbar' },
+    ],
+  },
+  {
+    group: 'Risk · amber and red only',
+    tokens: [
+      { name: 'amber', cssVar: '--amber', tailwind: 'text-amber', dark: '#E2A33B', light: '#9A6400', role: 'Quick check, verify, concern bars, BANK-CHG, DUP-SPLIT' },
+      { name: 'amber-soft', cssVar: '--amber-soft', tailwind: 'bg-amber-soft', dark: 'rgb(226 163 59 / .12)', light: 'rgb(154 100 0 / .10)', role: 'Verify tag fill' },
+      { name: 'red', cssVar: '--red', tailwind: 'text-red', dark: '#E5574F', light: '#C2322A', role: 'UNREC ring, shared-detail nodes, errors' },
+      { name: 'red-soft', cssVar: '--red-soft', tailwind: 'bg-red-soft', dark: 'rgb(229 87 79 / .12)', light: 'rgb(194 50 42 / .08)', role: 'Error state fill' },
+      { name: 'vouched', cssVar: '--vouched', tailwind: 'text-vouched', dark: '#A7B0BA', light: '#4B5563', role: 'Vouched tag and row border · neutral by design' },
     ],
   },
 ]
 
 export const TYPE_TOKENS = [
-  { name: 'Display', className: 'text-4xl font-semibold tracking-[-0.03em]', sample: '$48,200', note: '36px / 600 / tabular' },
-  { name: 'Amount', className: 'text-[2rem] font-semibold tracking-[-0.02em] money', sample: '$12,000', note: '32px / 600 / tabular' },
-  { name: 'Page title', className: 'text-[1.75rem] font-semibold tracking-[-0.02em]', sample: 'Payables desk', note: '28px / 600' },
-  { name: 'Section title', className: 'text-xl font-semibold tracking-[-0.015em]', sample: 'Warsaw Steel Sp. z o.o.', note: '20px / 600' },
-  { name: 'Card title', className: 'text-[15px] font-semibold', sample: 'Reyes Packaging', note: '15px / 600' },
-  { name: 'Body', className: 'text-sm', sample: 'Bank details changed 2 days ago. A quick call clears this.', note: '14px / 400 / 1.5' },
-  { name: 'Caption', className: 'text-xs text-muted-foreground', sample: 'Due Fri, Oct 16 · in 3d', note: '12px / 400' },
-  { name: 'Mono', className: 'font-mono text-[13px]', sample: '0x7f3a…c21e', note: 'Transaction IDs' },
+  { name: 'text-2xs', px: '10 / 14', className: 'text-2xs', sample: 'COLUMN LABEL', note: 'caps labels, shortcut hints, tag codes' },
+  { name: 'text-xs', px: '11 / 16', className: 'text-xs', sample: 'Due Oct 14 · 3d', note: 'meta, status tags, invoice IDs' },
+  { name: 'text-sm', px: '12 / 18', className: 'text-sm', sample: 'Bank account changed 2 days ago', note: 'table cells, body' },
+  { name: 'text-base', px: '13 / 20', className: 'text-base', sample: 'Warsaw Steel Sp. z o.o.', note: 'html default, panel headings' },
+  { name: 'text-lg', px: '14 / 20', className: 'text-lg', sample: 'Owner approval', note: 'rare · dialog titles' },
+  { name: 'num', px: 'inherit', className: 'num', sample: '$12,000 · WS-2026-0917', note: 'JetBrains Mono, tabular numerals for all money and IDs' },
+  { name: 'label-caps', px: '10 / 14', className: 'label-caps', sample: 'Vendor history', note: '0.06em tracking, muted' },
+]
+
+export const FONT_TOKENS = [
+  { name: '--font-sans', value: 'Geist Variable', use: 'Labels, vendor names, body' },
+  { name: '--font-mono', value: 'JetBrains Mono Variable', use: 'Money, IDs, timestamps, codes, hints' },
 ]
 
 export const SPACING_TOKENS = [
-  { name: 'space-1', px: 4 },
-  { name: 'space-2', px: 8 },
-  { name: 'space-3', px: 12 },
-  { name: 'space-4', px: 16 },
-  { name: 'space-5', px: 20 },
-  { name: 'space-6', px: 24 },
-  { name: 'space-8', px: 32 },
-  { name: 'space-12', px: 48 },
+  { name: '4px grid', value: '4 · 8 · 12 · 16 · 24', use: 'All padding and gaps' },
+  { name: '--spacing-topbar', value: '36px', use: 'Top bar' },
+  { name: '--spacing-strip', value: '24px', use: 'Bottom status strip' },
+  { name: 'summary / filter rows', value: '32px', use: 'Lines above tables' },
+  { name: 'table header', value: '28px', use: 'Sticky column headers, group rows' },
+  { name: '--spacing-row', value: '30px', use: 'Table rows, checklist, history, evidence bars' },
+  { name: '--spacing-row-sm', value: '28px', use: 'Palette items, compact lists' },
+  { name: '--spacing-panel', value: '40%', use: 'Docked right detail panel' },
 ]
 
 export const RADIUS_TOKENS = [
-  { name: 'radius-md', cssVar: '--radius-md', px: '9.6px', use: 'Tags, inputs' },
-  { name: 'radius-lg', cssVar: '--radius-lg', px: '12px', use: 'Buttons, list rows' },
-  { name: 'radius-xl', cssVar: '--radius-xl', px: '16px', use: 'Cards' },
-  { name: 'radius-3xl', cssVar: '--radius-3xl', px: '24px', use: 'Approval sheet' },
-  { name: 'full', cssVar: '—', px: '9999px', use: 'Chips, meters, slider' },
+  { name: '--radius-xs', value: '2px', use: 'Tags, checkboxes, buttons, inputs, nodes' },
+  { name: '--radius-md', value: '3px', use: 'shadcn default (--radius)' },
+  { name: '--radius-lg', value: '4px', use: 'Dialogs, popovers, figures · maximum anywhere' },
 ]
 
-export const SHADOW_TOKENS = [
-  { name: 'shadow-card', cssVar: '--shadow-card', use: 'Resting cards' },
-  { name: 'shadow-card-hover', cssVar: '--shadow-card-hover', use: 'Hovered cards, panels' },
-  { name: 'shadow-sheet', cssVar: '--shadow-sheet', use: 'Approval and receipt sheets' },
+export const ELEVATION_TOKENS = [
+  { name: '--shadow-pop', value: '0 0 0 1px var(--border)', use: 'Floating layers use a hairline, never a shadow' },
+  { name: 'gradients / glows', value: 'none', use: 'Not used' },
 ]
 
 export const MOTION_TOKENS = [
-  { name: 'duration-fast', value: '150ms', use: 'Color and opacity changes' },
-  { name: 'duration-base', value: '200ms', use: 'Hover lifts, chips' },
-  { name: 'duration-slow', value: '250ms', use: 'Panels, drawers' },
-  { name: 'ease-vouch', value: 'cubic-bezier(0.2, 0.8, 0.2, 1)', use: 'All eased motion' },
+  { name: '--duration-fast', value: '100ms', use: 'Row hover, hint reveal' },
+  { name: '--duration-base', value: '150ms', use: 'Feed line in' },
+  { name: '--duration-slow', value: '200ms', use: 'Slider settle' },
+  { name: '--ease-out-quart', value: 'cubic-bezier(.25, 1, .5, 1)', use: 'All eased motion' },
 ]

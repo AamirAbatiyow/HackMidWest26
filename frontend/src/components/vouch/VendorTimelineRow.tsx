@@ -1,44 +1,32 @@
-import { ArrowLeftRight, CircleDollarSign, Handshake, SearchCheck, StickyNote } from 'lucide-react'
 import type { TimelineEvent } from '@/api/types'
 import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-const icons: Record<TimelineEvent['kind'], typeof CircleDollarSign> = {
-  payment: CircleDollarSign,
-  change: ArrowLeftRight,
-  onboard: Handshake,
-  check: SearchCheck,
-  note: StickyNote,
+const kindCode: Record<TimelineEvent['kind'], string> = {
+  payment: 'PAY',
+  change: 'CHG',
+  onboard: 'ONB',
+  check: 'CHK',
+  note: 'NOTE',
 }
 
 interface VendorTimelineRowProps {
   event: TimelineEvent
-  isLast?: boolean
   className?: string
 }
 
-export function VendorTimelineRow({ event, isLast, className }: VendorTimelineRowProps) {
-  const Icon = icons[event.kind]
+/** One history row: date · kind · title · detail. Bank changes read in amber. */
+export function VendorTimelineRow({ event, className }: VendorTimelineRowProps) {
   const isChange = event.kind === 'change'
   return (
-    <li className={cn('relative flex gap-3 pb-5', isLast && 'pb-0', className)}>
-      {!isLast && <span aria-hidden="true" className="absolute top-7 left-[13px] h-[calc(100%-1.75rem)] w-px bg-border" />}
-      <span
-        className={cn(
-          'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full ring-1 ring-inset',
-          isChange ? 'bg-attention-soft text-attention ring-attention-ring' : 'bg-muted text-muted-foreground ring-border',
-        )}
-      >
-        <Icon className="size-3.5" aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className={cn('text-sm font-medium', isChange && 'text-attention')}>{event.title}</p>
-          <time dateTime={event.date} className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {formatDate(event.date, { month: 'short', day: 'numeric', year: 'numeric' })}
-          </time>
-        </div>
-        {event.detail && <p className="mt-0.5 text-xs text-muted-foreground">{event.detail}</p>}
+    <li className={cn('grid min-h-row grid-cols-[64px_36px_minmax(0,1fr)] items-baseline gap-2 border-b py-1.5 last:border-b-0', className)}>
+      <time dateTime={event.date} className="num text-xs text-muted-foreground">
+        {formatDate(event.date, { year: '2-digit', month: '2-digit', day: '2-digit' })}
+      </time>
+      <span className={cn('num text-2xs tracking-[0.04em]', isChange ? 'text-amber' : 'text-muted-foreground')}>{kindCode[event.kind]}</span>
+      <div className="min-w-0">
+        <p className={cn('truncate text-sm', isChange ? 'text-amber' : 'text-foreground')}>{event.title}</p>
+        {event.detail && <p className="truncate text-xs text-muted-foreground">{event.detail}</p>}
       </div>
     </li>
   )
