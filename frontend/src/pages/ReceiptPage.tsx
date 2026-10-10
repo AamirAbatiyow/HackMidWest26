@@ -70,7 +70,7 @@ export function ReceiptPage() {
             <tfoot>
               <tr className="bg-surface-1">
                 <Td colSpan={3} className="text-xs text-muted-foreground">
-                  total · fee {formatMoney(receipt.feeUsd, { cents: true })}
+                  total · network fee {receipt.feeUsd > 0 ? formatMoney(receipt.feeUsd, { cents: true }) : 'none · absorbed by Vouch'}
                 </Td>
                 <Td num right className="text-foreground">
                   {formatMoney(receipt.totalAmount)}
@@ -94,7 +94,7 @@ export function ReceiptPage() {
                 ['Network', receipt.network, undefined],
                 ['Settled at', formatDateTime(receipt.settledAt), undefined],
                 ['Total', formatMoney(receipt.totalAmount), undefined],
-                ['Fee', formatMoney(receipt.feeUsd, { cents: true }), undefined],
+                ['Network fee', receipt.feeUsd > 0 ? formatMoney(receipt.feeUsd, { cents: true }) : 'none · absorbed by Vouch', undefined],
                 ['Approved by', 'Dana K. · slide-to-approve', undefined],
               ] as const
             ).map(([k, v, raw]) => (

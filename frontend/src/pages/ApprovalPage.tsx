@@ -28,7 +28,6 @@ export function ApprovalPage() {
   const overLimit = lines.filter((p) => p.amount > APPROVAL_LIMIT)
   const verified = lines.filter((p) => p.status !== 'vouched')
   const heldCount = payments.filter((p) => p.lifecycle === 'held').length
-  const fee = Math.round(total * 0.0005 * 100) / 100
 
   const confirm = async () => {
     if (lines.length === 0) return
@@ -163,7 +162,7 @@ export function ApprovalPage() {
             </div>
             <div className={ROW}>
               <span className="text-muted-foreground">Network fee</span>
-              <span className="num">{formatMoney(fee, { cents: true })}</span>
+              <span className="num">none · absorbed by Vouch</span>
             </div>
             <div className={ROW}>
               <span className="text-muted-foreground">Rail</span>
