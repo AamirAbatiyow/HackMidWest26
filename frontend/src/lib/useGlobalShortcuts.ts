@@ -81,8 +81,8 @@ export function useGlobalShortcuts() {
           s.toggle()
           return
         case 'Escape':
-          if (u.panelOpen) u.setPanelOpen(false)
-          else if (u.checked.size) u.clearChecked()
+          if (u.checked.size) u.clearChecked()
+          else if (u.activeId) u.setActive(null)
           else if (u.search) u.setSearch('')
           return
       }

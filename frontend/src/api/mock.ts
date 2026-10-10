@@ -131,9 +131,12 @@ export function createMockApi(): VouchApi {
       await wait(200)
       // Nudge latencies a little so the page feels live.
       const jitter = (n: number) => Math.max(1, Math.round(n * (0.9 + Math.random() * 0.2)))
+      const hops = DEMO_NETWORK.hops.map((h) => ({ ...h, p50Ms: jitter(h.p50Ms), p95Ms: jitter(h.p95Ms) }))
       return {
         ...clone(DEMO_NETWORK),
-        hops: DEMO_NETWORK.hops.map((h) => ({ ...h, p50Ms: jitter(h.p50Ms), p95Ms: jitter(h.p95Ms) })),
+        hops,
+        p50Ms: hops.reduce((s, h) => s + h.p50Ms, 0),
+        p95Ms: hops.reduce((s, h) => s + h.p95Ms, 0),
         updatedAt: new Date().toISOString(),
       }
     },
@@ -146,6 +149,11 @@ export function createMockApi(): VouchApi {
     async getFairness() {
       await wait(200)
       return clone(DEMO_FAIRNESS)
+    },
+
+    async getInfo() {
+      await wait(80)
+      return { model: DEMO_NETWORK.modelVersion, policyMode: 'default-deny', version: 'mock' }
     },
 
     async getHealth() {

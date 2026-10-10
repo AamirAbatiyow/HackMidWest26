@@ -1,26 +1,32 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { HealthStatus, VouchApi } from './types'
 import { createMockApi } from './mock'
 import { createLiveApi } from './live'
 
 export type ApiMode = 'mock' | 'live'
+/** auto = live when reachable, mock otherwise. */
+export type ApiPreference = 'auto' | ApiMode
 
 const STORAGE_KEY = 'vouch.apiMode'
+const PROBE_MS = 5000
 
 export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:8101'
 
-function readInitialMode(): ApiMode {
+function readPreference(): ApiPreference {
   if (typeof window !== 'undefined') {
     const stored = window.localStorage.getItem(STORAGE_KEY)
-    if (stored === 'mock' || stored === 'live') return stored
+    if (stored === 'mock' || stored === 'live' || stored === 'auto') return stored
   }
-  return import.meta.env.VITE_API_MODE === 'live' ? 'live' : 'mock'
+  const env = import.meta.env.VITE_API_MODE
+  return env === 'live' || env === 'mock' ? env : 'auto'
 }
 
 interface ApiContextValue {
   api: VouchApi
+  /** Effective mode after the reachability probe. */
   mode: ApiMode
-  setMode: (mode: ApiMode) => void
+  preference: ApiPreference
+  setPreference: (pref: ApiPreference) => void
   baseUrl: string
   health: HealthStatus | null
   checkHealth: () => Promise<void>
@@ -29,30 +35,37 @@ interface ApiContextValue {
 const ApiContext = createContext<ApiContextValue | null>(null)
 
 export function ApiProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<ApiMode>(readInitialMode)
+  const [preference, setPreferenceState] = useState<ApiPreference>(readPreference)
   const [health, setHealth] = useState<HealthStatus | null>(null)
+  const live = useMemo(() => createLiveApi({ baseUrl: API_BASE_URL }), [])
+  const mock = useMemo(() => createMockApi(), [])
+  const probeId = useRef(0)
 
-  const api = useMemo<VouchApi>(
-    () => (mode === 'live' ? createLiveApi({ baseUrl: API_BASE_URL }) : createMockApi()),
-    [mode],
-  )
+  const reachable = health?.ok === true
+  const mode: ApiMode = preference === 'auto' ? (reachable ? 'live' : 'mock') : preference
+  const api = mode === 'live' ? live : mock
 
-  const setMode = useCallback((next: ApiMode) => {
+  const setPreference = useCallback((next: ApiPreference) => {
     window.localStorage.setItem(STORAGE_KEY, next)
-    setModeState(next)
+    setPreferenceState(next)
   }, [])
 
   const checkHealth = useCallback(async () => {
-    setHealth(await api.getHealth())
-  }, [api])
+    const id = ++probeId.current
+    const h = await live.getHealth()
+    if (id === probeId.current) setHealth(h)
+  }, [live])
 
+  // Probe the live API on a fixed cadence so the status tag reflects reality.
   useEffect(() => {
     void checkHealth()
+    const t = setInterval(() => void checkHealth(), PROBE_MS)
+    return () => clearInterval(t)
   }, [checkHealth])
 
   const value = useMemo<ApiContextValue>(
-    () => ({ api, mode, setMode, baseUrl: API_BASE_URL, health, checkHealth }),
-    [api, mode, setMode, health, checkHealth],
+    () => ({ api, mode, preference, setPreference, baseUrl: API_BASE_URL, health, checkHealth }),
+    [api, mode, preference, setPreference, health, checkHealth],
   )
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>

@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
-import { useApi } from '@/api/ApiProvider'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/store/UiProvider'
 import { Shortcut } from './Shortcut'
@@ -18,7 +17,6 @@ export const VIEWS = [
 export const SEARCH_INPUT_ID = 'global-search'
 
 export function TopBar() {
-  const { mode, health, setMode } = useApi()
   const { openPalette, search, setSearch } = useUi()
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -74,16 +72,6 @@ export function TopBar() {
       <div className="ml-auto flex items-center gap-1 text-xs">
         <button type="button" className="flex h-6 items-center gap-1.5 rounded-xs px-2 text-muted-foreground hover:bg-surface-2 hover:text-foreground" onClick={() => openPalette()} aria-label="Open command palette">
           Commands <Shortcut id="palette" />
-        </button>
-        <button
-          type="button"
-          className="num flex h-6 items-center gap-1.5 rounded-xs px-2 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
-          onClick={() => setMode(mode === 'live' ? 'mock' : 'live')}
-          title={mode === 'live' ? (health?.ok ? 'Live API reachable. Click for demo data.' : 'Live API unreachable. Click for demo data.') : 'Demo data. Click to use the live API.'}
-          aria-label={`Data source: ${mode}. Toggle.`}
-        >
-          <span className={cn('size-1.5 rounded-xs', mode === 'live' ? (health?.ok ? 'bg-accent-cool' : 'bg-amber') : 'bg-muted-foreground/60')} aria-hidden="true" />
-          {mode}
         </button>
       </div>
     </header>

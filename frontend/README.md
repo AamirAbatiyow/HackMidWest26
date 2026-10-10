@@ -22,45 +22,22 @@ npm run preview    # serve the production build
 
 ## Mock data vs. live API
 
-The app ships with built-in demo data (the six vendors from the brief) and uses it by default. A typed client layer (`src/api/`) has two implementations behind one `VouchApi` interface:
+The app ships with built-in demo data (the six vendors from the brief). A typed client layer (`src/api/`) has two implementations behind one `VouchApi` interface:
 
-| | |
-|---|---|
-| `src/api/mock.ts` | In-memory demo data with realistic latency. State resets on reload. |
-| `src/api/live.ts` | `fetch` client for the FastAPI backend, with tolerant response normalisers. |
+- `mock.ts` — in-memory demo data with realistic latency.
+- `live.ts` — the FastAPI backend at `VITE_API_URL` (default `http://localhost:8101`). Every call tries `/v1/<path>` first and falls back to the unversioned path on 404. Field names are normalized from `snake_case` or `camelCase`, and common status/risk spellings are mapped.
 
-Switch between them two ways:
+Mode is **auto** by default: the live `/v1/health` is probed every 5 s; when it answers, the app uses the live API and the status strip shows a `live` tag. When it does not, the app falls back to demo data and shows an amber `mock` tag whose hover text carries the reason. Force a mode from the command palette (`⌘K` → Data source) or with `VITE_API_MODE=live|mock`.
 
-1. **In the app** — open the settings (gear icon, top right) and flip **Live API**. The choice is saved in `localStorage` (`vouch.apiMode`).
-2. **Env vars** — copy `.env.example` to `.env.local`:
+Endpoints used: `GET /v1/payments`, `GET /v1/payments/:id`, `POST /v1/payments/:id/{approve,hold,appeal}`, `POST /v1/batch/settle`, `GET /v1/netz` (latency p50/p95, tokens today, hops), `GET /v1/info` (active model, policy mode), `GET /v1/redteam`, `GET /v1/fairness`, `GET /v1/health`.
 
-```bash
-VITE_API_MODE=live                 # default mode on first load: mock | live
-VITE_API_URL=http://localhost:8101 # backend base URL
-```
-
-Endpoints the live client calls:
-
-```
-GET  /health
-GET  /payments
-GET  /payments/{id}
-POST /payments/{id}/approve   { note }
-POST /payments/{id}/hold      { note }
-POST /payments/{id}/appeal    { note }
-POST /batch/settle            { payment_ids, funding: "now" | "scheduled" }
-GET  /netz
-GET  /redteam
-GET  /fairness                (optional; falls back to the reference report on 404)
-```
-
-`live.ts` accepts both `snake_case` and `camelCase` field names and maps common status/risk spellings, so small backend schema changes should not break the UI. If the backend is unreachable the desk shows an error state with a retry; flipping the switch off returns to demo data.
+Duplicate / split links come from `duplicate_of` / `split_with` (payment id) on a payment, or a `relation: { kind, payment_id }` object.
 
 ## Routes
 
 | Route | Screen |
 |---|---|
-| `/` | Payables queue (home). Dense, lane-grouped table. `?payment=<id>` opens the detail panel. |
+| `/` | Payables queue (home). Dense, lane-grouped table with the detail panel docked at 40%; the first flagged row opens on load. `?payment=<id>` opens a specific one. `esc` shows the "Next up" summary instead of an empty panel. |
 | `/payments/:id` | Redirects to the queue with that payment's panel open. |
 | `/approve` | Owner approval: batch table + slide-to-approve. Reached from bulk approve, `a`, or the palette. |
 | `/receipt/:batchId` | Settlement receipt. |
@@ -73,7 +50,7 @@ Add `?theme=dark` or `?theme=light` to any URL to force a theme (also saved to `
 
 ## Keyboard
 
-`j` / `k` move · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` agent log · `?` all shortcuts · `g` then `p a f n r t` to switch views.
+`j` / `k` move (the panel follows) · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` agent log · `?` all shortcuts · `g` then `p a f n r t` to switch views.
 
 ## Click-through demo
 

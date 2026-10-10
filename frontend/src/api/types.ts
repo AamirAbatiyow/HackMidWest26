@@ -65,6 +65,11 @@ export interface AuditNote {
   author: string
 }
 
+export interface PaymentRelation {
+  kind: 'duplicate_of' | 'split_with'
+  paymentId: string
+}
+
 export interface Payment {
   id: string
   vendor: Vendor
@@ -81,8 +86,10 @@ export interface Payment {
   fastPayEligible: boolean
   /** How the invoice arrived. */
   source: 'email' | 'upload'
-  /** When the invoice was received; drives the "age" column. */
+  /** When the invoice was received. */
   receivedAt: string
+  /** Link to another payment: a duplicate of it, or one half of a split. */
+  relation?: PaymentRelation
   evidence: EvidenceFactor[]
   timeline: TimelineEvent[]
   checklist: ChecklistItem[]
@@ -123,6 +130,9 @@ export interface NetworkHop {
 
 export interface NetworkStatus {
   hops: NetworkHop[]
+  /** End-to-end latency; null when the backend did not report it. */
+  p50Ms: number | null
+  p95Ms: number | null
   modelVersion: string
   tokens: { promptToday: number; completionToday: number; perPaymentAvg: number }
   policyChecks: { passed: number; total: number }
@@ -162,10 +172,18 @@ export interface FairnessReport {
   parity: CountryParity[]
 }
 
+export interface ApiInfo {
+  model: string | null
+  policyMode: string | null
+  version?: string
+}
+
 export interface HealthStatus {
   ok: boolean
   version?: string
   latencyMs?: number
+  /** Why the API is unreachable, for the status tag. */
+  reason?: string
 }
 
 export interface VouchApi {
@@ -180,4 +198,5 @@ export interface VouchApi {
   getRedTeam(): Promise<RedTeamReport>
   getFairness(): Promise<FairnessReport>
   getHealth(): Promise<HealthStatus>
+  getInfo(): Promise<ApiInfo>
 }

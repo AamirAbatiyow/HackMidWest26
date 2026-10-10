@@ -170,6 +170,7 @@ export const DEMO_PAYMENTS: Payment[] = [
     fastPayEligible: false,
     source: 'email',
     receivedAt: daysFromNow(-3, 10),
+    relation: { kind: 'duplicate_of', paymentId: 'pay-003' },
     evidence: [
       { id: 'e1', label: 'Same invoice number as MP-5521 above', weight: 0.9, direction: 'concern' },
       { id: 'e2', label: 'Same amount, arrived 40 minutes later', weight: 0.7, direction: 'concern' },
@@ -201,6 +202,7 @@ export const DEMO_PAYMENTS: Payment[] = [
     fastPayEligible: false,
     source: 'email',
     receivedAt: daysFromNow(-1, 14),
+    relation: { kind: 'split_with', paymentId: 'pay-006' },
     evidence: [
       { id: 'e1', label: 'Two invoices of $4,900 sent 4 minutes apart', weight: 0.85, direction: 'concern' },
       { id: 'e2', label: 'Both sit just under your $5,000 approval limit', weight: 0.7, direction: 'concern' },
@@ -234,6 +236,7 @@ export const DEMO_PAYMENTS: Payment[] = [
     fastPayEligible: false,
     source: 'email',
     receivedAt: daysFromNow(-1, 14),
+    relation: { kind: 'split_with', paymentId: 'pay-005' },
     evidence: [
       { id: 'e1', label: 'Pairs with BL-3307, sent 4 minutes earlier', weight: 0.85, direction: 'concern' },
       { id: 'e2', label: 'Together they total $9,800, above the limit', weight: 0.7, direction: 'concern' },

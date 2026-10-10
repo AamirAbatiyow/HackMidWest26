@@ -183,6 +183,7 @@ export function normalizePayment(raw: unknown): Payment {
     fastPayEligible: Boolean(pick(p, 'fast_pay_eligible', 'fastPayEligible', 'fast_pay')),
     source: str(pick(p, 'source', 'channel')).toLowerCase() === 'upload' ? 'upload' : 'email',
     receivedAt: str(pick(p, 'received_at', 'receivedAt', 'created_at', 'createdAt'), new Date().toISOString()),
+    relation: normalizeRelation(p),
     evidence: normalizeEvidence(pick(p, 'evidence', 'factors', 'explanations')),
     timeline: normalizeTimeline(pick(p, 'timeline', 'history')),
     checklist: normalizeChecklist(pick(p, 'checklist', 'callback_checklist')),
@@ -221,12 +222,27 @@ function normalizeReceipt(raw: unknown, fallbackIds: string[]): SettlementReceip
   }
 }
 
+function normalizeRelation(p: Json): Payment['relation'] {
+  const rel = asRecord(pick(p, 'relation'))
+  const dup = pick(p, 'duplicate_of', 'duplicateOf') ?? (str(pick(rel, 'kind')) === 'duplicate_of' ? pick(rel, 'payment_id', 'paymentId') : undefined)
+  if (dup) return { kind: 'duplicate_of', paymentId: str(dup) }
+  const split = pick(p, 'split_with', 'splitWith') ?? (str(pick(rel, 'kind')) === 'split_with' ? pick(rel, 'payment_id', 'paymentId') : undefined)
+  if (split) return { kind: 'split_with', paymentId: str(split) }
+  return undefined
+}
+
 function normalizeNetwork(raw: unknown): NetworkStatus {
   const n = asRecord(raw)
   const hopsRaw = pick(n, 'hops', 'links')
   const tokens = asRecord(pick(n, 'tokens', 'token_usage'))
   const policy = asRecord(pick(n, 'policy_checks', 'policyChecks', 'policy'))
+  const latency = asRecord(pick(n, 'latency'))
+  const p50Raw = pick(n, 'p50_ms', 'p50Ms', 'latency_p50_ms') ?? pick(latency, 'p50_ms', 'p50Ms', 'p50')
+  const p95Raw = pick(n, 'p95_ms', 'p95Ms', 'latency_p95_ms') ?? pick(latency, 'p95_ms', 'p95Ms', 'p95')
+  const tokensToday = pick(n, 'tokens_today', 'tokensToday')
   return {
+    p50Ms: p50Raw == null ? null : num(p50Raw),
+    p95Ms: p95Raw == null ? null : num(p95Raw),
     hops: Array.isArray(hopsRaw)
       ? hopsRaw.map((h, i) => {
           const x = asRecord(h)
@@ -242,7 +258,7 @@ function normalizeNetwork(raw: unknown): NetworkStatus {
       : [],
     modelVersion: str(pick(n, 'model_version', 'modelVersion', 'model'), 'unknown'),
     tokens: {
-      promptToday: num(pick(tokens, 'prompt_today', 'promptToday', 'prompt')),
+      promptToday: num(pick(tokens, 'prompt_today', 'promptToday', 'prompt'), tokensToday == null ? 0 : num(tokensToday)),
       completionToday: num(pick(tokens, 'completion_today', 'completionToday', 'completion')),
       perPaymentAvg: num(pick(tokens, 'per_payment_avg', 'perPaymentAvg', 'avg')),
     },
@@ -284,7 +300,17 @@ export interface LiveApiOptions {
 export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): VouchApi {
   const base = baseUrl.replace(/\/$/, '')
 
+  /** Try /v1/<path> first; fall back to the unversioned path when the server does not know it. */
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    try {
+      return await requestAt<T>(`/v1${path}`, init)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return requestAt<T>(path, init)
+      throw err
+    }
+  }
+
+  async function requestAt<T>(path: string, init?: RequestInit): Promise<T> {
     let res: Response
     try {
       res = await fetchImpl(`${base}${path}`, {
@@ -391,8 +417,19 @@ export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): V
           version: str(pick(raw, 'version', 'model_version'), undefined as never) || undefined,
           latencyMs: Math.round(performance.now() - started),
         }
-      } catch {
-        return { ok: false, latencyMs: Math.round(performance.now() - started) }
+      } catch (err) {
+        return { ok: false, latencyMs: Math.round(performance.now() - started), reason: err instanceof Error ? err.message : 'unreachable' }
+      }
+    },
+
+    async getInfo() {
+      const raw = asRecord(await request<unknown>('/info'))
+      const model = pick(raw, 'model', 'active_model', 'activeModel', 'model_version', 'modelVersion')
+      const policy = pick(raw, 'policy_mode', 'policyMode', 'policy')
+      return {
+        model: model == null ? null : str(model),
+        policyMode: policy == null ? null : str(policy),
+        version: str(pick(raw, 'version'), undefined as never) || undefined,
       }
     },
   }

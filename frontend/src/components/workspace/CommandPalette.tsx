@@ -8,6 +8,7 @@ import { SHORTCUTS } from '@/lib/shortcuts'
 import { usePayments } from '@/store/PaymentsProvider'
 import { useUi, type LaneFilter } from '@/store/UiProvider'
 import { useTheme } from '@/theme/ThemeProvider'
+import { useApi } from '@/api/ApiProvider'
 import { VIEWS } from './TopBar'
 import { usePaymentActions } from './usePaymentActions'
 
@@ -22,6 +23,7 @@ export function CommandPalette() {
   const { payments, batchReady } = usePayments()
   const { run } = usePaymentActions()
   const { toggle } = useTheme()
+  const { preference, setPreference, mode } = useApi()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
 
@@ -137,6 +139,19 @@ export function CommandPalette() {
               </CommandItem>
               <CommandItem className={ITEM} onSelect={() => { close(); window.dispatchEvent(new Event('vouch:shortcuts')) }}>
                 Keyboard shortcuts <Hint keys={SHORTCUTS.help.keys} />
+              </CommandItem>
+            </CommandGroup>
+            <CommandSeparator />
+
+            <CommandGroup heading={`Data source · ${mode}${preference === 'auto' ? ' (auto)' : ''}`} className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
+              <CommandItem className={ITEM} onSelect={() => { setPreference('auto'); close() }} disabled={preference === 'auto'}>
+                Auto · live when reachable
+              </CommandItem>
+              <CommandItem className={ITEM} onSelect={() => { setPreference('live'); close() }} disabled={preference === 'live'}>
+                Force live API
+              </CommandItem>
+              <CommandItem className={ITEM} onSelect={() => { setPreference('mock'); close() }} disabled={preference === 'mock'}>
+                Force demo data
               </CommandItem>
             </CommandGroup>
           </CommandList>

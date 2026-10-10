@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import type { Payment } from '@/api/types'
 import { Checkbox } from '@/components/ui/checkbox'
 import { EvidenceBar } from '@/components/vouch/EvidenceBar'
+import { RelationTag, relatedTo } from '@/components/vouch/RelationTag'
+import { APPROVAL_LIMIT } from '@/data/payments'
 import { StatusChip } from '@/components/vouch/StatusChip'
 import { VendorTimelineRow } from '@/components/vouch/VendorTimelineRow'
 import { formatMoney } from '@/lib/format'
@@ -31,7 +33,7 @@ function Section({ title, meta, children, className }: { title: string; meta?: s
 
 /** Decide-now panel: who, how much, why, what to do. Everything else is under "More details". */
 export function DetailPanel({ payment: p, className }: { payment: Payment; className?: string }) {
-  const { toggleChecklist, batchReady } = usePayments()
+  const { toggleChecklist, batchReady, payments } = usePayments()
   const ui = useUi()
   const navigate = useNavigate()
   const { run, pending } = usePaymentActions()
@@ -45,6 +47,12 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
   const rest = ordered.slice(TOP_FACTORS)
   const checklistDone = p.checklist.filter((c) => c.done).length
   const checklistComplete = p.checklist.length === 0 || checklistDone === p.checklist.length
+
+  const { duplicates, partner } = relatedTo(p, payments)
+  const jump = (id: string) => {
+    ui.open(id)
+    ui.flash(id)
+  }
 
   const act = async (action: PaymentAction) => {
     await run(p, action)
@@ -61,7 +69,7 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <StatusChip status={p.status} lifecycle={p.lifecycle} />
-          <button type="button" className="num h-5 rounded-xs px-1.5 text-2xs text-muted-foreground hover:bg-surface-2 hover:text-foreground" onClick={() => ui.setPanelOpen(false)} aria-label="Close panel">
+          <button type="button" className="num h-5 rounded-xs px-1.5 text-2xs text-muted-foreground hover:bg-surface-2 hover:text-foreground" onClick={() => ui.setActive(null)} aria-label="Close panel">
             esc
           </button>
         </div>
@@ -70,6 +78,24 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
       <div className="min-h-0 flex-1 overflow-y-auto">
         <section className="border-b px-3 py-2">
           <p className="text-sm text-foreground/90">{p.reason}</p>
+          {p.relation?.kind === 'duplicate_of' && partner && (
+            <p className="num flex items-center gap-1.5 pt-1.5 text-xs text-muted-foreground">
+              <RelationTag label={`dup of ${partner.invoiceNumber}`} onJump={() => jump(partner.id)} />
+              {formatMoney(partner.amount)} already in the {partner.status === 'vouched' ? 'vouched' : 'queue'} lane
+            </p>
+          )}
+          {p.relation?.kind === 'split_with' && partner && (
+            <p className="num flex items-center gap-1.5 pt-1.5 text-xs text-muted-foreground">
+              <RelationTag label={`split with ${partner.invoiceNumber}`} onJump={() => jump(partner.id)} />
+              {formatMoney(p.amount + partner.amount)} combined · each just under the {formatMoney(APPROVAL_LIMIT)} limit
+            </p>
+          )}
+          {duplicates.length > 0 && (
+            <p className="num flex items-center gap-1.5 pt-1.5 text-xs text-muted-foreground">
+              <RelationTag label={`${duplicates.length} duplicate${duplicates.length === 1 ? '' : 's'}`} onJump={() => jump(duplicates[0]!.id)} muted />
+              {duplicates.map((d) => d.invoiceNumber).join(', ')} in Quick check
+            </p>
+          )}
           {flagged && !settled && <p className="pt-1 text-xs text-muted-foreground">Never auto-denied. Open until you act; vendor not notified.</p>}
         </section>
 

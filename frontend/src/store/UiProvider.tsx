@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { VouchStatus } from '@/api/types'
 
 export type LaneFilter = 'all' | VouchStatus | 'held' | 'settled' | 'fastpay'
@@ -36,6 +36,9 @@ interface UiContextValue {
   setExplainOpen: (open: boolean) => void
   lastSettlementId: string | null
   setLastSettlementId: (id: string) => void
+  /** Row briefly highlighted after a "dup of" / "split with" jump. */
+  flashId: string | null
+  flash: (id: string) => void
 }
 
 const UiContext = createContext<UiContextValue | null>(null)
@@ -43,7 +46,7 @@ const UiContext = createContext<UiContextValue | null>(null)
 export function UiProvider({ children }: { children: ReactNode }) {
   const initial = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('payment') : null
   const [activeId, setActiveId] = useState<string | null>(initial)
-  const [panelOpen, setPanelOpen] = useState<boolean>(Boolean(initial))
+  const [panelOpen, setPanelOpen] = useState<boolean>(true)
   const [checked, setCheckedState] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Set<VouchStatus>>(new Set())
   const [filter, setFilter] = useState<LaneFilter>('all')
@@ -54,6 +57,13 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [feedPaused, setFeedPaused] = useState(false)
   const [explainOpen, setExplainOpen] = useState(false)
   const [lastSettlementId, setLastSettlementId] = useState<string | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const flashTimer = useRef<number | null>(null)
+  const flash = useCallback((id: string) => {
+    setFlashId(id)
+    if (flashTimer.current) window.clearTimeout(flashTimer.current)
+    flashTimer.current = window.setTimeout(() => setFlashId(null), 1400)
+  }, [])
 
   const setActive = useCallback((id: string | null) => setActiveId(id), [])
   const open = useCallback((id: string) => {
@@ -112,6 +122,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setExplainOpen,
       lastSettlementId,
       setLastSettlementId,
+      flashId,
+      flash,
     }),
     [
       activeId,
@@ -133,6 +145,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       feedPaused,
       explainOpen,
       lastSettlementId,
+      flashId,
+      flash,
     ],
   )
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>
