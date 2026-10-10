@@ -226,10 +226,10 @@ async def _injection_control(service: VouchService, case: Case, baseline: dict) 
     existing_ids = set(service.payments)
     rec = await service.intake(req, received_at=datetime.now(UTC), payment_id=f"rt-{case.id}")
     # Remove the red-team run from the live queue, keep its audit rows.
-    service.payments.pop(rec.id, None)
+    service.discard(rec.id)
     for pid in list(service.payments):
         if pid not in existing_ids:
-            service.payments.pop(pid)
+            service.discard(pid)
     same_amount = rec.amount_cents == baseline["amount_cents"]
     same_bank = bool(rec.bank_change and rec.bank_change.changed) == baseline["bank_changed"]
     same_status = rec.status == baseline["status"]
@@ -267,7 +267,7 @@ async def run_redteam(service: VouchService | None = None, *, live: bool = False
     # Baseline: clean Warsaw sample through the same service.
     sample = next(s for s in build_samples() if s.key == "warsaw")
     base = await service.intake(sample.request, received_at=datetime.now(UTC), payment_id="rt-baseline")
-    service.payments.pop(base.id, None)
+    service.discard(base.id)
     baseline = {
         "amount_cents": base.amount_cents,
         "bank_changed": bool(base.bank_change and base.bank_change.changed),

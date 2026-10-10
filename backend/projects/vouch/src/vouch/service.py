@@ -240,6 +240,14 @@ class VouchService:
         self.payments.clear()
         self.store.delete_all_payments()
 
+    def discard(self, payment_id: str) -> None:
+        """Remove a payment from the queue (memory + store) but keep its audit rows."""
+        self.payments.pop(payment_id, None)
+        self.store.delete_payment(payment_id)
+
+    def vendors(self) -> list:
+        return self.directory.all()
+
     def uptime_s(self) -> int:
         return int((utcnow() - self.started_at).total_seconds())
 

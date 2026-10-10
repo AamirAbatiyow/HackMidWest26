@@ -214,6 +214,14 @@ class AuditStore:
             s.query(PaymentRow).delete()
             s.commit()
 
+    def delete_payment(self, payment_id: str) -> None:
+        """Drop the queue row only; runs, decisions and policy results stay for the audit trail."""
+        with self.session() as s:
+            row = s.get(PaymentRow, payment_id)
+            if row is not None:
+                s.delete(row)
+                s.commit()
+
     def save_vendors(self, vendors: list[Vendor]) -> None:
         with self.session() as s:
             for v in vendors:
