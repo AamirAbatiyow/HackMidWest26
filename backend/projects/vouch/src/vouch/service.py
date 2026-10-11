@@ -1,34 +1,43 @@
-"""VouchService: the one object the API, CLI and tests share. Owns the store, the vendor
-directory, the LLM runtime, the pipeline and the in-memory view of payments (write-through
-to the audit store, reloaded on startup)."""
+"""VouchService: the façade the API, the demo CLI and the tests share.
+
+It owns the engine (vendor master, runs, Strands graph), the audit store (Postgres or SQLite), the
+attachment store (Object Storage or disk), the embedding index (pgvector or memory) and the LLM
+runtime, and it translates between the frontend's payment contract (approve / hold / appeal / batch
+settle) and the engine's cards, lanes and owner resolutions.
+
+Money only moves through `pipeline.approve` -> engine.settle -> settlement adapter, so every path
+(single approve, batch, fast-pay) passes the same approval interrupt, policy re-check and adapter;
+with ``SETTLEMENT_ADAPTER=xrpl`` the receipts carry real XRPL testnet transaction hashes.
+"""
 
 from __future__ import annotations
 
+import base64
 import logging
 import secrets
-from datetime import UTC, datetime, timedelta
+import threading
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
-from .audit import AuditStore, new_id
-from .config import LlmMode, Settings, get_settings
-from .graph import Services, VouchPipeline
-from .llm import LlmRuntime
-from .contracts import AuditNote, IntakeRequest, PaymentRecord, iso, utcnow
-from .policy import PaymentAttrs, authorize
-from .storage import AttachmentStore
-from .vendors import VendorDirectory, index_vendors, make_embedding_index
+from hm_core.errors import ForbiddenError, NotFoundError, UpstreamError, ValidationFailedError
+from hm_settlement import SettlementAdapter
+
+from vouch import __version__
+from vouch.audit import AuditStore
+from vouch.cards import PaymentCard, now_iso
+from vouch.config import Settings, get_settings
+from vouch.contracts import ExtractedDocument, IntakeRequest, iso, utcnow
+from vouch.domain import CardStatus, Lane, Resolution
+from vouch.engine import Run, Submission, VouchEngine
+from vouch.intake import combine_documents, extract_file, intake_body_text, parse_eml
+from vouch.llm import LLMRuntime
+from vouch.policy import PaymentAttrs, authorize, cedar_available
+from vouch.scorer import Scorer
+from vouch.storage import AttachmentStore
+from vouch.vendors import VendorDirectory, index_vendors, make_embedding_index
+from vouch.views import lifecycle_of, payment_view, receipt_view, risk_of, trust_score, vouch_status
 
 log = logging.getLogger(__name__)
-
-
-class PolicyDenied(Exception):
-    def __init__(self, action: str, reasons: list[str]) -> None:
-        super().__init__(f"{action} denied by policy: {', '.join(reasons)}")
-        self.action = action
-        self.reasons = reasons
-
-
-class NotFound(Exception):
-    pass
 
 
 class VouchService:
@@ -36,221 +45,608 @@ class VouchService:
         self,
         settings: Settings | None = None,
         *,
-        llm_mode: LlmMode | None = None,
+        engine: VouchEngine | None = None,
+        store: AuditStore | None = None,
         database_url: str | None = None,
+        llm_mode: str | None = None,
+        adapter: SettlementAdapter | None = None,
+        scorer: Scorer | None = None,
+        today: date | None = None,
+        seed_demo: bool | None = None,
+        restore: bool = True,
     ) -> None:
         self.settings = settings or get_settings()
-        url = database_url or self.settings.effective_database_url
-        self.store = AuditStore(url)
-        self.llm = LlmRuntime(
-            self.settings,
-            mode=llm_mode,
-            embedding_lookup=self.store.embedding_lookup,
-            embedding_persist=self.store.embedding_persist,
-        )
-        self.directory = VendorDirectory(self.store.load_vendors())
-        self.embedding_index = make_embedding_index(self.store.engine, url.startswith("postgresql"))
-        self.attachments = AttachmentStore(self.settings)
-        self.pipeline = VouchPipeline(
-            Services(
-                settings=self.settings,
-                llm=self.llm,
-                directory=self.directory,
-                embedding_index=self.embedding_index,
-                store=self.store,
-                attachments=self.attachments,
-            )
-        )
-        self.payments: dict[str, PaymentRecord] = {p.id: p for p in self.store.load_payments()}
+        s = self.settings
+        url = database_url or s.effective_database_url
+        self.store = store or AuditStore.open(url, s.sqlite_url)
+        self.attachments = AttachmentStore(s)
+        self.lock = threading.RLock()
         self.started_at = utcnow()
         self.vendors_indexed = 0
+        self.redteam: dict[str, Any] | None = None
+        self._decision_sig: dict[str, tuple[Any, ...]] = {}
 
-    # ------------------------------------------------------------ vendors ----
-    def load_vendors(self, vendors) -> None:
-        for v in vendors:
-            self.directory.add(v)
-        self.store.save_vendors(list(vendors))
+        if engine is None:
+            if llm_mode and llm_mode != "auto":
+                s = s.model_copy(update={"llm_mode": llm_mode})
+            llm = LLMRuntime.from_settings(
+                s, embedding_lookup=self.store.embedding_lookup, embedding_persist=self.store.embedding_persist
+            )
+            engine = VouchEngine(settings=s, llm=llm, adapter=adapter, scorer=scorer, today=today)
+        self.engine = engine
+        self.engine.embedding_index = make_embedding_index(self.store.engine, self.store.backend == "postgres")
 
-    def index_vendor_embeddings(self) -> int:
-        self.vendors_indexed = index_vendors(
-            self.directory, self.llm.embedder_or_none(), self.embedding_index
-        )
+        if restore:
+            self._restore()
+        self.engine.on_change = self._persist_run
+        self.engine.on_vendors_changed = self.store.save_vendors
+        if self.engine.vendors and self.store.counts()["vendors"] == 0:
+            self.store.save_vendors(list(self.engine.vendors.values()))
+
+        want_seed = s.seed_demo if seed_demo is None else seed_demo
+        if want_seed and not self.engine.runs:
+            self.seed(run_demo=True)
+        self.index_vendor_embeddings()
+
+    # -- persistence -------------------------------------------------------------------------------
+
+    def _persist_run(self, run: Run) -> None:
+        self.store.save_run(run, llm_mode=self.engine.llm.mode, model=self.engine.llm.model_name)
+        for card in run.card_list():
+            if card.policy is None:
+                continue
+            sig = (card.policy.lane.value, card.status.value, tuple(card.policy.reasons))
+            if self._decision_sig.get(card.id) != sig:
+                self._decision_sig[card.id] = sig
+                self.store.record_decision(card)
+        paid_vendors = {c.invoice.vendor_id for c in run.card_list() if c.status == CardStatus.PAID}
+        touched = [self.engine.vendors[v] for v in paid_vendors if v in self.engine.vendors]
+        if touched:
+            self.store.save_vendors(touched)
+
+    def _restore(self) -> None:
+        vendors = self.store.load_vendors()
+        if vendors and not self.engine.vendors:
+            self.engine.load_vendors(vendors, replace=True)
+        restored = 0
+        for data in self.store.load_runs():
+            if data["id"] in self.engine.runs:
+                continue
+            run = Run(
+                id=data["id"],
+                submissions=[Submission.model_validate(sub) for sub in data.get("submissions", [])],
+                created_at=data.get("created_at") or now_iso(),
+                status=data.get("status") or "completed",
+                label=data.get("label") or "",
+                cards={c.id: c for c in data.get("cards", [])},
+                events=list(data.get("events") or []),
+                node_ms=dict(data.get("node_ms") or {}),
+                pending=data.get("pending"),
+                approval=data.get("approval"),
+                settlements=list(data.get("settlements") or []),
+                error=data.get("error"),
+            )
+            if run.status == "running":
+                run.status, run.error = "failed", "interrupted by a restart"
+                run.emit("run_failed", error=run.error)
+            # The Strands graph object is not persisted: the next approval builds a fresh settle graph
+            # (policy -> funding -> settle) that re-checks every card before money moves.
+            run.graph = None
+            self.engine.runs[run.id] = run
+            for card in run.card_list():
+                if card.policy:
+                    self._decision_sig[card.id] = (
+                        card.policy.lane.value,
+                        card.status.value,
+                        tuple(card.policy.reasons),
+                    )
+            restored += 1
+        if restored:
+            log.info("restored %d run(s) from %s", restored, self.store.backend)
+
+    # -- demo / admin ------------------------------------------------------------------------------
+
+    def seed(self, run_demo: bool = True, background_vendors: int = 250) -> Run | None:
+        from vouch.demo import demo_submissions, seed
+        from vouch.pipeline import execute
+
+        with self.lock:
+            seed(self.engine, background_vendors=background_vendors)
+            if not run_demo:
+                return None
+            run = self.engine.new_run(demo_submissions(self.engine.today), label="demo: Friday vendor run")
+            execute(self.engine, run)
+            return run
+
+    def reset(self, run_demo: bool = True) -> Run | None:
+        """Forget every run (audit rows stay) and optionally replay the scripted demo."""
+        with self.lock:
+            self.engine.runs.clear()
+            self._decision_sig.clear()
+            self.store.delete_all_runs()
+            self.redteam = None
+            return self.seed(run_demo=run_demo)
+
+    def index_vendor_embeddings(self, limit: int = 64) -> int:
+        embedder = self.engine.llm.embedder_or_none()
+        if embedder is None or self.engine.embedding_index is None:
+            return 0
+        vendors = list(self.engine.vendors.values())
+        demo = [v for v in vendors if v.id.startswith("v-")]
+        rest = [v for v in vendors if not v.id.startswith("v-")][: max(0, limit - len(demo))]
+        try:
+            self.vendors_indexed = index_vendors(VendorDirectory(demo + rest), embedder, self.engine.embedding_index)
+        except Exception as exc:  # embeddings are a re-ranker only; never block startup on them
+            log.warning("vendor embedding index skipped: %s", exc)
         return self.vendors_indexed
-
-    # ------------------------------------------------------------- intake ----
-    async def intake(
-        self, request: IntakeRequest, *, received_at: datetime | None = None, payment_id: str | None = None
-    ) -> PaymentRecord:
-        existing = sorted(self.payments.values(), key=lambda p: p.received_at)
-        record, _ctx = await self.pipeline.run_intake(
-            request, existing=existing, payment_id=payment_id, received_at=received_at
-        )
-        self.payments[record.id] = record
-        self._link_relations(record)
-        return record
-
-    def _link_relations(self, record: PaymentRecord) -> None:
-        """Make duplicate/split links visible from both sides."""
-        if record.duplicate_of and record.duplicate_of in self.payments:
-            pass  # the earlier copy stays as-is: it is the one that is ready to pay
-        if record.split_with and record.split_with in self.payments:
-            other = self.payments[record.split_with]
-            if other.split_with is None and other.lifecycle == "pending":
-                other.split_with = record.id
-                if other.risk == "none":
-                    other.risk = "duplicate_or_split"
-                if other.status == "vouched":
-                    other.status = "quick_check"
-                    other.reason = f"One of two invoices just under your approval limit, sent minutes apart ({record.invoice_number} followed)."
-                    other.checklist = record.checklist
-                    other.fast_pay_eligible = False
-                    other.evidence = [e for e in other.evidence] + [
-                        e.model_copy(update={"id": f"x{i}"})
-                        for i, e in enumerate(record.evidence)
-                        if e.direction == "concern"
-                    ]
-                other.updated_at = iso(utcnow()) or ""
-                self.store.save_payment(other)
-
-    # ------------------------------------------------------------- owner actions ----
-    def get(self, payment_id: str) -> PaymentRecord:
-        p = self.payments.get(payment_id)
-        if p is None:
-            raise NotFound(payment_id)
-        return p
-
-    def list(self) -> list[PaymentRecord]:
-        return sorted(self.payments.values(), key=lambda p: p.received_at)
-
-    def _attrs(self, p: PaymentRecord) -> PaymentAttrs:
-        return PaymentAttrs(
-            status=p.status,
-            lifecycle=p.lifecycle,
-            risk=p.risk,
-            trust_score=p.trust_score,
-            fast_pay_eligible=p.fast_pay_eligible,
-            bank_changed=bool(p.bank_change and p.bank_change.changed),
-            bank_change_verified=bool(p.bank_change and p.bank_change.requester_verified),
-            amount_cents=p.amount_cents,
-            vendor_known=bool(p.vendor_resolution and p.vendor_resolution.status == "known"),
-        )
-
-    def _owner_action(
-        self, payment_id: str, action: str, note: str | None, author: str, default_note: str
-    ) -> PaymentRecord:
-        p = self.get(payment_id)
-        outcome = authorize("Owner", action, self._attrs(p), payment_id=p.id)
-        self.store.record_policy(
-            p.run_id, p.id, outcome.engine, "owner", action, outcome.allowed, outcome.reasons
-        )
-        if not outcome.allowed:
-            raise PolicyDenied(action, outcome.reasons)
-        text = (note or "").strip() or default_note
-        p.audit_notes.insert(0, AuditNote(id=new_id("n"), at=iso(utcnow()) or "", text=text, author=author))
-        if action == "approve":
-            p.lifecycle = "approved"
-            p.status = "vouched"
-        elif action == "hold":
-            p.lifecycle = "held"
-        elif action == "appeal":
-            p.lifecycle = "appealed"
-            p.status = "vouched"
-            p.trust_score = max(p.trust_score, 70)
-        p.updated_at = iso(utcnow()) or ""
-        self.store.record_approval(
-            p.id, action, text, author, outcome.reasons[0] if outcome.reasons else None
-        )
-        self.store.save_payment(p)
-        return p
-
-    def approve(self, payment_id: str, note: str | None = None, author: str = "Owner") -> PaymentRecord:
-        return self._owner_action(payment_id, "approve", note, author, "Marked as verified by owner.")
-
-    def hold(self, payment_id: str, note: str | None = None, author: str = "Owner") -> PaymentRecord:
-        return self._owner_action(payment_id, "hold", note, author, "Held for a quick check.")
-
-    def appeal(self, payment_id: str, note: str | None = None, author: str = "Owner") -> PaymentRecord:
-        return self._owner_action(payment_id, "appeal", note, author, "Owner vouched for this vendor.")
-
-    def settle(self, payment_ids: list[str], funding: str = "now") -> dict:
-        """Simulated stablecoin settlement: policy-checked per payment, recorded with a tx id.
-
-        The XRPL/USDC adapter from the original backend is not present in this tree; this
-        produces a deterministic receipt so the owner flow is complete end to end.
-        """
-        items = [self.get(pid) for pid in payment_ids]
-        for p in items:
-            if p.lifecycle == "pending" and p.status == "vouched":
-                # An approve click in the UI always precedes settle; accept implicit approval
-                # for vouched rows but record it so the audit trail shows who approved.
-                self.approve(p.id, "Approved in batch", "Owner")
-            outcome = authorize(
-                "System",
-                "settle",
-                self._attrs(p),
-                {"owner_approval_recorded": self.store.has_owner_approval(p.id)},
-                payment_id=p.id,
-            )
-            self.store.record_policy(
-                p.run_id, p.id, outcome.engine, "system", "settle", outcome.allowed, outcome.reasons
-            )
-            if not outcome.allowed:
-                raise PolicyDenied(
-                    "settle", outcome.reasons + [f"payment {p.id} is {p.lifecycle}/{p.status}"]
-                )
-        batch_id = f"batch-{secrets.token_hex(3)}"
-        tx_id = "0x" + secrets.token_hex(32)
-        settled_at = utcnow()
-        scheduled_for = None
-        if funding == "scheduled":
-            nxt = (settled_at + timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0)
-            scheduled_for = iso(nxt)
-        total = sum(p.amount_cents for p in items)
-        for p in items:
-            p.lifecycle = "settled"
-            p.settlement_tx_id = tx_id
-            p.batch_id = batch_id
-            p.updated_at = iso(settled_at) or ""
-            self.store.save_payment(p)
-        self.store.record_settlement(batch_id, tx_id, [p.id for p in items], total, funding, scheduled_for)
-        return {
-            "batch_id": batch_id,
-            "tx_id": tx_id,
-            "explorer_url": f"https://explorer.vouch.example/tx/{tx_id}",
-            "settled_at": iso(settled_at),
-            "funding": funding,
-            "scheduled_for": scheduled_for,
-            "total_amount": total / 100,
-            "total_cents": total,
-            "lines": [
-                {
-                    "payment_id": p.id,
-                    "vendor_name": p.vendor_name,
-                    "invoice_number": p.invoice_number,
-                    "amount": p.amount_cents / 100,
-                }
-                for p in items
-            ],
-            "network": "USDC · Base (simulated)",
-            "fee_usd": 0,
-        }
-
-    # ------------------------------------------------------------- admin ----
-    def reset_payments(self) -> None:
-        self.payments.clear()
-        self.store.delete_all_payments()
-
-    def discard(self, payment_id: str) -> None:
-        """Remove a payment from the queue (memory + store) but keep its audit rows."""
-        self.payments.pop(payment_id, None)
-        self.store.delete_payment(payment_id)
-
-    def vendors(self) -> list:
-        return self.directory.all()
 
     def uptime_s(self) -> int:
         return int((utcnow() - self.started_at).total_seconds())
 
-    @staticmethod
-    def now() -> datetime:
-        return datetime.now(UTC)
+    # -- intake ------------------------------------------------------------------------------------
+
+    def submit(self, submissions: list[Submission], label: str = "") -> Run:
+        from vouch.pipeline import execute
+
+        with self.lock:
+            run = self.engine.new_run(submissions, label=label)
+            execute(self.engine, run)
+            return run
+
+    def intake(self, request: IntakeRequest, label: str = "") -> Run:
+        """One email or upload -> one invoice -> one run through the full graph."""
+        docs: list[ExtractedDocument] = []
+        stored: list[tuple[ExtractedDocument, str | None]] = []
+        intake_id = f"in-{secrets.token_hex(4)}"
+        body = intake_body_text(request)
+        if body.strip():
+            docs.append(
+                ExtractedDocument(filename="email-body", kind="email_body", text=body, extractor="email-body")
+            )
+        for att in request.attachments:
+            data = base64.b64decode(att.data_b64) if att.data_b64 else b""
+            if not data:
+                continue
+            doc = extract_file(data, att.filename, att.content_type)
+            key = None
+            try:
+                key = self.attachments.put(
+                    AttachmentStore.key_for(intake_id, doc.sha256 or att.sha256, att.filename), data, att.content_type
+                )
+            except Exception as exc:  # storage is best effort; the hash is what the audit trail needs
+                log.warning("attachment not stored: %s", exc)
+            docs.append(doc)
+            stored.append((doc, key))
+        text = combine_documents(docs).strip()
+        if not text:
+            raise ValidationFailedError(
+                "no readable text in the email body or attachments",
+                details={"documents": [d.model_dump(exclude={"text", "tables"}) for d in docs]},
+            )
+        sub = Submission(
+            text=text,
+            headers=dict(request.headers),
+            source="email" if request.source == "email" else "upload",
+            received_at=iso(request.received_at) if request.received_at else now_iso(),
+            documents=[
+                {
+                    "filename": d.filename,
+                    "kind": d.kind,
+                    "sha256": d.sha256,
+                    "extractor": d.extractor,
+                    "warnings": d.warnings,
+                }
+                for d in docs
+            ],
+            submitted_by=request.submitted_by,
+            delivery_confirmed=request.delivery_confirmed,
+            po_number=request.po_number,
+        )
+        run = self.submit([sub], label=label or f"{request.source} intake")
+        card_id = f"{run.id}.1"
+        for doc, key in stored:
+            self.store.record_document(
+                run.id, card_id, doc.filename, doc.kind, doc.sha256, doc.extractor, doc.text, key
+            )
+        return run
+
+    def intake_eml(self, raw: bytes, *, submitted_by: str = "ap-inbox") -> Run:
+        req = parse_eml(raw)
+        req.submitted_by = submitted_by
+        return self.intake(req, label="email intake")
+
+    def intake_files(
+        self,
+        files: list[tuple[str, str | None, bytes]],
+        *,
+        submitted_by: str = "ap-clerk",
+        delivery_confirmed: bool = False,
+        po_number: str | None = None,
+        body_text: str = "",
+    ) -> Run:
+        from vouch.contracts import Attachment
+
+        req = IntakeRequest(
+            source="upload",
+            body_text=body_text,
+            submitted_by=submitted_by,
+            delivery_confirmed=delivery_confirmed,
+            po_number=po_number,
+            attachments=[
+                Attachment(
+                    filename=name,
+                    content_type=ctype or "application/octet-stream",
+                    data_b64=base64.b64encode(data).decode(),
+                    size=len(data),
+                )
+                for name, ctype, data in files
+            ],
+        )
+        return self.intake(req, label="file upload")
+
+    # -- payments (frontend contract) --------------------------------------------------------------
+
+    def _pairs(self) -> list[tuple[Run, PaymentCard]]:
+        return [(run, card) for run in self.engine.runs.values() for card in run.card_list()]
+
+    def payments(self) -> list[dict[str, Any]]:
+        return [payment_view(self.engine, run, card) for run, card in self._pairs()]
+
+    def payment(self, card_id: str) -> dict[str, Any]:
+        run, card = self.engine.find_card(card_id)
+        return payment_view(self.engine, run, card)
+
+    def find(self, card_id: str) -> tuple[Run, PaymentCard]:
+        return self.engine.find_card(card_id)
+
+    def _attrs(self, card: PaymentCard) -> PaymentAttrs:
+        ch = card.checks
+        return PaymentAttrs(
+            status=vouch_status(card),
+            lifecycle=lifecycle_of(card),
+            risk=risk_of(card),
+            trust_score=trust_score(card),
+            fast_pay_eligible=bool(card.policy and card.policy.lane == Lane.FAST_PAY),
+            bank_changed=bool(ch.get("bank_mismatch") or ch.get("bank_change_recent")),
+            bank_change_verified=bool(ch.get("bank_change_confirmed") or card.has_resolution("confirm_bank")),
+            amount_cents=card.payable_cents,
+            vendor_known=card.vendor is not None,
+        )
+
+    def _authorize(
+        self, card: PaymentCard, principal: str, action: str, context: dict[str, Any] | None = None
+    ) -> list[str]:
+        outcome = authorize(principal, action, self._attrs(card), context, payment_id=card.id)
+        self.store.record_policy(
+            card.run_id, card.id, outcome.engine, principal.lower(), action, outcome.allowed, outcome.reasons
+        )
+        if not outcome.allowed:
+            raise ForbiddenError(
+                f"{action} denied by policy ({outcome.engine}): {', '.join(outcome.reasons)}",
+                details={"rules": outcome.reasons, "lifecycle": lifecycle_of(card), "status": vouch_status(card)},
+            )
+        return outcome.reasons
+
+    def _resolve(self, card: PaymentCard, kind: str, actor: str, note: str, **kw: Any) -> PaymentCard:
+        return self.engine.resolve(card.id, Resolution(kind=kind, actor=actor, note=note), **kw)  # type: ignore[arg-type]
+
+    def _clear_holds(self, card: PaymentCard, actor: str, note: str) -> None:
+        """Owner verification from the console: release the owner hold, resolve reviewable risks, and
+        record the call-back confirmation for bank holds (the console only ever shows the number on file)."""
+        if card.policy is None or card.policy.lane != Lane.HOLD:
+            return
+        reasons = set(card.policy.reasons)
+        from vouch.policy import R_BANK, R_LIMIT, R_OWNER_HOLD
+
+        if R_OWNER_HOLD in reasons:
+            self._resolve(card, "release_hold", actor, note)
+        if R_BANK in reasons and card.vendor:
+            self._resolve(
+                card,
+                "confirm_bank",
+                actor,
+                note or "call-back checklist completed in the Vouch console",
+                phone_called=card.vendor.phone,
+            )
+        if R_LIMIT in reasons:
+            self._resolve(card, "limit_override", actor, note or "one-time limit override by the owner")
+        if not card.has_resolution("resolve_risk"):
+            self._resolve(card, "resolve_risk", actor, note or "owner reviewed the evidence and verified the payment")
+
+    def approve(self, card_id: str, note: str | None = None, author: str = "Owner") -> dict[str, Any]:
+        """Owner approval: a READY card becomes APPROVED (in the batch); a HOLD card is first verified."""
+        with self.lock:
+            run, card = self.engine.find_card(card_id)
+            if card.status in (CardStatus.PAID, CardStatus.APPROVED):
+                return payment_view(self.engine, run, card)
+            text = (note or "").strip()
+            rules = self._authorize(card, "Owner", "approve")
+            if card.status == CardStatus.HOLD:
+                self._clear_holds(card, author, text)
+                if card.status == CardStatus.HOLD:
+                    raise ValidationFailedError(
+                        "still on hold: " + "; ".join(card.policy.reasons if card.policy else []),
+                        details={"required_actions": card.policy.required_actions if card.policy else []},
+                    )
+            card.resolutions.append(
+                Resolution(kind="approve", actor=author, note=text or "Approved by the owner", at=now_iso())
+            )
+            card.status = CardStatus.APPROVED
+            card.log("owner_approved", actor=author, note=text)
+            run.emit("owner_approved", card_id=card.id, actor=author)
+            card.explanation, card.explanation_source = self.engine.template_explanation(card), "template"
+            self.engine.build_facts(card)
+            self.store.record_approval(card.id, "approve", text, author, rules[0] if rules else None)
+            self.engine.changed(run)
+            return payment_view(self.engine, run, card)
+
+    def hold(self, card_id: str, note: str | None = None, author: str = "Owner") -> dict[str, Any]:
+        with self.lock:
+            run, card = self.engine.find_card(card_id)
+            text = (note or "").strip() or "Held for a quick check"
+            rules = self._authorize(card, "Owner", "hold")
+            if card.status == CardStatus.APPROVED:
+                card.status = CardStatus.READY  # back out of the batch first
+            self._resolve(card, "owner_hold", author, text)
+            self.store.record_approval(card.id, "hold", text, author, rules[0] if rules else None)
+            return payment_view(self.engine, run, card)
+
+    def appeal(self, card_id: str, note: str | None = None, author: str = "Owner") -> dict[str, Any]:
+        """'Vendor is fine': the owner vouches, reviewable holds are resolved, the card waits in the batch."""
+        with self.lock:
+            run, card = self.engine.find_card(card_id)
+            text = (note or "").strip() or "Owner vouched for this vendor"
+            rules = self._authorize(card, "Owner", "appeal")
+            if card.status == CardStatus.HOLD:
+                self._clear_holds(card, author, text)
+            self._resolve(card, "appeal", author, text)
+            self.store.record_approval(card.id, "appeal", text, author, rules[0] if rules else None)
+            return payment_view(self.engine, run, card)
+
+    def settle(
+        self, card_ids: list[str], funding: str = "now", author: str = "Owner", note: str = ""
+    ) -> dict[str, Any]:
+        """Batch settlement for the frontend: every card is owner-approved, Cedar-checked and then paid
+        by the engine's settle node (policy re-check -> adapter batch). Real XRPL hashes with the xrpl adapter."""
+        from vouch.pipeline import approve as approve_run
+
+        with self.lock:
+            pairs = [self.engine.find_card(cid) for cid in dict.fromkeys(card_ids)]
+            for _run, card in pairs:
+                if card.status == CardStatus.PAID:
+                    raise ValidationFailedError(f"{card.id} is already settled", details={"tx": card.receipt})
+                if card.status == CardStatus.HOLD:
+                    raise ValidationFailedError(
+                        f"{card.id} is on hold: " + "; ".join(card.policy.reasons if card.policy else []),
+                        details={"card_id": card.id, "required_actions": card.policy.required_actions if card.policy else []},
+                    )
+                if card.status != CardStatus.APPROVED:
+                    self.approve(card.id, note or "Approved in batch", author)
+                self._authorize(card, "System", "settle", {"owner_approval_recorded": True})
+            batch_id = f"batch-{secrets.token_hex(3)}"
+            adapter = self.engine.adapter
+            if funding == "scheduled":
+                pay_on = self._next_business_day()
+                for run, card in pairs:
+                    card.funding = {
+                        **(card.funding or {}),
+                        "action": "schedule",
+                        "pay_on": pay_on.isoformat(),
+                        "reason": "owner scheduled the batch",
+                    }
+                    card.log("scheduled", pay_on=pay_on.isoformat(), batch_id=batch_id)
+                    self.engine.changed(run)
+                scheduled_for = f"{pay_on.isoformat()}T14:00:00Z"
+                self.store.record_settlement(
+                    batch_id, pairs[0][0].id, "", None, [c.id for _, c in pairs],
+                    sum(c.payable_cents for _, c in pairs), funding, scheduled_for,
+                    adapter.name, adapter.network, "scheduled", [],
+                )  # fmt: skip
+                return receipt_view(
+                    batch_id=batch_id, settlements=[], cards=pairs, funding=funding,
+                    scheduled_for=scheduled_for, adapter_name=adapter.name, network=adapter.network,
+                )  # fmt: skip
+
+            by_run: dict[str, list[str]] = {}
+            runs: dict[str, Run] = {}
+            for run, card in pairs:
+                by_run.setdefault(run.id, []).append(card.id)
+                runs[run.id] = run
+            before = {rid: len(runs[rid].settlements) for rid in by_run}
+            errors: list[str] = []
+            for rid, ids in by_run.items():
+                try:
+                    approve_run(
+                        self.engine, runs[rid], {"approved": True, "card_ids": ids, "approver": author, "note": note}
+                    )
+                except Exception as exc:  # the run records the failure; report it with the receipt
+                    log.exception("settlement failed for run %s", rid)
+                    errors.append(f"{rid}: {exc}")
+            settlements = [s for rid, run in runs.items() for s in run.settlements[before[rid] :]]
+            paid = [c for _, c in pairs if c.status == CardStatus.PAID]
+            if not paid:
+                detail = errors or [
+                    e.get("error") or str(e.get("reasons") or e.get("cards"))
+                    for run in runs.values()
+                    for e in run.events[-6:]
+                    if e["type"] in ("settlement_failed", "batch_blocked", "settle_blocked")
+                ]
+                raise UpstreamError("settlement did not complete: " + "; ".join(detail or ["no card was paid"]))
+            payments = [p for s in settlements for p in s.get("payments", [])]
+            first = payments[0] if payments else {}
+            self.store.record_settlement(
+                batch_id, pairs[0][0].id,
+                first.get("batch_tx_id") or first.get("tx_id") or "",
+                first.get("batch_explorer_url") or first.get("explorer_url"),
+                [c.id for c in paid], sum(c.payable_cents for c in paid), funding, None,
+                adapter.name, adapter.network, "standard", payments,
+            )  # fmt: skip
+            receipt = receipt_view(
+                batch_id=batch_id, settlements=settlements, cards=pairs, funding=funding,
+                scheduled_for=None, adapter_name=adapter.name, network=adapter.network,
+            )  # fmt: skip
+            if errors:
+                receipt["errors"] = errors
+            return receipt
+
+    def _next_business_day(self) -> date:
+        d = self.engine.today + timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        return d
+
+    def audit(self, card_id: str) -> dict[str, Any]:
+        run, card = self.engine.find_card(card_id)
+        return {
+            "card_id": card.id,
+            "run_id": run.id,
+            "status": card.status.value,
+            "lane": card.policy.lane.value if card.policy else None,
+            "timeline": card.timeline,
+            "resolutions": [r.model_dump() for r in card.resolutions],
+            "receipt": card.receipt,
+            "store": self.store.audit_trail(card.id),
+        }
+
+    # -- vitals ------------------------------------------------------------------------------------
+
+    def info(self) -> dict[str, Any]:
+        e = self.engine
+        s = self.settings
+        scorer = e.scorer()
+        return {
+            "project": "vouch",
+            "app": s.app_name,
+            "version": __version__,
+            "description": "Payment trust layer: keeps irreversible stablecoin payouts away from bad actors "
+            "without slowing honest vendors.",
+            "business": s.business_name,
+            "owner": s.owner_name,
+            "today": e.today.isoformat(),
+            "region": s.region,
+            "llm_mode": e.llm.mode,
+            "llm_provider": e.llm.provider(),
+            "llm_model": e.llm.model_name,
+            "scorer": getattr(scorer, "name", "?"),
+            "model": f"{getattr(scorer, 'name', '?')} {getattr(scorer, 'version', '')}".strip(),
+            "model_version": getattr(scorer, "version", None),
+            "policy_mode": "cedar" if cedar_available() else "python-mirror",
+            "settlement_adapter": e.adapter.name,
+            "settlement_network": e.adapter.network,
+            "database": self.store.backend,
+            "attachments": self.attachments.backend,
+            "vendors": len(e.vendors),
+            "runs": len(e.runs),
+            "limits_cents": {
+                "approval": e.limits.approval_limit_cents,
+                "fast_pay": e.limits.fast_pay_limit_cents,
+                "single_payment": e.limits.single_payment_limit_cents,
+                "batch": e.limits.batch_limit_cents,
+            },
+        }
+
+    def netz(self) -> dict[str, Any]:
+        from hm_llm.clients import akamai_limiter
+        from hm_llm.settings import get_llm_settings
+
+        from vouch.pipeline import LLM_NODES, STAGES
+
+        e = self.engine
+        llm_settings = get_llm_settings()
+        shared_limiter = akamai_limiter(llm_settings)
+        timings = {
+            k: {"n": len(v), "p50_ms": _pct(v, 0.5), "p95_ms": _pct(v, 0.95)} for k, v in sorted(e.timings.items())
+        }
+        cards = [c for r in e.runs.values() for c in r.card_list()]
+        hops = []
+        for a, b in zip(STAGES, STAGES[1:], strict=False):
+            t = timings.get(f"node:{b}", {})
+            hops.append(
+                {
+                    "id": f"{a}->{b}",
+                    "from": a,
+                    "to": b,
+                    "p50_ms": t.get("p50_ms") or 0,
+                    "p95_ms": t.get("p95_ms") or 0,
+                    "private": b not in LLM_NODES,
+                    "llm": b in LLM_NODES,
+                }
+            )
+        stats = e.llm.stats
+        n_cards = max(1, len(cards))
+        policy_total = sum(1 for c in cards if c.policy)
+        policy_passed = sum(1 for c in cards if c.policy and c.policy.allowed)
+        all_node = [ms for k, v in e.timings.items() if k.startswith("node:") for ms in v]
+        scorer = e.scorer()
+        return {
+            "service": "vouch-api",
+            "version": __version__,
+            "runs": len(e.runs),
+            "cards": len(cards),
+            "paid": sum(c.status == CardStatus.PAID for c in cards),
+            "held": sum(c.status == CardStatus.HOLD for c in cards),
+            "llm": {
+                "mode": e.llm.mode,
+                "provider": e.llm.provider(),
+                "model": e.llm.model_name,
+                "limits": {
+                    "rpm": llm_settings.llm_requests_per_minute,
+                    "client_rpm": self.settings.llm_rpm,
+                    "context_tokens": llm_settings.llm_max_context_tokens,
+                    "output_tokens": llm_settings.llm_max_output_tokens,
+                },
+                "rate_limit_remaining": shared_limiter.remaining,
+                "rate_limit": e.llm.limiter.snapshot(),
+                "requests": e.llm.request_stats.snapshot(),
+                **stats.to_dict(),
+            },
+            "latency": timings,
+            "p50_ms": _pct(all_node, 0.5),
+            "p95_ms": _pct(all_node, 0.95),
+            "hops": hops,
+            "model_version": f"{getattr(scorer, 'name', '?')} {getattr(scorer, 'version', '')}".strip(),
+            "tokens": {
+                "prompt_today": stats.input_tokens,
+                "completion_today": stats.output_tokens,
+                "per_payment_avg": round((stats.input_tokens + stats.output_tokens) / n_cards, 1),
+            },
+            "policy_checks": {"passed": policy_passed, "total": policy_total},
+            "policy_engine": "cedar" if cedar_available() else "python-mirror",
+            "region": self.settings.region,
+            "updated_at": iso(utcnow()),
+            "explanations": {
+                "llm": sum(c.explanation_source == "llm" for c in cards),
+                "template": sum(c.explanation_source == "template" for c in cards),
+            },
+            "scorer": getattr(scorer, "name", "?"),
+            "settlement": {"adapter": e.adapter.name, "network": e.adapter.network},
+            "store": self.store.counts(),
+        }
+
+    def run_redteam(self, force: bool = False) -> dict[str, Any]:
+        from vouch.redteam import run_suite
+
+        if self.redteam is not None and not force:
+            return self.redteam
+        result = run_suite(self.engine.settings, scorer=self.engine.scorer())
+        now = datetime.now(UTC)
+        result["ran_at"] = now.date().isoformat()
+        result["run_at"] = iso(now)
+        result["model_version"] = self.info()["model"]
+        for case in result["cases"]:
+            case.setdefault("prompt", case.get("attack"))
+            detail = case.get("detail") or {}
+            reasons = detail.get("reasons") or detail.get("second_reasons") or []
+            case.setdefault("rule", reasons[0] if reasons else ("blocked" if case["blocked"] else "NOT BLOCKED"))
+        self.redteam = result
+        return result
+
+
+def _pct(values: list[float], p: float) -> float | None:
+    if not values:
+        return None
+    s = sorted(values)
+    return round(s[min(int(p * len(s)), len(s) - 1)], 1)
+
+
+__all__ = ["NotFoundError", "VouchService"]

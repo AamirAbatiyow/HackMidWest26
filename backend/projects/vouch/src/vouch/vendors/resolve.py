@@ -31,6 +31,16 @@ class Embedder(Protocol):
     def embed(self, texts: list[str]) -> list[list[float]] | None: ...
 
 
+def name_similarity(a: str, b: str) -> float:
+    """0..100. Exact normalized names score 100; a name that merely *contains* the other (``Prairie
+    Packaging`` vs ``Prairie Packaging Supply``) stays below the known threshold."""
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 100.0
+    return 0.6 * fuzz.ratio(a, b) + 0.4 * fuzz.token_set_ratio(a, b)
+
+
 def vendor_embedding_text(v: Vendor) -> str:
     return f"{v.name} | {v.address or ''} | {v.country}".strip()
 
@@ -91,7 +101,7 @@ def resolve_vendor(
     qa = normalize_address(claim.address)
     if res.status != "known" and (qn or qa):
         for cand in directory.all():
-            score = fuzz.token_set_ratio(qn, normalize_name(cand.name)) if qn else 0.0
+            score = name_similarity(qn, normalize_name(cand.name)) if qn else 0.0
             if qa and cand.address and normalize_address(cand.address) == qa:
                 score = max(score, 88.0)
             if score >= UNCERTAIN_FUZZY:
@@ -135,7 +145,7 @@ def resolve_vendor(
         elif (
             res.status != "known"
             and len(bank_matches) == 1
-            and fuzz.token_set_ratio(qn, normalize_name(bank_matches[0].name)) >= UNCERTAIN_FUZZY
+            and name_similarity(qn, normalize_name(bank_matches[0].name)) >= UNCERTAIN_FUZZY
         ):
             known(bank_matches[0], "bank_account", 0.9)
         else:

@@ -1,47 +1,30 @@
-"""vouch API: the HTTP backend the (separate) frontend talks to. OpenAPI docs at /docs."""
+"""Engine-level API (``/v1``): runs, cards, owner resolutions, vendors, cash, vitals, red team, model.
+
+This is the original Corridor surface (now Vouch): it exposes the Strands run, the approval interrupt
+and every owner resolution with its policy re-check. The frontend-shaped routes live in `frontend.py`.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import threading
-from datetime import date
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
+from hm_core.errors import NotFoundError, ValidationFailedError
 from pydantic import BaseModel, Field
 
-from vouch import __version__
+from vouch.api.state import get_engine, get_service
 from vouch.cards import PaymentCard
-from vouch.config import get_settings
 from vouch.domain import CardStatus, Lane, Resolution, Vendor
+from vouch.engine import Run, Submission, VouchEngine
 from vouch.funding import recommend
 from vouch.kernel import format_cents
-from vouch.engine import VouchEngine, Run, Submission
-from hm_agents_common.tracing import setup_tracing
-from hm_api_common import create_app, run
-from hm_core.errors import NotFoundError, ValidationFailedError
+from vouch.views import payment_view
 
-settings = get_settings()
-router = APIRouter(prefix="/v1", tags=["vouch"])
-_state: dict[str, Any] = {"service": None, "redteam": None}
-_ops = threading.RLock()
-
-
-def get_service() -> VouchEngine:
-    if _state["service"] is None:
-        from vouch.demo import seed
-
-        svc = VouchEngine(settings=settings)
-        seed(svc)
-        _state["service"] = svc
-    return _state["service"]
-
-
-def set_service(service: VouchEngine | None) -> None:
-    _state["service"] = service
+router = APIRouter(prefix="/v1", tags=["engine"])
 
 
 # --- views ---------------------------------------------------------------------------------------------
@@ -79,7 +62,7 @@ def run_view(r: Run, full: bool = False) -> dict[str, Any]:
 
 
 def _run(run_id: str) -> Run:
-    r = get_service().runs.get(run_id)
+    r = get_engine().runs.get(run_id)
     if r is None:
         raise NotFoundError(f"unknown run {run_id}")
     return r
@@ -91,9 +74,7 @@ def _run(run_id: str) -> Run:
 class SubmitRequest(BaseModel):
     invoices: list[Submission] = Field(min_length=1, max_length=100)
     label: str = ""
-    wait: bool = Field(
-        True, description="Run synchronously; false returns immediately (poll or stream the run)"
-    )
+    wait: bool = Field(True, description="Run synchronously; false returns immediately (poll or stream the run)")
 
 
 class TextSubmitRequest(BaseModel):
@@ -131,48 +112,34 @@ class AppealRequest(BaseModel):
 
 @router.get("/info")
 def info() -> dict[str, Any]:
-    svc = get_service()
-    return {
-        "project": "vouch",
-        "description": "Payment trust layer: keeps irreversible stablecoin payouts away from bad actors without slowing honest vendors.",
-        "business": settings.business_name,
-        "owner": settings.owner_name,
-        "today": svc.today.isoformat(),
-        "llm_mode": svc.llm.mode,
-        "llm_provider": svc.llm.provider(),
-        "scorer": getattr(svc.scorer(), "name", "?"),
-        "settlement_adapter": svc.adapter.name,
-        "settlement_network": svc.adapter.network,
-        "vendors": len(svc.vendors),
-        "limits_cents": {
-            "approval": svc.limits.approval_limit_cents,
-            "fast_pay": svc.limits.fast_pay_limit_cents,
-            "single_payment": svc.limits.single_payment_limit_cents,
-            "batch": svc.limits.batch_limit_cents,
-        },
-    }
+    return get_service().info()
 
 
 @router.post("/demo/seed", summary="Load the scripted demo (vendor master + 6 invoices) and run it")
 def demo_seed(execute_run: bool = Query(True, alias="run")) -> dict[str, Any]:
-    from vouch.demo import OWNER_STORY, demo_submissions, seed
-    from vouch.pipeline import execute
+    from vouch.demo import OWNER_STORY
 
     svc = get_service()
-    with _ops:
-        seed(svc)
-        if not execute_run:
-            return {"seeded_vendors": len(svc.vendors), "story": OWNER_STORY}
-        r = svc.new_run(demo_submissions(svc.today), label="demo: Friday vendor run")
-        execute(svc, r)
+    r = svc.seed(run_demo=execute_run)
+    if r is None:
+        return {"seeded_vendors": len(svc.engine.vendors), "story": OWNER_STORY}
     return {"story": OWNER_STORY, "run": run_view(r)}
+
+
+@router.post("/demo/reset", summary="Forget every run (audit rows stay) and replay the scripted demo")
+def demo_reset(execute_run: bool = Query(True, alias="run")) -> dict[str, Any]:
+    svc = get_service()
+    r = svc.reset(run_demo=execute_run)
+    return {"runs": len(svc.engine.runs), "run": run_view(r) if r else None}
 
 
 def _start(svc: VouchEngine, r: Run, wait: bool) -> dict[str, Any]:
     from vouch.pipeline import execute
 
+    lock = get_service().lock
+
     def work() -> None:
-        with _ops:
+        with lock:
             try:
                 execute(svc, r)
             except Exception:  # recorded on the run
@@ -186,18 +153,16 @@ def _start(svc: VouchEngine, r: Run, wait: bool) -> dict[str, Any]:
     return run_view(r)
 
 
-@router.post(
-    "/invoices", summary="Submit invoices (JSON fields and/or raw PDF text) and run the payment graph"
-)
+@router.post("/invoices", summary="Submit invoices (JSON fields and/or raw PDF text) and run the payment graph")
 def submit_invoices(req: SubmitRequest) -> dict[str, Any]:
-    svc = get_service()
+    svc = get_engine()
     r = svc.new_run(req.invoices, label=req.label)
     return _start(svc, r, req.wait)
 
 
 @router.post("/invoices/text", summary="Submit one invoice as raw text (e.g. extracted from a PDF)")
 def submit_invoice_text(req: TextSubmitRequest) -> dict[str, Any]:
-    svc = get_service()
+    svc = get_engine()
     sub = Submission(
         text=req.text,
         submitted_by=req.submitted_by,
@@ -210,7 +175,7 @@ def submit_invoice_text(req: TextSubmitRequest) -> dict[str, Any]:
 
 @router.get("/runs")
 def list_runs() -> list[dict[str, Any]]:
-    return [{k: v for k, v in run_view(r).items() if k != "cards"} for r in get_service().runs.values()]
+    return [{k: v for k, v in run_view(r).items() if k != "cards"} for r in get_engine().runs.values()]
 
 
 @router.get("/runs/{run_id}")
@@ -224,9 +189,7 @@ def run_events(run_id: str, after: int = 0) -> dict[str, Any]:
     return {"status": r.status, "events": [e for e in r.events if e["seq"] > after]}
 
 
-@router.get(
-    "/runs/{run_id}/stream", summary="Server-sent events for a run (node progress, decisions, settlements)"
-)
+@router.get("/runs/{run_id}/stream", summary="Server-sent events for a run (node progress, decisions, settlements)")
 async def run_stream(run_id: str, after: int = 0) -> StreamingResponse:
     r = _run(run_id)
 
@@ -248,34 +211,27 @@ async def run_stream(run_id: str, after: int = 0) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@router.post(
-    "/runs/{run_id}/approve",
-    summary="Owner answers the approval interrupt; approved cards settle as one batch",
-)
+@router.post("/runs/{run_id}/approve", summary="Owner answers the approval interrupt; approved cards settle as one batch")
 def approve_run(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
     from vouch.pipeline import approve
 
-    svc = get_service()
+    svc = get_engine()
     r = _run(run_id)
-    with _ops:
+    with get_service().lock:
         approve(svc, r, req.model_dump())
     return run_view(r)
 
 
-@router.post(
-    "/runs/{run_id}/settle", summary="Run a batch settle for every READY card (same approval + policy path)"
-)
+@router.post("/runs/{run_id}/settle", summary="Run a batch settle for every READY card (same approval + policy path)")
 def settle_run(run_id: str, approver: str = "owner") -> dict[str, Any]:
     return approve_run(run_id, ApprovalRequest(approved=True, approver=approver))
 
 
-@router.get(
-    "/cards", summary="Payment cards with risk class, scores, LIME factors, legitimacy and policy decision"
-)
+@router.get("/cards", summary="Payment cards with risk class, scores, LIME factors, legitimacy and policy decision")
 def list_cards(
     run_id: str | None = None, lane: Lane | None = None, status: CardStatus | None = None
 ) -> list[dict[str, Any]]:
-    svc = get_service()
+    svc = get_engine()
     runs = [_run(run_id)] if run_id else list(svc.runs.values())
     cards = [c for r in runs for c in r.card_list()]
     if lane:
@@ -287,30 +243,33 @@ def list_cards(
 
 @router.get("/cards/{card_id}", response_model=PaymentCard)
 def get_card(card_id: str) -> PaymentCard:
-    return get_service().find_card(card_id)[1]
+    return get_engine().find_card(card_id)[1]
+
+
+@router.get("/cards/{card_id}/payment", summary="The same card in the frontend's payment shape")
+def get_card_payment(card_id: str) -> dict[str, Any]:
+    svc = get_engine()
+    run, card = svc.find_card(card_id)
+    return payment_view(svc, run, card)
 
 
 def _resolve(card_id: str, resolution: Resolution, phone_called: str | None = None) -> PaymentCard:
-    with _ops:
-        return get_service().resolve(card_id, resolution, phone_called=phone_called)
+    with get_service().lock:
+        return get_engine().resolve(card_id, resolution, phone_called=phone_called)
 
 
-@router.post(
-    "/cards/{card_id}/approve",
-    response_model=PaymentCard,
-    summary="Approve and pay one card (policy re-checked)",
-)
+@router.post("/cards/{card_id}/approve", response_model=PaymentCard, summary="Approve and pay one card (policy re-checked)")
 def approve_card(card_id: str, req: ActorNote) -> PaymentCard:
     from vouch.pipeline import approve
 
-    svc = get_service()
+    svc = get_engine()
     r, card = svc.find_card(card_id)
     if card.status == CardStatus.HOLD:
         raise ValidationFailedError(
             "card is on hold; resolve it first",
             details={"required_actions": card.policy.required_actions if card.policy else []},
         )
-    with _ops:
+    with get_service().lock:
         approve(svc, r, {"approved": True, "card_ids": [card_id], "approver": req.actor, "note": req.note})
     return card
 
@@ -356,18 +315,19 @@ def override_limit(card_id: str, req: ActorNote) -> PaymentCard:
     return _resolve(card_id, Resolution(kind="limit_override", actor=req.actor, note=req.note))
 
 
-@router.post(
-    "/cards/{card_id}/appeal",
-    response_model=PaymentCard,
-    summary="Vendor appeal: recorded, prioritised for owner review",
-)
+@router.post("/cards/{card_id}/appeal", response_model=PaymentCard, summary="Vendor appeal: recorded, prioritised for owner review")
 def appeal_card(card_id: str, req: AppealRequest) -> PaymentCard:
     return _resolve(card_id, Resolution(kind="appeal", actor=req.vendor_contact, note=req.message))
 
 
+@router.get("/cards/{card_id}/audit", summary="Audit trail: timeline, resolutions, receipt and the stored records")
+def card_audit(card_id: str) -> dict[str, Any]:
+    return get_service().audit(card_id)
+
+
 @router.get("/vendors")
 def list_vendors(limit: int = 50, demo_only: bool = True) -> list[dict[str, Any]]:
-    vendors = list(get_service().vendors.values())
+    vendors = list(get_engine().vendors.values())
     if demo_only:
         vendors = [v for v in vendors if v.id.startswith("v-")] or vendors
     return [
@@ -385,16 +345,14 @@ def list_vendors(limit: int = 50, demo_only: bool = True) -> list[dict[str, Any]
 
 @router.get("/vendors/{vendor_id}")
 def get_vendor(vendor_id: str) -> dict[str, Any]:
-    svc = get_service()
+    svc = get_engine()
     v = svc.vendors.get(vendor_id)
     if v is None:
         raise NotFoundError(f"unknown vendor {vendor_id}")
     return {
         "vendor": v.model_dump(mode="json"),
         "graph": svc.graph.features(vendor_id),
-        "linked_vendors": {
-            k: [svc.vendors[o].name for o in ids] for k, ids in svc.graph.shared(vendor_id).items()
-        },
+        "linked_vendors": {k: [svc.vendors[o].name for o in ids] for k, ids in svc.graph.shared(vendor_id).items()},
     }
 
 
@@ -402,13 +360,13 @@ def get_vendor(vendor_id: str) -> dict[str, Any]:
 def upsert_vendor(vendor_id: str, vendor: Vendor) -> dict[str, Any]:
     if vendor.id != vendor_id:
         raise ValidationFailedError("vendor id in path and body differ")
-    get_service().load_vendors([vendor])
-    return {"ok": True, "vendors": len(get_service().vendors)}
+    get_engine().load_vendors([vendor])
+    return {"ok": True, "vendors": len(get_engine().vendors)}
 
 
 @router.get("/cash", summary="Cash-forecast stub and pay-now vs schedule recommendations for open cards")
 def cash() -> dict[str, Any]:
-    svc = get_service()
+    svc = get_engine()
     open_cards = [
         c
         for r in svc.runs.values()
@@ -422,122 +380,35 @@ def cash() -> dict[str, Any]:
     }
 
 
-def _pct(values: list[float], p: float) -> float | None:
-    if not values:
-        return None
-    s = sorted(values)
-    return round(s[min(int(p * len(s)), len(s) - 1)], 1)
-
-
-@router.get(
-    "/netz", summary="Service vitals: latency per graph node, LLM calls and tokens, rate-limit headroom"
-)
+@router.get("/netz", summary="Service vitals: latency per graph node, LLM calls and tokens, rate-limit headroom")
 @router.get("/stats", include_in_schema=False)
 def netz() -> dict[str, Any]:
-    from hm_llm.clients import akamai_limiter
-    from hm_llm.settings import get_llm_settings
-
-    svc = get_service()
-    llm_settings = get_llm_settings()
-    limiter = akamai_limiter(llm_settings)
-    timings = {
-        k: {"n": len(v), "p50_ms": _pct(v, 0.5), "p95_ms": _pct(v, 0.95)}
-        for k, v in sorted(svc.timings.items())
-    }
-    cards = [c for r in svc.runs.values() for c in r.card_list()]
-    return {
-        "service": "vouch-api",
-        "version": __version__,
-        "runs": len(svc.runs),
-        "cards": len(cards),
-        "paid": sum(c.status == CardStatus.PAID for c in cards),
-        "held": sum(c.status == CardStatus.HOLD for c in cards),
-        "llm": {
-            "mode": svc.llm.mode,
-            "provider": svc.llm.provider(),
-            "model": llm_settings.akamai_inference_model
-            if svc.llm.provider() == "akamai"
-            else llm_settings.bedrock_model_id,
-            "limits": {
-                "rpm": llm_settings.llm_requests_per_minute,
-                "context_tokens": llm_settings.llm_max_context_tokens,
-                "output_tokens": llm_settings.llm_max_output_tokens,
-            },
-            "rate_limit_remaining": limiter.remaining,
-            **svc.llm.stats.to_dict(),
-        },
-        "latency": timings,
-        "explanations": {
-            "llm": sum(c.explanation_source == "llm" for c in cards),
-            "template": sum(c.explanation_source == "template" for c in cards),
-        },
-        "scorer": getattr(svc.scorer(), "name", "?"),
-        "settlement": {"adapter": svc.adapter.name, "network": svc.adapter.network},
-    }
+    return get_service().netz()
 
 
 @router.get("/redteam", summary="Latest red-team results (runs the suite on first call)")
 def redteam() -> dict[str, Any]:
-    if _state["redteam"] is None:
-        return redteam_run()
-    return _state["redteam"]
+    return get_service().run_redteam()
 
 
 @router.post("/redteam/run", summary="Run the adversarial suite now (scripted LLM, mock ledger, ~seconds)")
 def redteam_run() -> dict[str, Any]:
-    from vouch.redteam import run_suite
-
-    svc = get_service()
-    result = run_suite(settings, scorer=svc._scorer)
-    result["ran_at"] = date.today().isoformat()
-    _state["redteam"] = result
-    return result
+    return get_service().run_redteam(force=True)
 
 
 @router.get("/model", summary="Risk model metadata and held-out metrics")
 def model_info() -> dict[str, Any]:
     from hm_ml_common import ModelRegistry
 
-    svc = get_service()
-    registry = ModelRegistry()
-    version = registry.latest(settings.model_name)
-    meta = registry.meta(settings.model_name, version) if version else {}
+    svc = get_engine()
+    registry = ModelRegistry(svc.settings.model_registry_dir)
+    version = registry.latest(svc.settings.model_name)
+    meta = registry.meta(svc.settings.model_name, version) if version else {}
     return {
         "scorer": getattr(svc.scorer(), "name", "?"),
-        "name": settings.model_name,
+        "name": svc.settings.model_name,
         "version": version,
         "metrics": meta.get("metrics", {}),
         "params": meta.get("params", {}),
+        "registry": str(svc.settings.model_registry_dir),
     }
-
-
-async def inference_ready() -> bool:
-    if settings.scorer == "heuristic":
-        return True
-    try:
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            if (await client.get(f"{settings.inference_url}/health")).status_code == 200:
-                return True
-    except httpx.HTTPError:
-        pass
-    from hm_ml_common import ModelRegistry
-
-    return ModelRegistry().latest(settings.model_name) is not None  # in-process model is fine too
-
-
-app = create_app(
-    "vouch-api",
-    __version__,
-    readiness_checks={"model": inference_ready},
-    description="Vouch payment trust layer. Start with POST /v1/demo/seed, then GET /v1/cards.",
-)
-app.include_router(router)
-setup_tracing("vouch-api")
-
-
-def main() -> None:
-    run("vouch.main:app", port=settings.port)
-
-
-if __name__ == "__main__":
-    main()

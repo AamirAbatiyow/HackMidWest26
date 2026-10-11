@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .. import __version__
 from ..intake.extract import ocr_backend
 from ..policy import cedar_available
 from ..service import VouchService
@@ -75,7 +76,7 @@ class HealthProbes:
 
     # ------------------------------------------------------------ probes ----
     def inference(self) -> tuple[bool, str, int | None]:
-        return self._cached("inference", self.service.llm.inference.probe)
+        return self._cached("inference", self.service.engine.llm.inference.probe)
 
     def database(self) -> tuple[bool, str, int | None]:
         return self._cached("database", self.service.store.ping)
@@ -99,7 +100,8 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
     roles: list[Role] = []
 
     # Hosted inference (chat) --------------------------------------------------
-    if service.llm.live:
+    llm = service.engine.llm
+    if llm.live:
         ok, detail, ms = probes.inference()
         roles.append(
             Role(
@@ -118,12 +120,12 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
                 "Hosted inference · chat",
                 "Akamai Cloud Inference (OpenAI-compatible)",
                 "fallback",
-                "AKAMAI_INFERENCE_API_KEY not set → deterministic template reader/writer",
+                "AKAMAI_INFERENCE_API_KEY not set → deterministic templates (intake quotes, investigator, explainer)",
             )
         )
 
     # Embeddings -----------------------------------------------------------------
-    emb = service.llm.embedder_or_none()
+    emb = llm.embedder_or_none()
     roles.append(
         Role(
             "embeddings",
@@ -132,7 +134,7 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
             "live" if emb is not None else "fallback",
             (
                 f"{s.akamai_embedding_model} · {service.vendors_indexed} vendors indexed · "
-                f"cache hits {service.llm.embedder.hits} / misses {service.llm.embedder.misses}"
+                f"cache hits {llm.embedder.hits} / misses {llm.embedder.misses}"
                 if emb is not None
                 else "no key → rapidfuzz name/address matching only"
             ),
@@ -231,6 +233,31 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
         )
     )
 
+    # Settlement rail and the risk model ----------------------------------------------
+    adapter = service.engine.adapter
+    roles.append(
+        Role(
+            "settlement",
+            "Settlement rail",
+            "XRPL testnet (atomic Batch, idempotent) · mock ledger fallback",
+            "live" if adapter.name == "xrpl" else "fallback",
+            f"{adapter.name} · {adapter.network}"
+            + ("" if adapter.name == "xrpl" else " · set SETTLEMENT_ADAPTER=xrpl + XRPL_WALLET_SEED for real tx ids"),
+        )
+    )
+    scorer = service.engine.scorer()
+    scorer_name = getattr(scorer, "name", "?")
+    roles.append(
+        Role(
+            "risk_model",
+            "Risk model (PyTorch + LIME)",
+            "vouch-risk: entity embeddings, autoencoder, per-class heads, legitimacy head",
+            "live" if scorer_name in ("local-torch", "inference-service") else "fallback",
+            f"{scorer_name} {getattr(scorer, 'version', '')}".strip()
+            + ("" if scorer_name != "heuristic-fallback" else " · run `make train-vouch` to train the model"),
+        )
+    )
+
     # Local controls worth showing to judges ---------------------------------------
     roles.append(
         Role(
@@ -258,14 +285,19 @@ def health_json(service: VouchService, probes: HealthProbes) -> dict:
     roles = build_roles(service, probes)
     errors = [r.name for r in roles if r.state == "error"]
     s = service.settings
+    llm = service.engine.llm
     out: dict = {
         "status": "ok" if not errors else "degraded",
+        "service": "vouch-api",
         "app": s.app_name,
-        "version": s.version,
+        "version": __version__,
         "region": s.region,
         "uptime_s": service.uptime_s(),
-        "llm_mode": service.llm.mode,
-        "payments": len(service.payments),
+        "llm_mode": llm.mode,
+        "payments": sum(len(r.cards) for r in service.engine.runs.values()),
+        "runs": len(service.engine.runs),
+        "settlement_adapter": service.engine.adapter.name,
+        "scorer": getattr(service.engine.scorer(), "name", "?"),
         "errors": errors,
     }
     for r in roles:
@@ -299,8 +331,8 @@ table{{border-collapse:collapse;width:100%}} td{{padding:.6rem .5rem;border-top:
 small{{color:#6b7280}} a{{color:#1d4ed8}}
 </style></head><body>
 <h1>{html.escape(s.app_name)} · Akamai services in use</h1>
-<div class="sub">{live}/{len(roles)} live · region {html.escape(s.region)} · llm_mode {service.llm.mode} ·
-{len(service.payments)} payments in queue · uptime {service.uptime_s()} s ·
+<div class="sub">{live}/{len(roles)} live · region {html.escape(s.region)} · llm_mode {service.engine.llm.mode} ·
+{sum(len(r.cards) for r in service.engine.runs.values())} payments in queue · uptime {service.uptime_s()} s ·
 <a href="/health?format=json">JSON</a> · <a href="/docs">API docs</a> · <a href="/v1/netz">/netz</a></div>
 <table>{rows}</table>
 <p><small>States: <b>live</b> = the Akamai service answered · <b>fallback</b> = local stand-in in use ·

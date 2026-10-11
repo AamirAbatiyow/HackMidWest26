@@ -17,6 +17,8 @@ class ActionBody(BaseModel):
 class SettleBody(BaseModel):
     payment_ids: list[str] = Field(min_length=1)
     funding: Literal["now", "scheduled"] = "now"
+    author: str = "Owner"
+    note: str | None = None
 
 
 class IntakeJsonBody(BaseModel):
@@ -32,6 +34,9 @@ class IntakeJsonBody(BaseModel):
     body_html: str = ""
     attachments: list[Attachment] = Field(default_factory=list)
     source: Source = "email"
+    submitted_by: str = "ap-inbox"
+    delivery_confirmed: bool = False
+    po_number: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -54,6 +59,9 @@ class IntakeJsonBody(BaseModel):
             body_html=self.body_html,
             attachments=self.attachments,
             source=self.source,
+            submitted_by=self.submitted_by,
+            delivery_confirmed=self.delivery_confirmed,
+            po_number=self.po_number,
         )
 
 
