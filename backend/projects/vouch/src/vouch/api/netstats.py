@@ -6,12 +6,12 @@ and a tier map showing the VPC/subnet/firewall/NodeBalancer layout.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
 
-from ..timing import DECIDER_ENGINES, INFERENCE_ENDPOINTS, PIPELINE_STEPS, TIMING
+from ..timing import DECIDER_ENGINES, PIPELINE_STEPS, TIMING
 from .state import get_service
 
 router = APIRouter(prefix="/v1", tags=["netstats"])
@@ -45,12 +45,60 @@ AKAMAI_TIER_MAP = {
 }
 
 FIREWALL_RULES = [
-    {"id": "fw-1", "direction": "inbound", "protocol": "TCP", "ports": "443", "source": "0.0.0.0/0", "action": "ACCEPT", "label": "HTTPS from internet"},
-    {"id": "fw-2", "direction": "inbound", "protocol": "TCP", "ports": "80", "source": "0.0.0.0/0", "action": "ACCEPT", "label": "HTTP redirect"},
-    {"id": "fw-3", "direction": "inbound", "protocol": "TCP", "ports": "22", "source": "10.0.0.0/8", "action": "ACCEPT", "label": "SSH from VPC"},
-    {"id": "fw-4", "direction": "outbound", "protocol": "TCP", "ports": "5432", "destination": "10.0.4.0/24", "action": "ACCEPT", "label": "Postgres"},
-    {"id": "fw-5", "direction": "outbound", "protocol": "TCP", "ports": "443", "destination": "*.akamai-workshops.com", "action": "ACCEPT", "label": "Hosted inference"},
-    {"id": "fw-6", "direction": "inbound", "protocol": "*", "ports": "*", "source": "0.0.0.0/0", "action": "DROP", "label": "Default deny"},
+    {
+        "id": "fw-1",
+        "direction": "inbound",
+        "protocol": "TCP",
+        "ports": "443",
+        "source": "0.0.0.0/0",
+        "action": "ACCEPT",
+        "label": "HTTPS from internet",
+    },
+    {
+        "id": "fw-2",
+        "direction": "inbound",
+        "protocol": "TCP",
+        "ports": "80",
+        "source": "0.0.0.0/0",
+        "action": "ACCEPT",
+        "label": "HTTP redirect",
+    },
+    {
+        "id": "fw-3",
+        "direction": "inbound",
+        "protocol": "TCP",
+        "ports": "22",
+        "source": "10.0.0.0/8",
+        "action": "ACCEPT",
+        "label": "SSH from VPC",
+    },
+    {
+        "id": "fw-4",
+        "direction": "outbound",
+        "protocol": "TCP",
+        "ports": "5432",
+        "destination": "10.0.4.0/24",
+        "action": "ACCEPT",
+        "label": "Postgres",
+    },
+    {
+        "id": "fw-5",
+        "direction": "outbound",
+        "protocol": "TCP",
+        "ports": "443",
+        "destination": "*.akamai-workshops.com",
+        "action": "ACCEPT",
+        "label": "Hosted inference",
+    },
+    {
+        "id": "fw-6",
+        "direction": "inbound",
+        "protocol": "*",
+        "ports": "*",
+        "source": "0.0.0.0/0",
+        "action": "DROP",
+        "label": "Default deny",
+    },
 ]
 
 
@@ -165,9 +213,11 @@ def get_latency() -> dict:
         }
 
     postgres_stats = _safe_probe_latency(service.store.ping)
-    object_storage_stats = _safe_probe_latency(service.attachments.ping) if s.has_bucket else {
-        "ok": None, "detail": "Object Storage not configured", "latency_ms": None
-    }
+    object_storage_stats = (
+        _safe_probe_latency(service.attachments.ping)
+        if s.has_bucket
+        else {"ok": None, "detail": "Object Storage not configured", "latency_ms": None}
+    )
 
     waterfall = []
     last_run_id = None
@@ -176,13 +226,15 @@ def get_latency() -> dict:
         for step in PIPELINE_STEPS:
             step_key = f"run:{last_run_id}:{step}"
             latest = TIMING.stats(step_key).get("latest")
-            waterfall.append({
-                "step": step,
-                "latency_ms": latest,
-            })
+            waterfall.append(
+                {
+                    "step": step,
+                    "latency_ms": latest,
+                }
+            )
 
     return {
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "region": s.region,
         "pipeline_steps": pipeline_stats,
         "inference": _get_inference_stats(service),
@@ -205,7 +257,9 @@ def get_latency() -> dict:
         "last_run_waterfall": {
             "run_id": last_run_id,
             "steps": waterfall,
-        } if last_run_id else None,
+        }
+        if last_run_id
+        else None,
     }
 
 
@@ -303,7 +357,7 @@ def get_topology() -> dict:
     ]
 
     return {
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "region": s.region,
         "vpc": {
             "label": s.vpc_label or "Not configured",

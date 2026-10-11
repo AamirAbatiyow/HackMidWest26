@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -208,9 +208,16 @@ class TestNetstatsAPI:
 
         steps = data["pipeline_steps"]
         expected_steps = [
-            "reader", "sender_check", "vendor_resolution",
-            "detector_amount", "detector_bank", "detector_duplicate",
-            "detector_ring", "scorer", "policy", "writer"
+            "reader",
+            "sender_check",
+            "vendor_resolution",
+            "detector_amount",
+            "detector_bank",
+            "detector_duplicate",
+            "detector_ring",
+            "scorer",
+            "policy",
+            "writer",
         ]
         for step in expected_steps:
             assert step in steps
@@ -278,7 +285,16 @@ class TestNetstatsAPI:
         assert len(nodes) >= 7
 
         node_ids = {n["id"] for n in nodes}
-        expected_ids = {"internet", "nodebalancer", "firewall", "api", "model_server", "inference", "postgres", "object_storage"}
+        expected_ids = {
+            "internet",
+            "nodebalancer",
+            "firewall",
+            "api",
+            "model_server",
+            "inference",
+            "postgres",
+            "object_storage",
+        }
         assert expected_ids <= node_ids
 
         for node in nodes:

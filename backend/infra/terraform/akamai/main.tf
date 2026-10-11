@@ -189,6 +189,7 @@ resource "linode_instance" "app" {
       firewall_label     = "${local.name}-fw-app"
       vpc_label          = "${local.name}-vpc"
       region             = var.region
+      decider_url        = var.enable_decider ? "http://${var.decider_vpc_ip}:${var.decider_port}" : ""
     }))
   }
 

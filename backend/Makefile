@@ -12,6 +12,7 @@ TF_DIR := infra/terraform/akamai
 .PHONY: help setup setup-min setup-agents setup-all lint format test check \
         run-vouch serve-vouch train-vouch dev-vouch demo-vouch demo-vouch-files demo-vouch-xrpl redteam-vouch \
         smoke-llm samples xrpl-wallets xrpl-smoke up down logs smoke \
+        decider-local decider-build decider-stop decider-logs \
         tf-init tf-validate tf-plan deploy-akamai destroy-akamai verify-akamai tail-logs clean
 
 help: ## Show targets
@@ -105,6 +106,43 @@ logs: ## Follow local container logs
 
 smoke: ## Hit the health endpoints of a running API: make smoke [host=http://localhost:8101]
 	infra/scripts/smoke_test.sh $(project) $(host)
+
+# --- Strands Decider (local Docker) ---------------------------------------------------------------
+# The 2B decision model for email-format and parser-tool routing. CPU-only, ~4.5 GB weights.
+
+DECIDER_MODEL ?= StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+DECIDER_PORT ?= 8099
+DECIDER_CONTAINER ?= vouch-decider
+
+decider-build: ## Build the Strands Decider Docker image (downloads ~4.5 GB of weights)
+	docker build \
+		--build-arg DECIDER_MODEL=$(DECIDER_MODEL) \
+		-t strands-decider:local \
+		-f infra/docker/decider/Dockerfile .
+
+decider-local: decider-build ## Run Strands Decider 2B locally (Docker, CPU-only); outputs DECIDER_URL
+	@docker rm -f $(DECIDER_CONTAINER) 2>/dev/null || true
+	docker run -d \
+		--name $(DECIDER_CONTAINER) \
+		-p $(DECIDER_PORT):8099 \
+		-v decider-cache:/app/.cache \
+		-e DECIDER_MODEL=$(DECIDER_MODEL) \
+		-e DECIDER_PORT=8099 \
+		strands-decider:local
+	@echo ""
+	@echo "Decider starting... (may take 30-60s on first run)"
+	@echo "DECIDER_URL=http://localhost:$(DECIDER_PORT)"
+	@echo ""
+	@echo "Health check:  curl http://localhost:$(DECIDER_PORT)/health"
+	@echo "Test request:  curl http://localhost:$(DECIDER_PORT)/v1/systemone \\"
+	@echo "  -H 'Content-Type: application/json' \\"
+	@echo "  -d '{\"state\": \"test\", \"questions\": {\"ok\": {\"type\": \"noul\", \"instructions\": \"Is this working?\"}}}'"
+
+decider-stop: ## Stop and remove the local Decider container
+	@docker rm -f $(DECIDER_CONTAINER) 2>/dev/null || true
+
+decider-logs: ## Tail Decider container logs
+	docker logs -f $(DECIDER_CONTAINER)
 
 # --- Akamai Cloud (Linode) ------------------------------------------------------------------------
 # Nothing here is applied without LINODE_TOKEN in the environment. tfstate and *.tfvars are gitignored.

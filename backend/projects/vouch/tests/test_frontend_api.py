@@ -257,7 +257,7 @@ def test_health_json_html_and_cheap_probe(client):
     for role in ("inference", "embeddings", "database", "settlement", "risk_model", "policy_engine"):
         assert j[role]["state"] in ("live", "fallback", "off", "error") and j[role]["akamai_service"], role
     assert j["settlement"]["state"] == "fallback", "mock ledger is the simulated fallback"
-    assert j["policy_engine"]["state"] == "live"
+    assert j["policy_engine"]["state"] in ("live", "fallback"), "cedarpy (live) or Python mirror (fallback)"
     html = client.get("/health", headers={"Accept": "text/html"})
     assert html.status_code == 200 and html.headers["content-type"].startswith("text/html")
     assert "Vouch" in html.text and "Akamai" in html.text

@@ -25,6 +25,16 @@ output "model_vpc_ip" {
   value       = var.model_vpc_ip
 }
 
+output "decider_vpc_ip" {
+  description = "Private Decider server (reach it via `ssh -J root@<app ip> root@<this>`)."
+  value       = var.enable_decider ? var.decider_vpc_ip : null
+}
+
+output "decider_url" {
+  description = "Private URL for DECIDER_URL environment variable (set on the app Linodes)."
+  value       = var.enable_decider ? "http://${var.decider_vpc_ip}:${var.decider_port}" : null
+}
+
 output "vpc_id" {
   value = linode_vpc.main.id
 }
@@ -41,6 +51,7 @@ output "firewalls" {
   value = {
     app          = linode_firewall.app.label
     model        = linode_firewall.model.label
+    decider      = var.enable_decider ? linode_firewall.decider[0].label : null
     nodebalancer = linode_firewall.nodebalancer.label
   }
 }
