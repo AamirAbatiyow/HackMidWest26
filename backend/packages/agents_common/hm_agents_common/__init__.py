@@ -1,6 +1,6 @@
 """Strands helpers. Modules that import `strands` need the `agents` extra (`make setup-agents`):
 
-- no strands needed: `policy`, `structured` (JSON helpers), `settings`
+- no strands needed: `policy`, `structured` (JSON helpers), `settings`, `classifier` (records; `decide()` imports strands)
 - strands needed:    `model`, `approval`, `tracing`, `session`, `mcp`, `testing`
 """
 
