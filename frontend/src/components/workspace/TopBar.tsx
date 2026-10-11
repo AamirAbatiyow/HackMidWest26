@@ -10,6 +10,7 @@ export const VIEWS = [
   { to: '/approve', label: 'Approval', key: 'a', nav: false },
   { to: '/fairness', label: 'Fairness', key: 'f', nav: true },
   { to: '/network', label: 'Network', key: 'n', nav: true },
+  { to: '/netstats', label: 'Latency', key: 'l', nav: true },
   { to: '/redteam', label: 'Red team', key: 'r', nav: true },
   { to: '/tokens', label: 'Design tokens', key: 't', nav: false },
 ] as const

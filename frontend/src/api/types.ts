@@ -186,6 +186,117 @@ export interface HealthStatus {
   reason?: string
 }
 
+export interface PipelineStepStats {
+  p50Ms: number | null
+  p95Ms: number | null
+  count: number
+  latestMs: number | null
+}
+
+export interface InferenceEndpointStats {
+  model: string
+  baseUrl: string
+  live: boolean
+  p50Ms: number | null
+  p95Ms: number | null
+  count: number
+  latestMs: number | null
+}
+
+export interface DeciderStats {
+  engine: string
+  enginesAvailable: string[]
+  p50Ms: number | null
+  p95Ms: number | null
+  count: number
+  latestMs: number | null
+}
+
+export interface StorageStats {
+  configured: boolean
+  ok: boolean | null
+  latencyMs: number | null
+  p50Ms: number | null
+  p95Ms: number | null
+}
+
+export interface TierStats {
+  name: string
+  subnet: string
+  products: string[]
+  description: string
+  configured: boolean
+  healthy: boolean | null
+  rttMs: number | null
+}
+
+export interface WaterfallStep {
+  step: string
+  latencyMs: number | null
+}
+
+export interface LatencyStats {
+  updatedAt: string
+  region: string
+  pipelineSteps: Record<string, PipelineStepStats>
+  inference: Record<string, InferenceEndpointStats>
+  decider: DeciderStats
+  postgres: StorageStats
+  objectStorage: StorageStats
+  tiers: Record<string, TierStats>
+  lastRunWaterfall: {
+    runId: string
+    steps: WaterfallStep[]
+  } | null
+}
+
+export interface FirewallRule {
+  id: string
+  direction: string
+  protocol: string
+  ports: string
+  source?: string
+  destination?: string
+  action: string
+  label: string
+}
+
+export interface TopologyNode {
+  id: string
+  label: string
+  tier: string | null
+  product: string | null
+  x: number
+  y: number
+  configured?: boolean
+}
+
+export interface TopologyEdge {
+  id: string
+  from: string
+  to: string
+  label: string
+  private: boolean
+}
+
+export interface TierInfo {
+  name: string
+  subnet: string
+  products: string[]
+  description: string
+}
+
+export interface TopologyData {
+  updatedAt: string
+  region: string
+  vpc: { label: string; configured: boolean }
+  firewall: { label: string; configured: boolean; rules: FirewallRule[] }
+  nodebalancer: { configured: boolean }
+  tiers: Record<string, TierInfo>
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+}
+
 export interface VouchApi {
   readonly mode: 'mock' | 'live'
   listPayments(): Promise<Payment[]>
@@ -199,4 +310,6 @@ export interface VouchApi {
   getFairness(): Promise<FairnessReport>
   getHealth(): Promise<HealthStatus>
   getInfo(): Promise<ApiInfo>
+  getLatency(): Promise<LatencyStats>
+  getTopology(): Promise<TopologyData>
 }
