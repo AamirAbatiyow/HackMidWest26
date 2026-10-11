@@ -2,7 +2,7 @@ import type { Lifecycle, VouchStatus } from '@/api/types'
 import { cn } from '@/lib/utils'
 
 export const STATUS_META: Record<VouchStatus, { label: string; code: string; description: string }> = {
-  vouched: { label: 'Vouched', code: 'VCH', description: 'Checked and explained. Clear to pay.' },
+  vouched: { label: 'Vouched', code: 'VCH', description: 'All checks passed. Clear to pay.' },
   quick_check: { label: 'Quick check', code: 'QCK', description: 'Held for a quick check.' },
   verify: { label: 'Verify', code: 'VER', description: 'Call the vendor before paying.' },
 }

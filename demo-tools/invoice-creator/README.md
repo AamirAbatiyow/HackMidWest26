@@ -47,17 +47,17 @@ environment or a `.env` file next to this README (never committed):
    in `../mail-receiver`) and this app. The receiver pill in the header turns green.
 2. Keep the default story **Heartland Provisions Co.** — its vendors are the backend's seeded
    vendor master, so every lane comes out as intended. Click a scenario, watch the live preview,
-   optionally change format / sender identity / SPF-DKIM-DMARC outcome, press **Send to Vouch**.
-3. Or press **Send all 6 scenarios** and read the send log while the backend's inbox fills up:
+   optionally change the format or the sender, press **Send by email**.
+3. Or press **Send all 6** and read the sent list while the backend's inbox fills up:
 
 | # | Scenario | Preset | Format | Expected in Vouch |
 |---|----------|--------|--------|-------------------|
-| a | Legit vendor | Prairie Packaging Supply, $1,215, PO-48790 | PDF | `fast_pay` — verified vendor under the owner's $2,500 rule |
-| b | Bank-detail swap / account takeover | Sonora Fresh Produce, $9,850, lookalike From + Reply-To, SPF softfail / DMARC fail, new HK IBAN, "URGENT" + prompt-injection note | body | `hold` — sender checks fail, unconfirmed bank change, injection flagged |
+| a | Clean invoice | Prairie Packaging Supply, $1,215, PO-48790 | PDF | `fast_pay` — verified vendor under the owner's $2,500 rule |
+| b | Fraud invoice: new bank account | Sonora Fresh Produce, $9,850, lookalike From + Reply-To, SPF softfail / DMARC fail, new HK IBAN, "URGENT" + prompt-injection note | body | `hold` — sender checks fail, unconfirmed bank change, injection flagged |
 | c | Duplicate invoice | Midwest Facility Services, INV-2291A, $4,780 | XLSX | `hold` — duplicate of paid INV-2291 |
-| d | Bank change confirmed by call-back | Rheinland Gewürze GmbH, EUR 8,240 | CSV | `standard` — payable in the Friday batch, not fast-pay |
-| e | Fake vendor ring | Apex Global Trading LLC, $12,000, proton.me sender, ring bank account | PNG (OCR) | `hold` — bank account shared across vendors |
-| f | Honest brand-new small vendor | Bao Lin Ceramics, $640 | PDF | `standard` — new is not suspicious, just not fast-pay yet |
+| d | New bank account, already confirmed | Rheinland Gewürze GmbH, EUR 8,240 | CSV | `standard` — payable in the Friday batch, not fast-pay |
+| e | Fraud invoice: fake vendor | Apex Global Trading LLC, $12,000, proton.me sender, ring bank account | PNG (OCR) | `hold` — bank account shared across vendors |
+| f | New small vendor (honest) | Bao Lin Ceramics, $640 | PDF | `standard` — new is not suspicious, just not fast-pay yet |
 
 The second story, **Grand Avenue Trading (original spec)**, holds the six scenarios from the brief
 including the two-step duplicate (`midwest` → `midwest-resend`) and split-invoice

@@ -96,10 +96,10 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
               {duplicates.map((d) => d.invoiceNumber).join(', ')} in Quick check
             </p>
           )}
-          {flagged && !settled && <p className="pt-1 text-xs text-muted-foreground">Never auto-denied. Open until you act; vendor not notified.</p>}
+          {flagged && !settled && <p className="pt-1 text-xs text-muted-foreground">Not denied. Waiting for you; the vendor has not been told.</p>}
         </section>
 
-        <Section title={flagged ? 'Why we flagged this' : 'Why this is vouched'} meta={`${top.length} of ${ordered.length}`}>
+        <Section title={flagged ? 'Why it is held' : 'Why it is clear to pay'} meta={`${top.length} of ${ordered.length}`}>
           {top.map((f) => (
             <EvidenceBar key={f.id} factor={f} />
           ))}
@@ -112,7 +112,7 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
         )}
 
         {p.checklist.length > 0 && !settled && (
-          <Section title="Call-back checklist" meta={`${checklistDone}/${p.checklist.length}`}>
+          <Section title="Before you release it" meta={`${checklistDone}/${p.checklist.length}`}>
             <ul>
               {p.checklist.map((item) => (
                 <li key={item.id} className="flex min-h-row items-center gap-2 border-b last:border-b-0">
@@ -134,13 +134,13 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
           {more && (
             <div>
               {rest.length > 0 && (
-                <Section title="Other factors" meta={`${rest.length}`}>
+                <Section title="More reasons" meta={`${rest.length}`}>
                   {rest.map((f) => (
                     <EvidenceBar key={f.id} factor={f} />
                   ))}
                 </Section>
               )}
-              <Section title="Decision matrix">
+              <Section title="Checks we ran">
                 <DecisionMatrix payment={p} />
               </Section>
               <Section title="Vendor history" meta={p.vendor.paymentsCompleted > 0 ? `${p.vendor.paymentsCompleted} paid · since ${new Date(p.vendor.since).getFullYear()}` : 'first payment'} className="border-b-0">
@@ -157,11 +157,11 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
 
       <footer className="shrink-0 border-t p-2">
         {settled ? (
-          <p className="px-1 text-xs text-muted-foreground">Settled. No further action.</p>
+          <p className="px-1 text-xs text-muted-foreground">Paid. Nothing more to do.</p>
         ) : (
           <div className="grid grid-cols-3 gap-1">
             {flagged ? (
-              <button type="button" className={cn(BTN, 'bg-primary text-primary-foreground')} onClick={() => void act('verify')} disabled={pending !== null || inBatch || !checklistComplete} title={!checklistComplete ? 'Complete the call-back checklist first' : undefined}>
+              <button type="button" className={cn(BTN, 'bg-primary text-primary-foreground')} onClick={() => void act('verify')} disabled={pending !== null || inBatch || !checklistComplete} title={!checklistComplete ? 'Finish the steps above first' : undefined}>
                 {inBatch ? 'In batch' : 'Verify'}
                 <Shortcut id="verify" className="text-primary-foreground/70" />
               </button>

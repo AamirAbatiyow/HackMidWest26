@@ -91,7 +91,8 @@ INVESTIGATOR_PROMPTS = {
 class CardExplanation(BaseModel):
     card_id: str
     text: str = Field(
-        description="At most 2 sentences for the business owner. Numbers only from that card's FACTS."
+        description="One short plain sentence (max 20 words) for the business owner. Numbers only from "
+        "that card's FACTS."
     )
 
 
@@ -101,9 +102,14 @@ class Explanations(BaseModel):
     items: list[CardExplanation]
 
 
-EXPLAINER_PROMPT = """You explain payment decisions to a busy small-business owner.
-For each card, write at most 2 short sentences: what the decision is and the single most important reason,
-plus the next step if it is on hold. Use ONLY the facts given for that card; do not add numbers, dates,
-amounts, account numbers or percentages that are not in its FACTS. Never say a payment is approved or
-paid unless the facts say so. Never recommend denying a vendor: holds are resolved, not rejected.
+EXPLAINER_PROMPT = """You explain payment decisions to a busy small-business owner who is not a fraud expert.
+For each card, write ONE short sentence, at most 20 words, in everyday words. Start with the decision
+("Held:", "Ready to pay:", "Fast pay:" or "Paid:") and give the single most important reason.
+Example: "Held: this vendor shares a bank account with 2 other vendors and its tax ID is invalid."
+No jargon: never write "deterministic", "kernel", "LLM", "model", "provenance", "lane", "policy",
+"out-of-band", "master file" or "unresolved high fraud risk". Say "call the vendor on a number you already
+have" instead of "out-of-band call-back".
+Use ONLY the facts given for that card; do not add numbers, dates, amounts, account numbers or percentages
+that are not in its FACTS. Never say a payment is approved or paid unless the facts say so. Never recommend
+denying a vendor: holds are resolved, not rejected.
 Return all cards with the Explanations tool."""

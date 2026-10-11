@@ -26,47 +26,46 @@ LOW_LEGITIMACY = 0.60  # ... with legitimacy below this is "high risk" on model 
 FAST_PAY_MIN_LEGITIMACY = 0.85
 FAST_PAY_MAX_RISK = 0.30
 
-R_HIGH_RISK = "unresolved high fraud risk"
-R_BANK = "bank details changed without out-of-band confirmation"
-R_LIMIT = "amount exceeds the single-payment limit"
-R_LLM_AMOUNT = "amount not verified by the deterministic kernel (missing or LLM-originated)"
-R_LINES = "line items do not add up to the invoice total"
-R_DUPLICATE = "possible duplicate invoice"
-R_SPLIT = "possible split invoices under the approval limit"
-R_RING = "vendor shares bank account or tax id with other vendors"
-R_INJECTION = "invoice text contains instructions aimed at the payment system"
-R_UNKNOWN_VENDOR = "vendor is not on the master file"
-R_VENDOR_AMBIGUOUS = "vendor could not be matched unambiguously to the master file"
-R_SENDER = "invoice email failed sender checks (authentication, lookalike domain or reply-to mismatch)"
-R_OWNER_HOLD = "owner placed a hold"
-R_NOTHING = "nothing payable after credit notes"
-R_KICKBACK = "submission could not be read; a kickback email to the sender awaits the owner's approval"
-R_OCR_UNAVAILABLE = (
-    "image invoice could not be read: this server has no OCR engine (tesseract-ocr is not installed), "
-    "so the attachment was never OCRed"
-)
-R_INTAKE_REVIEW = (
-    "intake routing was ambiguous and no classifier answer passed validation; owner confirms the document"
-)
+# Hold reasons double as the owner-facing text, so they read as plain short phrases. Code compares against
+# the constants, never the literal text.
+R_HIGH_RISK = "the fraud risk score is high"
+R_BANK = "the bank account changed and nobody has confirmed it by phone"
+R_LIMIT = "the amount is over your single-payment limit"
+R_LLM_AMOUNT = "the amount could not be read from the invoice"
+R_LINES = "the line items do not add up to the total"
+R_DUPLICATE = "this looks like a duplicate invoice"
+R_SPLIT = "this looks like one bill split into smaller invoices"
+R_RING = "this vendor shares a bank account or tax ID with other vendors"
+R_INJECTION = "the invoice text tries to give orders to the payment system"
+R_UNKNOWN_VENDOR = "this vendor is not in your vendor list"
+R_VENDOR_AMBIGUOUS = "we are not sure which vendor this is"
+R_SENDER = "the email did not come from the vendor's usual address"
+R_OWNER_HOLD = "you put it on hold"
+R_NOTHING = "nothing is owed after credit notes"
+R_KICKBACK = "we could not read the invoice; a reply asking for a readable copy is ready for you"
+R_OCR_UNAVAILABLE = "the invoice is a picture and this server has no OCR engine to read it"
+R_INTAKE_REVIEW = "we could not tell which file is the invoice"
 
+# Lower-case phrases (the console capitalises them). The checklist view marks an action done by matching
+# "confirm" (bank call-back) and "override" (limit), so those words stay in the same entries as before.
 REQUIRED_ACTIONS = {
-    R_HIGH_RISK: "owner reviews the evidence and resolves the risk with a note (or the vendor appeals)",
-    R_BANK: "confirm the bank change by calling the vendor at the phone number already on file",
-    R_LIMIT: "owner approves a one-time limit override",
-    R_LLM_AMOUNT: "re-key the amount from the source document (the kernel must parse it)",
-    R_DUPLICATE: "owner confirms this is not a duplicate payment",
-    R_SPLIT: "owner confirms the invoices are separate purchases (or asks for one combined invoice)",
-    R_RING: "verify vendor identity out-of-band (tax id match, call-back, onboarding documents)",
-    R_INJECTION: "owner reviews the invoice text; the vendor re-sends a clean invoice",
-    R_UNKNOWN_VENDOR: "onboard the vendor (identity + bank verification) before paying",
-    R_VENDOR_AMBIGUOUS: "owner picks the matching vendor record (or onboards a new vendor)",
-    R_SENDER: "confirm the invoice with the vendor through a channel already on file; ask for a re-send from the registered address",
-    R_OWNER_HOLD: "owner releases the hold",
-    R_NOTHING: "no payment needed; credit carried forward",
-    R_LINES: "owner checks the line items; the vendor re-issues a corrected invoice",
-    R_KICKBACK: "owner approves the kickback email asking the sender for a readable invoice (or re-keys it from the original)",
-    R_OCR_UNAVAILABLE: "install tesseract-ocr + tesseract-ocr-eng on the app server (/v1/health shows ocr.state) and resubmit the image, or re-key the invoice from the original",
-    R_INTAKE_REVIEW: "owner confirms which document is the invoice and resolves with a note (or asks the sender for one invoice per email)",
+    R_HIGH_RISK: "review the evidence and clear it with a note",
+    R_BANK: "confirm the new bank account by calling the vendor on a number you already have",
+    R_LIMIT: "approve a one-time limit override",
+    R_LLM_AMOUNT: "type in the amount from the original invoice",
+    R_DUPLICATE: "confirm this is not a double payment",
+    R_SPLIT: "confirm these are separate purchases",
+    R_RING: "check who this vendor really is: call them, check the tax ID and ask for a bank letter",
+    R_INJECTION: "read the invoice text, then ask the vendor for a clean copy",
+    R_UNKNOWN_VENDOR: "add the vendor to your list after checking their identity and bank account",
+    R_VENDOR_AMBIGUOUS: "pick the right vendor record, or add a new one",
+    R_SENDER: "confirm the invoice with the vendor on a number you already have",
+    R_OWNER_HOLD: "release the hold when you are ready",
+    R_NOTHING: "nothing to pay; the credit carries forward",
+    R_LINES: "check the line items and ask the vendor for a corrected invoice",
+    R_KICKBACK: "approve the reply asking for a readable invoice, or type it in yourself",
+    R_OCR_UNAVAILABLE: "type in the invoice from the original, or install tesseract-ocr on the server and resubmit",
+    R_INTAKE_REVIEW: "owner confirms which file is the invoice",
 }
 
 
@@ -268,9 +267,9 @@ def evaluate_card(policy: PolicySet, card: PaymentCard) -> PolicyOutcome:
     fast = policy.evaluate(PolicyRequest("vouch", "payment:fast_pay", card.id, ctx))
     if fast.allowed:
         return PolicyOutcome(lane=Lane.FAST_PAY, allowed=True, reasons=fast.reasons)
-    reasons = ["passes release policy; waits for the owner's batch approval"]
+    reasons = ["passed all checks; waiting for your approval"]
     if card.flags:
-        reasons.append("kernel notes: " + "; ".join(card.flags))
+        reasons.append("notes: " + "; ".join(card.flags))
     return PolicyOutcome(lane=Lane.STANDARD, allowed=True, reasons=reasons)
 
 

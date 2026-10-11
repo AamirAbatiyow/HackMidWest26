@@ -792,14 +792,13 @@ class VouchEngine:
         v, ch = card.vendor, card.checks
         questions = {
             "ato_bec": [
-                f"Call {v.phone if v else 'the vendor'} (number on file): did you change your bank details?"
+                f"Call the vendor on {v.phone if v else 'a number you already have'} and ask: "
+                "did you change your bank details?"
             ],
-            "insider": [
-                "Is this a separate purchase from the earlier invoice(s)? Please send the PO and delivery note."
-            ],
-            "fake_vendor": ["Please provide a W-9 / tax registration and a bank letter on letterhead."],
+            "insider": ["Ask the vendor: is this a separate order? Get the PO and delivery note."],
+            "fake_vendor": ["Ask the vendor for a W-9 and a bank letter on company letterhead."],
         }[cls]
-        summary = "; ".join(card.flags) or "model risk above normal for this vendor"
+        summary = "; ".join(card.flags) or "the risk score is higher than usual for this vendor"
         action = {
             "ato_bec": "verify_bank_by_callback",
             "insider": "confirm_not_duplicate" if ch.get("duplicate_of") else "request_po_and_delivery",
@@ -840,31 +839,26 @@ class VouchEngine:
     # -- [explain] -----------------------------------------------------------------------------------
 
     def template_explanation(self, card: PaymentCard) -> str:
+        """One short plain sentence per card; the detail (reasons, next steps) lives on the card itself."""
         inv = card.invoice
         amount = format_cents(card.payable_cents, inv.currency)
         if card.status == CardStatus.CREDIT:
-            return f"Credit note {inv.invoice_number} for {format_cents(inv.amount_cents)} was applied to {inv.vendor_name}'s open invoices."
+            return f"Credit note {inv.invoice_number} for {format_cents(inv.amount_cents)} applied to {inv.vendor_name}."
         if card.status == CardStatus.PAID:
             return f"Paid {amount} to {inv.vendor_name} for {inv.invoice_number}."
         p = card.policy
         if p is None:
-            return f"{inv.vendor_name} {inv.invoice_number} for {amount} is being checked."
+            return f"Checking {inv.vendor_name} {inv.invoice_number} for {amount}."
         if p.lane == Lane.HOLD:
             step = p.required_actions[0] if p.required_actions else "owner review"
             why = " and ".join(p.reasons[:2])
-            return (
-                f"On hold, not denied: {inv.vendor_name} {inv.invoice_number} for {amount} because {why}. "
-                f"Next step: {step}."
-            )
+            return f"Held: {why}. Next: {step}."
         when = card.funding.get("pay_on") if card.funding else None
         if p.lane == Lane.FAST_PAY:
-            return f"Fast-pay: {inv.vendor_name} is a verified vendor and {amount} is under the fast-pay limit, so it is paid today."
-        legit = f" Legitimacy confidence {round(card.scores.legitimacy * 100)}%." if card.scores else ""
-        return (
-            f"Ready: {inv.vendor_name} {inv.invoice_number} for {amount} passed all checks; waiting for your approval"
-            + (f", scheduled for {when}." if when else ".")
-            + legit
-        )
+            return (
+                f"Fast pay: {inv.vendor_name} is a trusted vendor and {amount} is under your fast-pay limit."
+            )
+        return "Ready to pay: passed all checks" + (f", scheduled for {when}." if when else ".")
 
     def explain(self, run: Run) -> None:
         cards = run.card_list()

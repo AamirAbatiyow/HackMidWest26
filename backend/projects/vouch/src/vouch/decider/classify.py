@@ -760,27 +760,24 @@ def render_state(
 
 TEMPLATES: dict[str, tuple[str, str]] = {
     "unsupported_format": (
-        "we could not read an invoice from the type of file you sent",
-        "Please re-send the invoice as a PDF with selectable text, an Excel or CSV export, or a clear photo "
-        "or scan (PNG or JPEG).",
+        "we could not read the file type you sent",
+        "Please re-send the invoice as a PDF, Excel, CSV, or a clear photo (PNG or JPEG).",
     ),
     "unreadable_scan": (
-        "the scan or photo you sent did not contain legible text",
-        "Please re-send a clear, well-lit scan or photo of the invoice, or a PDF with selectable text.",
+        "the scan or photo had no legible text",
+        "Please re-send a clear, well-lit photo or a PDF of the invoice.",
     ),
     "empty_submission": (
-        "your message did not contain an invoice",
-        "Please attach the invoice as a PDF, Excel, CSV or image file, or paste its full contents into the "
-        "email.",
+        "we found no invoice in it",
+        "Please attach the invoice as a PDF, Excel, CSV or image, or paste it into the email.",
     ),
     "missing_fields": (
-        "the invoice is missing information we need before it can be scheduled",
+        "the invoice is missing information we need",
         "Please re-send the invoice showing {fields}.",
     ),
     "ambiguous_submission": (
-        "we could not tell which part of your message is the invoice",
-        "Please re-send one invoice per email, as a PDF with selectable text, an Excel or CSV export, or a "
-        "clear photo.",
+        "we could not tell which file is the invoice",
+        "Please send one invoice per email, as a PDF, Excel, CSV or a clear photo.",
     ),
 }
 GENERIC_SUBJECT = "Your invoice could not be processed"
@@ -825,11 +822,10 @@ def render_kickback(
         subject = f"Re: {envelope.subject}"
     body = (
         f"{greeting}\n\n"
-        f"We received your message{attached}, but {happened}.\n{ask}\n\n"
-        "Please send it from the email address we have on file. Do not change bank or payment details by "
-        "email; call us if anything about payment instructions has changed.\n\n"
-        f"This reply was prepared automatically from a fixed template and is only sent after {owner_name} "
-        f"reviews it.\n{business_name}"
+        f"We got your message{attached}, but {happened}.\n{ask}\n\n"
+        "Please send it from your usual email address. If your bank details have changed, call us; "
+        "we do not accept bank changes by email.\n\n"
+        f"This is a standard reply, only sent after {owner_name} reviews it.\n{business_name}"
     )
     to = (envelope.from_addr if envelope else "") or "(sender unknown: forward manually)"
     return KickbackDraft(

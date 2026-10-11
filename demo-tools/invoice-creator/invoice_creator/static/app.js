@@ -4,7 +4,8 @@
 
   const $ = (sel) => document.querySelector(sel);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const FORMATS = [["pdf", "PDF"], ["png", "PNG image"], ["xlsx", "Excel"], ["csv", "CSV"], ["body", "Email body"]];
+  const FORMATS = [["pdf", "PDF"], ["xlsx", "Excel"], ["csv", "CSV"], ["png", "Image"], ["body", "Email text"]];
+  const FORMAT_NAMES = Object.fromEntries(FORMATS);
   const TONES = { a: "good", f: "good", b: "bad", e: "bad", c: "warn", d: "warn" };
 
   const state = {
@@ -92,7 +93,7 @@
       tbody.appendChild(tr);
     });
     const total = lineTotal();
-    $("#items-total").textContent = state.invoice.line_items.length ? `Line total ${money(total, state.invoice.currency)} — amount due follows the lines` : "No line items (amount due is used as-is)";
+    $("#items-total").textContent = state.invoice.line_items.length ? `Lines add up to ${money(total, state.invoice.currency)}` : "No line items";
   }
   const lineTotal = () => state.invoice.line_items.reduce((s, li) => s + Number(li.quantity || 0) * Number(li.unit_price || 0), 0);
   $("#items-body").addEventListener("input", (e) => {
@@ -102,7 +103,7 @@
     li[el.dataset.field] = el.type === "number" ? (el.value === "" ? 0 : parseFloat(el.value)) : el.value;
     state.invoice.amount = Math.round(lineTotal() * 100) / 100;
     el.closest("tr").querySelector(".amount").textContent = money(li.quantity * li.unit_price, state.invoice.currency);
-    $("#items-total").textContent = `Line total ${money(lineTotal(), state.invoice.currency)} — amount due follows the lines`;
+    $("#items-total").textContent = `Lines add up to ${money(lineTotal(), state.invoice.currency)}`;
     writeInputs();
     onChange();
   });
@@ -138,8 +139,8 @@
     const s = storyOf(state.story);
     $("#story-summary").textContent = s ? s.summary : "";
     const n = state.presets.length;
-    $("#send-all-btn").textContent = `Send all ${n} scenario${n === 1 ? "" : "s"}`;
-    $("#send-all-detail").textContent = `Sends every “${s ? s.title : ""}” scenario in order with its own format and sender — ${n} emails, about ${Math.max(5, Math.round(n * 1.3))} seconds. The form is left untouched.`;
+    $("#send-all-btn").textContent = `Send all ${n}`;
+    $("#send-all-detail").textContent = `Sends all ${n} invoices, one after the other (about ${Math.max(5, Math.round(n * 1.3))} seconds).`;
   }
   function selectStory(key, firstPreset) {
     state.story = key;
@@ -176,16 +177,16 @@
     const card = $("#scenario-card");
     card.hidden = false;
     $("#scenario-title").textContent = p.title;
-    $("#scenario-group").textContent = `scenario ${p.group}`;
+    $("#scenario-group").textContent = `invoice ${p.group}`;
     $("#scenario-summary").textContent = p.summary;
     $("#scenario-expected").textContent = p.expected;
     const hint = $("#scenario-hint");
     hint.hidden = !p.hint; hint.textContent = p.hint || "";
     const fu = $("#follow-up-btn");
     fu.hidden = !p.follow_up;
-    if (p.follow_up) { fu.textContent = p.follow_up_label || "Load follow-up"; fu.onclick = () => applyPreset(p.follow_up); }
+    if (p.follow_up) { fu.textContent = p.follow_up_label || "Load the next step"; fu.onclick = () => applyPreset(p.follow_up); }
     renderItems(); writeInputs(); renderSenderKind(); renderFormat(); onChange();
-    setStatus(`Loaded scenario ${p.group}: ${p.title}.`, "");
+    setStatus(`Loaded: ${p.title}.`, "");
   }
   const parentOf = (key) => (state.presets.find((x) => x.follow_up === key) || {}).key;
   function currentPreset() { return state.presets.find((x) => x.key === state.presetKey); }
@@ -233,7 +234,7 @@
       b.addEventListener("click", () => { state.format = id; renderFormat(); onChange(); });
       seg.appendChild(b);
     });
-    $("#preview-format").textContent = state.format === "body" ? "invoice in the email body" : `${state.format.toUpperCase()} attachment`;
+    $("#preview-format").textContent = state.format === "body" ? "typed into the email" : `${FORMAT_NAMES[state.format] || state.format.toUpperCase()} file`;
     $("#open-attachment").disabled = state.format === "body";
   }
 
@@ -272,7 +273,7 @@
     const subtotal = inv.line_items.length ? lineTotal() : inv.amount;
     const contact = [inv.vendor_email && `Email: ${esc(inv.vendor_email)}`, inv.remit_to.phone && `Phone: ${esc(inv.remit_to.phone)}`].filter(Boolean).join(" &nbsp;&nbsp;&nbsp; ");
     $("#paper").innerHTML = `
-      ${state.format === "body" ? '<div class="body-only">Body format: this text is pasted into the email instead of being attached.</div>' : ""}
+      ${state.format === "body" ? '<div class="body-only">This invoice is typed into the email instead of attached.</div>' : ""}
       <h3>${esc(inv.vendor_name) || "<span style='color:#999'>Vendor name</span>"}</h3>
       <div class="addr muted">From: ${esc(inv.vendor_name)}</div>
       <div class="addr">${esc(inv.remit_to.address)}</div>
@@ -319,7 +320,7 @@
       $("#headers-pre").innerHTML = m.headers.map(([k, v]) => `<span class="hn">${esc(k)}:</span> <span class="${SIM.has(k.toLowerCase()) ? "sim" : ""}">${esc(v)}</span>`).join("\n");
       $("#body-pre").textContent = m.body_text;
       $("#intake-pre").textContent = JSON.stringify(m.intake_json_preview, null, 2);
-      $("#message-meta").textContent = m.attachment_name ? `${m.attachment_name} · ${(m.attachment_size / 1024).toFixed(1)} KB · sha256 ${m.attachment_sha256.slice(0, 12)}… · .eml ${(m.eml_size / 1024).toFixed(1)} KB` : `no attachment · .eml ${(m.eml_size / 1024).toFixed(1)} KB`;
+      $("#message-meta").textContent = m.attachment_name ? `${m.attachment_name} · ${(m.attachment_size / 1024).toFixed(1)} KB` : "no attachment";
     } catch (err) {
       $("#headers-pre").textContent = `preview failed: ${err.message}`;
     }
@@ -334,7 +335,7 @@
     if (!(Number(inv.amount) > 0)) problems.push("amount");
     if (!inv.invoice_date || !inv.due_date) problems.push("dates");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.from_addr)) problems.push("from address");
-    if (problems.length && report) setStatus(`Please fill in: ${problems.join(", ")}.`, "bad");
+    if (problems.length && report) setStatus(`Missing: ${problems.join(", ")}.`, "bad");
     return problems.length === 0;
   }
   function setStatus(text, tone) {
@@ -350,7 +351,7 @@
       if (!r.ok) throw new Error(await r.text());
       const e = await r.json();
       prependLog(e);
-      setStatus(e.status === "failed" ? `Failed: ${e.detail}` : `${e.status === "built" ? "Built" : "Sent"} ${e.invoice_number} (${e.format}) — ${e.detail}`, e.status === "failed" ? "bad" : "ok");
+      setStatus(e.status === "failed" ? `Not sent: ${e.detail}` : e.status === "built" ? `Saved ${e.invoice_number} (not sent).` : `Sent ${e.invoice_number}. Watch it arrive in Vouch.`, e.status === "failed" ? "bad" : "ok");
       setTimeout(refreshReceiver, 1500);
     } catch (err) {
       setStatus(`Send failed: ${err.message}`, "bad");
@@ -361,16 +362,16 @@
   $("#download-eml").addEventListener("click", async () => {
     if (!valid(true)) return;
     const r = await fetch("/api/build", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()) });
-    if (!r.ok) { setStatus(`Build failed: ${await r.text()}`, "bad"); return; }
+    if (!r.ok) { setStatus(`Could not build the email: ${await r.text()}`, "bad"); return; }
     const m = await r.json();
     const a = document.createElement("a");
     a.href = m.eml_url; a.download = ""; document.body.appendChild(a); a.click(); a.remove();
-    setStatus(`Built ${m.subject} — downloading .eml (${(m.eml_size / 1024).toFixed(1)} KB).`, "ok");
+    setStatus(`Downloading the email file.`, "ok");
   });
   $("#open-attachment").addEventListener("click", async () => {
     if (!valid(true) || state.format === "body") return;
     const r = await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invoice: state.invoice, format: state.format }) });
-    if (!r.ok) { setStatus(`Render failed: ${await r.text()}`, "bad"); return; }
+    if (!r.ok) { setStatus(`Could not make the file: ${await r.text()}`, "bad"); return; }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     if (state.format === "pdf" || state.format === "png") window.open(url, "_blank", "noopener");
@@ -381,13 +382,13 @@
   // --------------------------------------------------------------------- log ----
   function backendCell(e) {
     if (e.status !== "sent") return `<span class="muted">—</span>`;
-    if (e.delivery === "backend") return `<span class="st st-delivered">direct</span><div class="detail">posted straight to the backend</div>`;
-    if (!e.receiver_message_id) return `<span class="st st-pending">unknown</span><div class="detail">receiver did not return an id</div>`;
+    if (e.delivery === "backend") return `<span class="st st-delivered">yes</span><div class="detail">sent straight to Vouch</div>`;
+    if (!e.receiver_message_id) return `<span class="st st-pending">unknown</span><div class="detail">mailbox gave no id</div>`;
     return `<span class="st st-pending">checking…</span><div class="detail mono">${esc(e.receiver_message_id)}</div>`;
   }
   function logRow(e) {
     const when = new Date(e.at).toLocaleTimeString();
-    const via = { smtp: "SMTP", receiver_http: "HTTP→receiver", backend: "HTTP→backend", none: "build only" }[e.delivery] || e.delivery;
+    const via = { smtp: "email", receiver_http: "mailbox (HTTP)", backend: "Vouch (HTTP)", none: "not sent" }[e.delivery] || e.delivery;
     return `<tr data-log-id="${esc(e.id)}" data-receiver-id="${esc(e.receiver_message_id || "")}">
       <td>${esc(when)}</td>
       <td class="wrap">${esc(e.label || e.scenario || "custom")}</td>
@@ -427,7 +428,7 @@
   function paintBackend(row, status, detail, extra) {
     const cell = row.querySelector("td.backend");
     if (!cell) return;
-    const label = { delivered: "forwarded", dead_letter: "dead letter", stored: "stored only", retrying: "retrying", queued: "queued", received: "received", missing: "missing" }[status] || status;
+    const label = { delivered: "yes", dead_letter: "failed", stored: "stored only", retrying: "retrying", queued: "waiting", received: "received", missing: "missing", pending: "checking" }[status] || status;
     cell.innerHTML = `<span class="st st-${esc(status)}">${esc(label)}</span><div class="detail">${esc(detail || "")}${extra ? `<br/>${esc(extra)}` : ""}</div>`;
   }
   async function trackBackend(e, step) {
@@ -441,8 +442,8 @@
     } catch (_err) {
       info = { reachable: false };
     }
-    if (!info.reachable) { paintBackend(row, "pending", "receiver API unreachable"); }
-    else if (!info.found) { paintBackend(row, "pending", "not on this receiver (restarted / different host?)"); return; }
+    if (!info.reachable) { paintBackend(row, "pending", "mailbox not reachable"); }
+    else if (!info.found) { paintBackend(row, "pending", "mailbox does not know this email"); return; }
     else {
       const d = info.delivery || {};
       const attempts = d.attempts ? `attempt ${d.attempts}` : "";
@@ -464,14 +465,14 @@
     pill.classList.remove("ok", "degraded", "down");
     if (!info.reachable) {
       pill.classList.add("down");
-      pill.textContent = `receiver unreachable (${(info.url || "").replace(/^https?:\/\//, "")})`;
-      pill.title = `No answer from the mail receiver API at ${info.url || "?"}: ${info.error || ""}`;
+      pill.textContent = `mailbox offline (${(info.url || "").replace(/^https?:\/\//, "")})`;
+      pill.title = `No answer from the Vouch mailbox at ${info.url || "?"}: ${info.error || ""}`;
       return;
     }
     const h = info.health;
     pill.classList.add(h.status === "ok" ? "ok" : h.status === "degraded" ? "degraded" : "ok");
-    const dead = h.dead_letter_count ? ` · ${h.dead_letter_count} dead-letter` : "";
-    pill.textContent = `receiver ${h.status} · ${h.received_total} received · ${h.delivered_total} forwarded · queue ${h.queue_depth}${dead}`;
+    const dead = h.dead_letter_count ? ` · ${h.dead_letter_count} failed` : "";
+    pill.textContent = `mailbox ${h.status === "ok" ? "online" : h.status} · ${h.received_total} received · ${h.delivered_total} passed to Vouch${dead}`;
     const last = h.last_delivery ? `last forward ${h.last_delivery.ok ? "ok" : "FAILED"} at ${new Date(h.last_delivery.at).toLocaleTimeString()} — ${(h.last_delivery.detail || "").split("{")[0].trim()}` : "no forwards yet";
     pill.title = `${info.url} · ${h.config && h.config.backend_intake_url ? "backend " + h.config.backend_intake_url : "store-only (no BACKEND_INTAKE_URL)"} · ${last}`;
   }
@@ -484,7 +485,7 @@
     let sent = 0, failed = 0;
     for (const p of sequence) {
       sent += 1;
-      setStatus(`Demo sequence ${sent}/${sequence.length}: sending ${p.title} — ${p.vendor}…`, "");
+      setStatus(`Sending ${sent} of ${sequence.length}: ${p.title}…`, "");
       try {
         const body = { invoice: p.invoice, sender: p.sender, format: p.format, delivery: state.delivery, scenario: p.key, label: p.title };
         const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -494,12 +495,12 @@
         if (e.status === "failed") failed += 1;
       } catch (err) {
         failed += 1;
-        setStatus(`Demo sequence: ${p.title} failed — ${err.message}`, "bad");
+        setStatus(`${p.title} was not sent: ${err.message}`, "bad");
       }
       await new Promise((res) => setTimeout(res, 900));
     }
     btn.disabled = false;
-    setStatus(failed ? `Demo sequence done: ${sequence.length - failed} sent, ${failed} failed.` : `Demo sequence done: all ${sequence.length} emails sent. Watch the “Receiver → backend” column.`, failed ? "bad" : "ok");
+    setStatus(failed ? `Done: ${sequence.length - failed} sent, ${failed} not sent.` : `Done: all ${sequence.length} sent. Watch them arrive in Vouch.`, failed ? "bad" : "ok");
     refreshReceiver();
   });
 
@@ -509,7 +510,7 @@
   async function boot() {
     const [cfg, presets] = await Promise.all([fetch("/api/config").then((r) => r.json()), fetch("/api/presets").then((r) => r.json())]);
     state.config = cfg; state.allPresets = presets;
-    $("#target-pill").textContent = `SMTP ${cfg.smtp_host}:${cfg.smtp_port} → ${cfg.mail_to}`;
+    $("#target-pill").textContent = `to ${cfg.mail_to}`;
     $("#version").textContent = `invoice-creator v${cfg.version}`;
     $("#bill-to-name").placeholder = cfg.owner_name || "";
     $("#bill-to-address").placeholder = cfg.owner_address || "";
@@ -520,5 +521,5 @@
     refreshReceiver();
     setInterval(refreshReceiver, 10000);
   }
-  boot().catch((err) => { $("#target-pill").textContent = "API unreachable"; setStatus(`Could not load the API: ${err.message}`, "bad"); });
+  boot().catch((err) => { $("#target-pill").textContent = "offline"; setStatus(`Could not load: ${err.message}`, "bad"); });
 })();

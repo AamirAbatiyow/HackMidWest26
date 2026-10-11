@@ -230,11 +230,11 @@ def test_unreadable_scan_is_a_kickback_hold_with_an_owner_gated_draft_not_a_deni
     # hold, not denial: the card waits for the owner with concrete next steps
     assert card.status == CardStatus.HOLD and card.policy.lane == Lane.HOLD
     assert R_KICKBACK in card.policy.reasons and R_LLM_AMOUNT in card.policy.reasons
-    assert any("kickback email" in a for a in card.policy.required_actions)
+    assert any("readable invoice" in a for a in card.policy.required_actions)
     view = svc.payment(card.id)
     assert view["status"] == "quick_check" and view["lifecycle"] == "pending"
     assert view["kickback"]["status"] == "awaiting_owner" and view["kickback"]["code"] == "unreadable_scan"
-    assert any(t["title"].startswith("Kickback email drafted") for t in view["timeline"])
+    assert any(t["title"].startswith("Reply to the sender drafted") for t in view["timeline"])
     assert any(e["event"] == "kickback_drafted" and e["status"] == "awaiting_owner" for e in card.timeline)
     # the outbox record exists, awaiting the owner, and the audit trail shows it
     assert svc.outbox()[0]["payment_id"] == card.id and svc.outbox("approved") == []
@@ -365,8 +365,7 @@ def test_sending_the_kickback_is_a_separate_owner_step_that_happens_once_through
         ], "every send attempt, denied or not, is in the policy record"
         timeline = client.get(f"/v1/payments/{card.id}").json()["timeline"]
     assert any(
-        t["title"] == "Kickback email sent by Dana (Cedar P-09)" and "via outbox" in t["detail"]
-        for t in timeline
+        t["title"] == "Reply to the sender sent by Dana" and "via outbox" in t["detail"] for t in timeline
     )
     assert any(e["event"] == "kickback_sent" and e["via"] == "outbox" for e in card.timeline)
     # sending changes nothing about the payment: still on hold for a readable invoice, nothing paid
@@ -498,7 +497,7 @@ def test_validation_failures_hold_the_card_for_the_owner_and_are_in_the_audit_re
     assert "tool 'csv_reader' cannot handle format 'excel_attachment'" in tool.validation_errors[0]
     # the hold: never paid on the guess; the owner resolves it
     assert card.status == CardStatus.HOLD and R_INTAKE_REVIEW in card.policy.reasons
-    assert any("owner confirms which document" in a for a in card.policy.required_actions)
+    assert any("owner confirms which file" in a for a in card.policy.required_actions)
     for principal in ("System", "Model"):  # only the owner can move a held card forward
         assert not authorize(principal, "approve", svc._attrs(card)).allowed
         assert not authorize(principal, "fast_pay", svc._attrs(card)).allowed

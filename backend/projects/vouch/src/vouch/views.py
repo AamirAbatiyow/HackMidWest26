@@ -193,10 +193,12 @@ def evidence_of(card: PaymentCard) -> list[dict[str, Any]]:
             out.append(_factor(n, f"Vendor matched on {', '.join(r.matched_on)}", 0.4, "reassuring"))
         elif r.status == "uncertain":
             n += 1
-            out.append(_factor(n, "Vendor match is ambiguous (fuzzy name only)", 0.5, "concern"))
+            out.append(
+                _factor(n, "Not sure which vendor this is (name is only a close match)", 0.5, "concern")
+            )
         elif r.status == "new":
             n += 1
-            out.append(_factor(n, "Vendor is not on the master file", 0.6, "concern"))
+            out.append(_factor(n, "Vendor is not in your vendor list", 0.6, "concern"))
     for flag in card.flags[:6]:
         if any(f["label"] == flag for f in out):
             continue
@@ -220,8 +222,8 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                 "id": f"t{k}",
                 "date": (today - timedelta(days=v.created_days_ago)).isoformat(),
                 "title": "Vendor onboarded",
-                "detail": f"{v.name} added to the master file"
-                + (" · identity verified out-of-band" if v.oob_verified else ""),
+                "detail": f"{v.name} added to your vendor list"
+                + (" · identity verified by phone" if v.oob_verified else ""),
                 "kind": "onboard",
             }
         )
@@ -244,10 +246,10 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                 {
                     "id": f"t{k}",
                     "date": (today - timedelta(days=v.bank_changed_days_ago)).isoformat(),
-                    "title": "Bank details changed on the master file",
-                    "detail": "confirmed by call-back to the number on file"
+                    "title": "Bank account changed",
+                    "detail": "confirmed by calling the vendor on a number already on file"
                     if v.bank_change_confirmed_oob
-                    else "not yet confirmed out-of-band",
+                    else "not yet confirmed by phone",
                     "kind": "change",
                 }
             )
@@ -346,10 +348,10 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
         elif name in ("kickback_drafted", "kickback_approved", "kickback_declined", "kickback_sent"):
             k += 1
             label = {
-                "kickback_drafted": "Kickback email drafted (awaiting the owner)",
-                "kickback_approved": f"Kickback email approved by {ev.get('actor')}",
-                "kickback_declined": f"Kickback email declined by {ev.get('actor')}",
-                "kickback_sent": f"Kickback email sent by {ev.get('actor')} (Cedar P-09)",
+                "kickback_drafted": "Reply to the sender drafted (waiting for you)",
+                "kickback_approved": f"Reply to the sender approved by {ev.get('actor')}",
+                "kickback_declined": f"Reply to the sender declined by {ev.get('actor')}",
+                "kickback_sent": f"Reply to the sender sent by {ev.get('actor')}",
             }[name]
             events.append(
                 {
@@ -393,7 +395,7 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                 {
                     "id": f"t{k}",
                     "date": ev["at"],
-                    "title": "Deterministic checks" + (" clean" if not flags else f": {len(flags)} flag(s)"),
+                    "title": "Automatic checks" + (" clean" if not flags else f": {len(flags)} flag(s)"),
                     "detail": "; ".join(flags) if flags else None,
                     "kind": "check",
                 }
@@ -470,7 +472,7 @@ def checklist_of(card: PaymentCard) -> list[dict[str, Any]]:
         items.append(
             {
                 "id": "c-phone",
-                "text": f"Call the vendor on the number already on file: {card.vendor.phone}",
+                "text": f"Call the vendor on a number you already have: {card.vendor.phone}",
                 "done": "confirm_bank" in done_kinds,
             }
         )

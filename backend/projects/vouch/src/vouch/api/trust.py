@@ -340,7 +340,7 @@ def get_trust() -> dict[str, Any]:
             },
             "prompt_injection_defenses": {
                 "description": "Deterministic kernel checks invoice text for instructions aimed at the payment system before any LLM processing.",
-                "hold_reason": "R_INJECTION: invoice text contains instructions aimed at the payment system",
+                "hold_reason": "R_INJECTION: the invoice text tries to give orders to the payment system",
             },
             "redteam_suite": {
                 "description": redteam_desc,

@@ -65,20 +65,14 @@ STORIES: list[Story] = [
     Story(
         key="heartland",
         title="Heartland Provisions Co.",
-        summary=(
-            "Matches the Vouch backend's seeded vendor master (its scripted Friday run). Fast-pay, "
-            "standard and hold lanes come out as intended against the real backend."
-        ),
+        summary="Vendors Vouch already knows. Use these for the demo.",
         owner_name="Heartland Provisions Co.",
         owner_address="Kansas City, MO",
     ),
     Story(
         key="reyes",
-        title="Grand Avenue Trading (original spec)",
-        summary=(
-            "The six scenarios from the hackathon brief, with the two-step duplicate and split-invoice "
-            "flows. These vendors are not on the real backend's master file."
-        ),
+        title="Grand Avenue Trading",
+        summary="Extra invoices from vendors Vouch does not know; they will all be held.",
         owner_name="Grand Avenue Trading LLC",
         owner_address="500 Grand Blvd, Suite 210, Kansas City, MO 64106",
     ),
@@ -142,10 +136,10 @@ def _reyes_presets(d: Day) -> list[Preset]:
         Preset(
             key="reyes",
             group="a",
-            title="Legit vendor",
+            title="Clean invoice",
             vendor="Reyes Packaging · Mexico City · $6,400",
-            summary="Known vendor, authenticated sender, bank account matches 41 past payments.",
-            expected="Vouched, fast-pay eligible.",
+            summary="A regular vendor, usual email address, same bank account as the last 41 payments.",
+            expected="Clear it to pay (fast-pay).",
             format="pdf",
             invoice=reyes_invoice,
             sender=SenderIdentity(
@@ -211,14 +205,13 @@ def _reyes_presets(d: Day) -> list[Preset]:
         Preset(
             key="warsaw",
             group="b",
-            title="Bank-detail swap / account takeover",
+            title="Fraud invoice: new bank account",
             vendor="Warsaw Steel Sp. z o.o. · $12,000",
             summary=(
-                "Known vendor, but the invoice is sent from a lookalike domain (warsawsteel-eu.com vs "
-                "warsawsteel.pl), replies go to a freemail address, the IBAN is new and unverified, and "
-                "the note pushes urgency. The lookalike domain authenticates for itself, so SPF/DKIM pass."
+                "Looks like a real vendor, but the email comes from a lookalike address, replies go "
+                "elsewhere, the bank account is new and the note says 'urgent'."
             ),
-            expected="Verify — changed bank details, hold until call-back on the number on file.",
+            expected="Hold it until someone calls the vendor on a number they already have.",
             format="body",
             invoice=warsaw_invoice,
             sender=SenderIdentity(
@@ -296,12 +289,9 @@ def _reyes_presets(d: Day) -> list[Preset]:
             group="c",
             title="Duplicate invoice",
             vendor="Midwest Pallets · $4,950 × 2",
-            summary=(
-                "Known vendor, regular monthly amount, Excel attachment. "
-                "The same invoice number arrives twice."
-            ),
-            expected="First copy vouched; the re-send is flagged as a duplicate (quick check).",
-            hint="Send it, then load the re-send (same invoice number) and send again.",
+            summary="A regular vendor sends the same invoice twice.",
+            expected="Pay the first copy; hold the second as a duplicate.",
+            hint="Send this one, then load the second copy and send it too.",
             format="xlsx",
             invoice=midwest_invoice,
             sender=SenderIdentity(
@@ -312,17 +302,17 @@ def _reyes_presets(d: Day) -> list[Preset]:
             ),
             sender_options=midwest_sender_options,
             follow_up="midwest-resend",
-            follow_up_label="Load the re-send (duplicate MP-5533)",
+            follow_up_label="Load the second copy (MP-5533 again)",
         )
     )
     presets.append(
         Preset(
             key="midwest-resend",
             group="c",
-            title="Duplicate invoice — re-send",
+            title="Duplicate invoice: second copy",
             vendor="Midwest Pallets · $4,950 (same MP-5533)",
-            summary="Identical invoice re-sent 'in case the first one did not come through'.",
-            expected="Quick check — duplicate of the earlier MP-5533.",
+            summary="The same invoice sent again 'in case the first one did not come through'.",
+            expected="Hold it: duplicate of MP-5533.",
             format="xlsx",
             invoice=midwest_invoice,
             sender=SenderIdentity(
@@ -387,14 +377,11 @@ def _reyes_presets(d: Day) -> list[Preset]:
         Preset(
             key="brightline-1",
             group="d",
-            title="Split invoice under the $5,000 limit",
+            title="One bill split in two",
             vendor="Brightline Supply · 2 × $4,900",
-            summary=(
-                "A $9,800 order is billed as two $4,900 invoices minutes apart, each just under the "
-                "owner's $5,000 approval limit."
-            ),
-            expected="Both halves flagged as a split-under-limit pattern (quick check).",
-            hint="Send the first half, then load and send the second half within the hour.",
+            summary="A $9,800 order billed as two $4,900 invoices, each just under the $5,000 approval limit.",
+            expected="Hold both halves as a split bill.",
+            hint="Send this half, then load the second half and send it too.",
             format="csv",
             invoice=brightline("BL-3312", "first half"),
             sender=SenderIdentity(
@@ -415,10 +402,10 @@ def _reyes_presets(d: Day) -> list[Preset]:
         Preset(
             key="brightline-2",
             group="d",
-            title="Split invoice — second half",
+            title="One bill split in two: second half",
             vendor="Brightline Supply · $4,900 (BL-3313)",
-            summary="Second $4,900 invoice from the same vendor, minutes after the first.",
-            expected="Quick check — combined $9,800 exceeds the approval limit.",
+            summary="The second $4,900 invoice, minutes after the first.",
+            expected="Hold it: together they are $9,800, over the approval limit.",
             format="csv",
             invoice=brightline("BL-3313", "second half"),
             sender=SenderIdentity(
@@ -467,13 +454,10 @@ def _reyes_presets(d: Day) -> list[Preset]:
         Preset(
             key="nova",
             group="e",
-            title="Fake vendor ring",
+            title="Fraud invoice: fake vendor",
             vendor="Nova Trade LLC · $7,200",
-            summary=(
-                "Brand-new vendor whose bank account, phone number and virtual-office address are shared "
-                "with two other recently added vendors (Apex Supply Co., Delta Freight LLC)."
-            ),
-            expected="Verify — unrecognized vendor, ring graph shows the shared bank / phone / address.",
+            summary="A brand-new vendor that shares its bank account, phone and address with two other new vendors.",
+            expected="Hold it and check who this vendor really is.",
             format="png",
             invoice=nova_invoice,
             sender=SenderIdentity(
@@ -536,13 +520,10 @@ def _reyes_presets(d: Day) -> list[Preset]:
         Preset(
             key="santa-rita",
             group="f",
-            title="Honest brand-new small vendor",
+            title="New small vendor (honest)",
             vendor="Café Santa Rita · Brazil · $1,850",
-            summary=(
-                "First invoice from a small new vendor: registration (CNPJ) checked, bank verified by "
-                "call-back, amount under the new-vendor limit, authenticated sender."
-            ),
-            expected="Vouched — a new vendor is not automatically suspicious.",
+            summary="First invoice from a small new vendor whose identity and bank account were already checked.",
+            expected="Clear it to pay: new is not the same as suspicious.",
             format="pdf",
             invoice=santa_rita_invoice,
             sender=SenderIdentity(
@@ -619,15 +600,10 @@ def _heartland_presets(d: Day) -> list[Preset]:
         Preset(
             key="prairie",
             group="a",
-            title="Legit vendor",
+            title="Clean invoice",
             vendor="Prairie Packaging Supply · Wichita · $1,215",
-            summary=(
-                "Four-year vendor, verified out of band, twelve regular payments of about $1,100. "
-                "Authenticated sender, PO on the invoice, bank account identical to the master record."
-            ),
-            expected=(
-                "Fast-pay lane: settles under the owner's standing rule (verified vendor, under $2,500)."
-            ),
+            summary="A trusted four-year vendor, usual email address, same bank account as always, PO attached.",
+            expected="Pay it right away (trusted vendor, under $2,500).",
             format="pdf",
             invoice=prairie_invoice,
             sender=SenderIdentity(
@@ -695,18 +671,13 @@ def _heartland_presets(d: Day) -> list[Preset]:
         Preset(
             key="sonora",
             group="b",
-            title="Bank-detail swap / account takeover",
+            title="Fraud invoice: new bank account",
             vendor="Sonora Fresh Produce · Hermosillo · $9,850",
             summary=(
-                "Five-year vendor paid every two weeks, but this invoice comes from a lookalike domain "
-                "(sonorafresh-billing.com vs sonorafresh.com), replies go to a third domain, SPF soft-fails "
-                "and DMARC fails, the bank account is new and offshore, and the note mixes urgency with an "
-                "instruction aimed at the payment system."
+                "Looks like a real vendor, but the email comes from a lookalike address, the bank account "
+                "is new and overseas, and the note says 'urgent' and tries to order the system to pay."
             ),
-            expected=(
-                "Hold: sender checks fail before any model reads the text; bank differs from the master "
-                "record; prompt injection flagged. Next step: call back the number on file."
-            ),
+            expected="Hold it until someone calls the vendor on a number they already have.",
             format="body",
             invoice=sonora_invoice,
             sender=SenderIdentity(
@@ -777,11 +748,8 @@ def _heartland_presets(d: Day) -> list[Preset]:
             group="c",
             title="Duplicate invoice",
             vendor="Midwest Facility Services · KC · $4,780",
-            summary=(
-                "Known vendor re-submits a paid invoice as INV-2291A: INV-2291 for the same $4,780 "
-                "was paid nine days ago. No PO and no delivery confirmation."
-            ),
-            expected="Hold: duplicate of paid invoice INV-2291 (same normalised number and amount).",
+            summary="A regular vendor re-sends an invoice that was already paid nine days ago.",
+            expected="Hold it: already paid as INV-2291.",
             format="xlsx",
             invoice=midwest_invoice,
             sender=SenderIdentity(
@@ -850,17 +818,10 @@ def _heartland_presets(d: Day) -> list[Preset]:
         Preset(
             key="rheinland",
             group="d",
-            title="Bank change confirmed by call-back",
+            title="New bank account, already confirmed",
             vendor="Rheinland Gewürze GmbH · Hamburg · EUR 8,240",
-            summary=(
-                "Six-year vendor whose IBAN changed twelve days ago. The change was confirmed by calling the "
-                "number on file, so the invoice is payable, but any recent bank change is kept out of "
-                "fast-pay. Early-payment discount 2/10 net 30."
-            ),
-            expected=(
-                "Standard lane: payable after the owner approves the batch; "
-                "not fast-pay (recent bank change)."
-            ),
+            summary="A trusted vendor changed banks 12 days ago and your team already confirmed it by phone.",
+            expected="Clear it to pay with your approval (no instant pay after a bank change).",
             format="csv",
             invoice=rheinland_invoice,
             sender=SenderIdentity(
@@ -925,16 +886,13 @@ def _heartland_presets(d: Day) -> list[Preset]:
         Preset(
             key="apex",
             group="e",
-            title="Fake vendor ring",
+            title="Fraud invoice: fake vendor",
             vendor="Apex Global Trading LLC · $12,000",
             summary=(
-                "Vendor added nine days ago, no payment history, freemail sender. Its bank account is "
-                "shared with two other new vendors (Summit Trading Imports, Northgate Supply LLC), the EIN "
-                "fails its check digit, the phone is a toll-free VOIP number and the address is a PO box."
+                "A nine-day-old vendor that shares its bank account with two other new vendors; invalid "
+                "tax ID, PO box address, webmail sender."
             ),
-            expected=(
-                "Hold: shared bank account across vendors (ring); identity check before anything is paid."
-            ),
+            expected="Hold it and check who this vendor really is.",
             format="png",
             invoice=apex_invoice,
             sender=SenderIdentity(
@@ -998,13 +956,10 @@ def _heartland_presets(d: Day) -> list[Preset]:
         Preset(
             key="baolin",
             group="f",
-            title="Honest brand-new small vendor",
+            title="New small vendor (honest)",
             vendor="Bao Lin Ceramics · Da Nang · $640",
-            summary=(
-                "Three-week-old vendor with one prior payment, writing from a Gmail address. Bank account "
-                "and tax id match the record created at onboarding, PO on the invoice, tiny amount."
-            ),
-            expected="Standard lane: not blocked, scheduled with the Friday batch (too new for fast-pay).",
+            summary="A three-week-old vendor, small amount, details match what you saved when you added them.",
+            expected="Clear it to pay with your approval (too new for instant pay).",
             format="pdf",
             invoice=baolin_invoice,
             sender=SenderIdentity(

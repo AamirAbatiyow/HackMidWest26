@@ -88,11 +88,12 @@ table.items .amount { font-family: var(--mono); white-space: nowrap; }
 .btn-primary { background: var(--accent); color: var(--accent-ink); }
 .btn-primary:hover { background: #0b5858; }
 .btn-primary:disabled { opacity: 0.6; cursor: progress; }
+.btn-big { font-size: 17px; padding: 14px 26px; flex: 1 1 auto; min-width: 200px; }
 .btn-secondary { background: #fff; color: var(--ink); border-color: var(--line); }
 .btn-secondary:hover { background: var(--bg); }
 .btn-ghost { background: transparent; color: var(--accent); padding: 6px 10px; }
 .btn-ghost:hover { background: var(--accent-soft); }
-.send-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.send-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; align-items: stretch; }
 .status { min-height: 1.4em; font-size: 14px; }
 .status.ok { color: var(--good); }
 .status.bad { color: var(--bad); }
