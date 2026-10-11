@@ -58,6 +58,8 @@ run-vouch: ## Start the Vouch API on :8101 (frontend contract + /v1 engine route
 serve-vouch: ## Start the risk-model inference service on :8201 (private model Linode in production)
 	$(RUN) python -m vouch.services.inference
 
+model-serve: serve-vouch ## Alias for serve-vouch (ML model inference service)
+
 train-vouch: ## Train the vouch-risk PyTorch model on synthetic data and register a new version
 	$(RUN) python -m vouch.models.train
 
