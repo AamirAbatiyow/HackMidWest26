@@ -3,9 +3,10 @@
 - One funded source wallet (XRPL_WALLET_SEED, never committed) pays out.
 - Destinations: a classic r-address in `PaymentRequest.destination`, or the shared demo receiving
   account XRPL_DESTINATION_ADDRESS plus a per-payee `destination_tag` from `request.metadata`.
-- USD amounts are scaled to test XRP with XRPL_XRP_PER_USD (demo only; testnet XRP has no value).
-- `send_batch` submits up to 8 payments as one XLS-56 `Batch` transaction with tfAllOrNothing: either
-  every vendor in the chunk is paid or none is. Each inner payment gets its own ledger hash.
+- Payments use an IOU (issued currency / stablecoin-style token) when XRPL_IOU_ISSUER is set;
+  otherwise falls back to XRP with XRPL_XRP_PER_USD scaling.
+- `send_batch` attempts the XLS-56 `Batch` transaction (tfAllOrNothing) when the amendment is enabled
+  on testnet; falls back to sequential payments with a clear label if Batch isn't available.
 - Idempotency: the key is written into a Memo and kept in a local key -> receipt map, so retries in the
   same process never double-pay. (A production system would persist this map before submitting.)
 
@@ -14,6 +15,7 @@ Get funded testnet wallets with `python -m hm_settlement.xrpl_setup`.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from decimal import ROUND_DOWN, Decimal
@@ -24,6 +26,8 @@ from hm_settlement.base import SettlementAdapter
 from hm_settlement.models import PaymentReceipt, PaymentRequest, PaymentStatus, Quote
 from hm_settlement.settings import SettlementSettings, get_settlement_settings
 
+log = logging.getLogger(__name__)
+
 MAX_BATCH_INNER = 8
 _DROPS_PER_XRP = Decimal(1_000_000)
 
@@ -32,9 +36,22 @@ def _is_classic_address(value: str) -> bool:
     return value.startswith("r") and 25 <= len(value) <= 35
 
 
+def _batch_amendment_enabled(client: Any) -> bool:
+    """Check if the Batch amendment (XLS-56) is enabled on the connected network."""
+    try:
+        from xrpl.models.requests import ServerInfo
+
+        result = client.request(ServerInfo()).result
+        amendments = result.get("info", {}).get("amendment_blocked", [])
+        enabled = result.get("info", {}).get("amendments", [])
+        return "Batch" not in amendments and any("Batch" in str(a) for a in enabled)
+    except Exception as exc:
+        log.warning("could not check Batch amendment status: %s", exc)
+        return False
+
+
 class XRPLTestnetAdapter(SettlementAdapter):
     name = "xrpl"
-    network = "xrpl-testnet"
 
     def __init__(self, settings: SettlementSettings | None = None, client: Any = None, wallet: Any = None):
         try:
@@ -53,10 +70,30 @@ class XRPLTestnetAdapter(SettlementAdapter):
         self.wallet = wallet or Wallet.from_seed(seed)
         self._by_key: dict[str, PaymentReceipt] = {}
         self._lock = threading.Lock()
+        self._batch_available: bool | None = None
+
+    @property
+    def network(self) -> str:
+        if self._uses_iou():
+            return f"xrpl-testnet-{self.settings.xrpl_iou_currency}"
+        return "xrpl-testnet-xrp"
+
+    def _uses_iou(self) -> bool:
+        """Return True if payments should use an IOU (issued currency) instead of XRP."""
+        return bool(self.settings.xrpl_use_iou and self.settings.xrpl_iou_issuer)
+
+    def _batch_supported(self) -> bool:
+        """Check once per adapter lifetime whether Batch transactions are supported."""
+        if self._batch_available is None:
+            self._batch_available = _batch_amendment_enabled(self.client)
+            if not self._batch_available:
+                log.info("XRPL Batch amendment not detected on testnet; using sequential payments")
+        return self._batch_available
 
     # -- helpers -----------------------------------------------------------------------------------
 
     def to_drops(self, request: PaymentRequest) -> str:
+        """Convert request amount to XRP drops (used only when IOU is disabled)."""
         amount = request.amount
         if request.currency.upper() != "XRP":
             amount = amount * self.settings.xrpl_xrp_per_usd
@@ -64,6 +101,15 @@ class XRPLTestnetAdapter(SettlementAdapter):
         if drops <= 0:
             raise ValueError(f"amount {request.amount} {request.currency} scales to 0 drops")
         return str(int(drops))
+
+    def to_iou_amount(self, request: PaymentRequest) -> dict[str, str]:
+        """Convert request amount to an IOU (issued currency) amount object."""
+        value = str(request.amount.quantize(Decimal("0.01"), rounding=ROUND_DOWN))
+        return {
+            "currency": self.settings.xrpl_iou_currency,
+            "issuer": self.settings.xrpl_iou_issuer,
+            "value": value,
+        }
 
     def _destination(self, request: PaymentRequest) -> tuple[str, int | None]:
         tag = request.metadata.get("destination_tag")
@@ -81,11 +127,12 @@ class XRPLTestnetAdapter(SettlementAdapter):
 
         destination, tag = self._destination(request)
         memo_text = f"{request.idempotency_key}|{request.memo or ''}"[:250]
+        amount = self.to_iou_amount(request) if self._uses_iou() else self.to_drops(request)
         return Payment(
             account=self.wallet.classic_address,
             destination=destination,
             destination_tag=tag,
-            amount=self.to_drops(request),
+            amount=amount,
             memos=[Memo(memo_type=b"vouch/idempotency".hex(), memo_data=memo_text.encode().hex())],
             **extra,
         )
@@ -93,12 +140,13 @@ class XRPLTestnetAdapter(SettlementAdapter):
     def _receipt(
         self, request: PaymentRequest, tx_hash: str, ok: bool, raw: dict[str, Any]
     ) -> PaymentReceipt:
+        currency = self.settings.xrpl_iou_currency if self._uses_iou() else "XRP"
         receipt = PaymentReceipt(
             tx_id=tx_hash,
             status=PaymentStatus.SETTLED if ok else PaymentStatus.FAILED,
             network=self.network,
             amount=request.amount,
-            currency=request.currency,
+            currency=currency,
             destination=request.destination,
             idempotency_key=request.idempotency_key,
             explorer_url=self.explorer_url(tx_hash),
@@ -114,6 +162,13 @@ class XRPLTestnetAdapter(SettlementAdapter):
         from xrpl.ledger import get_fee
 
         fee_drops = Decimal(get_fee(self.client))
+        if self._uses_iou():
+            return Quote(
+                amount=request.amount,
+                currency=self.settings.xrpl_iou_currency,
+                network_fee=fee_drops / _DROPS_PER_XRP,
+                network=self.network,
+            )
         return Quote(
             amount=Decimal(self.to_drops(request)) / _DROPS_PER_XRP,
             currency="XRP",
@@ -148,9 +203,17 @@ class XRPLTestnetAdapter(SettlementAdapter):
             todo = [r for r in requests if r.idempotency_key not in done]
         if not todo:
             return [done[r.idempotency_key] for r in requests]
-        if not self.settings.xrpl_use_batch or len(todo) == 1:
+        use_batch = self.settings.xrpl_use_batch and len(todo) > 1 and self._batch_supported()
+        if not use_batch:
+            log.info(
+                "XRPL sequential settlement (%d payments): %s",
+                len(todo),
+                "single payment" if len(todo) == 1 else "Batch amendment not available on testnet",
+            )
             for r in todo:
-                done[r.idempotency_key] = self.send(r)
+                receipt = self.send(r)
+                receipt.raw["batch_mode"] = "sequential"
+                done[r.idempotency_key] = receipt
             return [done[r.idempotency_key] for r in requests]
         for start in range(0, len(todo), MAX_BATCH_INNER):
             chunk = todo[start : start + MAX_BATCH_INNER]
@@ -190,6 +253,7 @@ class XRPLTestnetAdapter(SettlementAdapter):
                     "batch_explorer_url": self.explorer_url(batch_hash),
                     "engine_result": engine,
                     "atomic": atomic,
+                    "batch_mode": "atomic" if atomic else "independent",
                 }
                 receipts.append(self._receipt(request, tx_hash, ok, raw))
             return receipts

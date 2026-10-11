@@ -7,6 +7,7 @@ import type {
 } from './types'
 import { DEMO_PAYMENTS } from '@/data/payments'
 import { DEMO_NETWORK } from '@/data/network'
+import { DEMO_LATENCY, DEMO_TOPOLOGY } from '@/data/netstats'
 import { DEMO_REDTEAM } from '@/data/redteam'
 import { DEMO_FAIRNESS } from '@/data/fairness'
 
@@ -159,6 +160,27 @@ export function createMockApi(): VouchApi {
     async getHealth() {
       await wait(50)
       return { ok: true, version: 'mock', latencyMs: 0 }
+    },
+
+    async getLatency() {
+      await wait(200)
+      const jitter = (n: number | null) => (n != null ? Math.max(1, Math.round(n * (0.9 + Math.random() * 0.2))) : null)
+      const pipelineSteps = Object.fromEntries(
+        Object.entries(DEMO_LATENCY.pipelineSteps).map(([k, v]) => [
+          k,
+          { ...v, p50Ms: jitter(v.p50Ms), p95Ms: jitter(v.p95Ms), latestMs: jitter(v.latestMs) },
+        ]),
+      )
+      return {
+        ...clone(DEMO_LATENCY),
+        pipelineSteps,
+        updatedAt: new Date().toISOString(),
+      }
+    },
+
+    async getTopology() {
+      await wait(150)
+      return clone(DEMO_TOPOLOGY)
     },
   }
 }

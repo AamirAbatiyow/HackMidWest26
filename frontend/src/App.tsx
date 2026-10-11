@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Shell } from '@/components/workspace/Shell'
 import { ApprovalPage } from '@/pages/ApprovalPage'
 import { FairnessPage } from '@/pages/FairnessPage'
+import { NetstatsPage } from '@/pages/NetstatsPage'
 import { NetworkPage } from '@/pages/NetworkPage'
 import { ReceiptPage } from '@/pages/ReceiptPage'
 import { RedTeamPage } from '@/pages/RedTeamPage'
@@ -34,6 +35,7 @@ export default function App() {
                     <Route path="receipt/:id" element={<ReceiptPage />} />
                     <Route path="fairness" element={<FairnessPage />} />
                     <Route path="network" element={<NetworkPage />} />
+                    <Route path="netstats" element={<NetstatsPage />} />
                     <Route path="redteam" element={<RedTeamPage />} />
                     <Route path="tokens" element={<TokensPage />} />
                     <Route path="payments/:id" element={<PaymentRedirect />} />
