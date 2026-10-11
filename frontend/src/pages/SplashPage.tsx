@@ -29,7 +29,7 @@ export function SplashPage() {
       className="flex h-dvh w-full cursor-pointer items-center justify-center bg-background text-foreground outline-none select-none"
     >
       {/* Trailing letter-spacing widens the box to the right; the left padding re-centres the glyphs. */}
-      <h1 className="num animate-splash-in pl-[0.3em] text-3xl font-semibold tracking-[0.3em] uppercase">Vouch</h1>
+      <h1 className="num animate-splash-in pl-[0.3em] text-4xl font-semibold tracking-[0.3em] uppercase">Vouch</h1>
     </div>
   )
 }

@@ -130,7 +130,11 @@ function TopologyDiagram({ topology, latency }: { topology: TopologyData; latenc
 }
 
 function WaterfallChart({ steps }: { steps: { step: string; latencyMs: number | null }[] }) {
-  const maxMs = Math.max(...steps.map((s) => s.latencyMs ?? 0), 1)
+  // Bars are laid end to end, so the track is the run total, not the longest step.
+  const maxMs = Math.max(
+    steps.reduce((s, x) => s + (x.latencyMs ?? 0), 0),
+    1,
+  )
   let cumulative = 0
 
   return (

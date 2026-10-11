@@ -39,6 +39,9 @@
   --text-2xl--line-height: 26px;
   --text-3xl: 24px;
   --text-3xl--line-height: 30px;
+  /* Splash wordmark only */
+  --text-4xl: 40px;
+  --text-4xl--line-height: 48px;
 
   /* Layout metrics */
   --spacing-row: 30px;
