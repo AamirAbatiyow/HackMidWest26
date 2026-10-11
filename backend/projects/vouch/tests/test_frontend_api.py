@@ -191,6 +191,25 @@ def test_approve_on_unknown_vendor_hold_is_refused_with_required_actions(client)
     assert client.get(f"/v1/payments/{card['id']}").json()["lifecycle"] == "pending"
 
 
+def test_apex_ring_present_for_shared_bank_card(client):
+    """Apex (shared bank account) has a ring graph linking it to Summit and Northgate."""
+    apex = _by_vendor(client, "Apex")
+    ring = apex.get("ring")
+    assert ring is not None, "Apex should have a ring (shares bank with Summit, Northgate)"
+    assert {"nodes", "edges"} <= set(ring)
+    node_ids = {n["id"] for n in ring["nodes"]}
+    assert "v-apex" in node_ids, "Apex should be a node"
+    assert any("bank" in n["id"] for n in ring["nodes"]), "ring should have a bank node"
+    vendor_nodes = [n for n in ring["nodes"] if n["kind"] == "vendor"]
+    assert len(vendor_nodes) >= 3, "ring should have Apex + Summit + Northgate"
+    vendor_names = {n["label"] for n in vendor_nodes}
+    assert "Apex Global Trading LLC" in vendor_names
+    assert any("Summit" in name or "Northgate" in name for name in vendor_names)
+    focus_nodes = [n for n in ring["nodes"] if n.get("focus")]
+    assert len(focus_nodes) == 1 and focus_nodes[0]["id"] == "v-apex", "Apex should be the focus"
+    assert ring["edges"], "ring should have edges connecting vendors to shared bank"
+
+
 def test_approve_on_ring_hold_records_owner_resolution(client):
     """Apex (shared bank account ring) is owner-resolvable: approving clears the flags and logs who did it."""
     apex = _by_vendor(client, "Apex")
