@@ -1,0 +1,22 @@
+[project]
+name = "hm-storage"
+version = "0.1.0"
+description = "Object Storage (S3-compatible, boto3), Postgres (SQLAlchemy + optional pgvector), Valkey/Redis helpers."
+requires-python = ">=3.11"
+dependencies = [
+    "hm-core",
+    "boto3>=1.34",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "redis>=5.0",
+]
+
+[project.optional-dependencies]
+pgvector = ["pgvector>=0.3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hm_storage"]

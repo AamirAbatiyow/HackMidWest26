@@ -1,0 +1,324 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ------------------------------------------------------------------ */
+/* Vouch design tokens — dense operator terminal                       */
+/*                                                                     */
+/* Direction: near-black #0B0D10, hairline borders #1F242B, Geist for  */
+/* labels, JetBrains Mono for numbers and IDs, one cool accent for     */
+/* selection, green for clear, amber/red for risk, 2–4px radii, no    */
+/* glows, 4px spacing grid, 30px rows. Light theme remaps the same     */
+/* tokens. Nothing visual is defined outside this file.                */
+/* ------------------------------------------------------------------ */
+
+@theme inline {
+  /* Type */
+  --font-sans: "Geist Variable", "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale (px): 10 / 11 / 12 / 13 / 14 / 16 / 20 */
+  --text-2xs: 10px;
+  --text-2xs--line-height: 14px;
+  --text-xs: 11px;
+  --text-xs--line-height: 16px;
+  --text-sm: 12px;
+  --text-sm--line-height: 18px;
+  --text-base: 13px;
+  --text-base--line-height: 20px;
+  --text-lg: 14px;
+  --text-lg--line-height: 20px;
+  --text-xl: 16px;
+  --text-xl--line-height: 22px;
+  --text-2xl: 20px;
+  --text-2xl--line-height: 26px;
+  --text-3xl: 24px;
+  --text-3xl--line-height: 30px;
+
+  /* Layout metrics */
+  --spacing-row: 30px;
+  --spacing-row-sm: 28px;
+  --spacing-topbar: 36px;
+  --spacing-strip: 24px;
+  --spacing-panel: 40%;
+
+  /* shadcn semantic colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Surfaces */
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-hairline: var(--border);
+
+  /* Accent (selection, focus, primary action) */
+  --color-accent-cool: var(--accent-cool);
+  --color-accent-cool-soft: var(--accent-cool-soft);
+
+  /* Risk */
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  /* Clear: vouched, live */
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+
+  /* Status aliases. Vouched is green, so a clear payment reads at a glance. */
+  --color-vouched: var(--green);
+  --color-vouched-soft: var(--green-soft);
+  --color-attention: var(--amber);
+  --color-attention-soft: var(--amber-soft);
+  --color-problem: var(--red);
+  --color-problem-soft: var(--red-soft);
+
+  /* Radii: 2–4px */
+  --radius-xs: 2px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 4px;
+  --radius-3xl: 4px;
+  --radius-4xl: 4px;
+
+  /* Elevation: none. Floating layers use a hairline only. */
+  --shadow-pop: 0 0 0 1px var(--border);
+  --shadow-none: 0 0 #0000;
+
+  /* Motion */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --duration-fast: 100ms;
+  --duration-base: 150ms;
+  --duration-slow: 200ms;
+}
+
+/* Dark: the design target */
+.dark,
+:root {
+  --radius: 3px;
+
+  --background: #0b0d10;
+  --surface-1: #0f1216;
+  --surface-2: #13171c;
+  --surface-3: #181d23;
+  --border: #1f242b;
+  --foreground: #e6e8eb;
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-2);
+  --popover-foreground: var(--foreground);
+
+  --accent-cool: #6ea8fe;
+  --accent-cool-soft: rgb(110 168 254 / 0.12);
+  --amber: #e2a33b;
+  --amber-soft: rgb(226 163 59 / 0.12);
+  --red: #e5574f;
+  --red-soft: rgb(229 87 79 / 0.12);
+  --green: #5fb381;
+  --green-soft: rgb(95 179 129 / 0.12);
+  --vouched: var(--green);
+  --vouched-soft: var(--green-soft);
+
+  --primary: var(--accent-cool);
+  --primary-foreground: #0b0d10;
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: #8b949e;
+  --accent: var(--surface-3);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--red);
+  --input: #272d35;
+  --ring: rgb(110 168 254 / 0.7);
+  --chart-1: var(--accent-cool);
+  --chart-2: var(--amber);
+  --chart-3: var(--red);
+  --chart-4: #5c6670;
+  --chart-5: #3a424b;
+  --sidebar: var(--surface-1);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--accent-cool);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  color-scheme: dark;
+}
+
+/* Light: secondary toggle, same tokens remapped */
+.light {
+  --background: #fafbfc;
+  --surface-1: #ffffff;
+  --surface-2: #f3f5f7;
+  --surface-3: #e9ecef;
+  --border: #dde2e8;
+  --foreground: #14181d;
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--foreground);
+
+  --accent-cool: #2563eb;
+  --accent-cool-soft: rgb(37 99 235 / 0.1);
+  --amber: #9a6400;
+  --amber-soft: rgb(154 100 0 / 0.1);
+  --red: #c2322a;
+  --red-soft: rgb(194 50 42 / 0.08);
+  --green: #167a46;
+  --green-soft: rgb(22 122 70 / 0.1);
+  --vouched: var(--green);
+  --vouched-soft: var(--green-soft);
+
+  --primary: var(--accent-cool);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: #5f6b78;
+  --accent: var(--surface-3);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--red);
+  --input: #cfd6de;
+  --ring: rgb(37 99 235 / 0.6);
+  --sidebar: var(--surface-1);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--accent-cool);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans text-base antialiased;
+    font-feature-settings: "tnum", "ss01";
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    @apply outline-none;
+  }
+  ::selection {
+    background: var(--accent-cool-soft);
+  }
+  /* Flat everywhere: shadcn primitives must not reintroduce elevation. */
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dialog-content"],
+  [data-slot="popover-content"],
+  [data-slot="tooltip-content"],
+  [data-slot="sheet-content"] {
+    box-shadow: var(--shadow-pop) !important;
+    border-radius: var(--radius-lg) !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Numbers and IDs: monospace, tabular */
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+}
+
+/* Column / section label */
+@utility label-caps {
+  font-size: var(--text-2xs);
+  line-height: var(--text-2xs--line-height);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Row affordance for every list and table */
+@utility row-interactive {
+  transition: background-color var(--duration-fast) var(--ease-out-quart);
+  &:hover {
+    background-color: var(--surface-2);
+  }
+  &[data-active="true"] {
+    background-color: var(--surface-2);
+  }
+  &[data-selected="true"],
+  &[aria-selected="true"] {
+    background-color: var(--accent-cool-soft);
+  }
+}
+
+@keyframes v-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes v-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes v-feed-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@utility animate-pulse-soft {
+  animation: v-pulse 1.4s ease-in-out infinite;
+}
+@utility animate-blink {
+  animation: v-blink 1s steps(2, start) infinite;
+}
+@utility animate-feed-in {
+  animation: v-feed-in var(--duration-base) var(--ease-out-quart) both;
+}

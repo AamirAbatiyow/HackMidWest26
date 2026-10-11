@@ -1,0 +1,26 @@
+# App Linode: only the API container. Postgres and Object Storage are Akamai managed services and the
+# risk model runs on the private model Linode; all of that comes in through .env (see cloud-init-app).
+#   cd backend && docker compose -f infra/compose/akamai-app.yml up -d --build
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/python-app.Dockerfile
+      args:
+        PROJECT: vouch
+        EXTRAS: --extra ml --extra cedar
+    env_file:
+      - ../../.env
+    environment:
+      PORT: "8000"
+    ports:
+      - "8101:8000"
+    volumes:
+      - vouchdata:/app/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+volumes:
+  vouchdata:

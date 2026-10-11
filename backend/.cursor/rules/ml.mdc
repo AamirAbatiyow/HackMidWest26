@@ -1,0 +1,15 @@
+---
+description: ML training, explainability, and inference service conventions
+globs: projects/**/models/**,projects/**/services/**,packages/ml_common/**
+alwaysApply: false
+---
+# ML
+
+- Start with the sklearn baseline in `models/train.py`; move to torch (`hm_ml_common.training.TabularMLP`, `train_classifier`) only if it improves the demo story or metric.
+- Data: synthetic generators seeded and reproducible; outputs in `data/processed/`; record source + license in `data/DATA.md`.
+- Save with `ModelRegistry().save(name, bundle, metrics=..., params=...)`. The bundle carries `model`, `feature_names`, `class_names`, `threshold`, `background` (LIME sample). Torch: `framework="torch"` and load with `model=` instance.
+- Metrics that matter for imbalanced problems: PR-AUC, precision@k, recall at the chosen threshold (`hm_ml_common.metrics`). Pick the threshold on validation, report on test.
+- Explanations: `TabularExplainer` / `TextExplainer` return `Explanation` (pydantic). Surface `to_text()` to agents and `contributions` to the frontend.
+- Inference service: CPU-only, loads lazily, `/ready` fails until a model exists, validates feature names, no training at request time.
+- Never commit weights (`*.pt`, `*.pkl`, ... are git-ignored). Ship via `artifacts/` copy or `ModelRegistry.push/pull` with Object Storage.
+- Torch CPU wheels come from the pytorch-cpu index (`make setup-ml`); TensorFlow only via the `tf` group if truly needed.

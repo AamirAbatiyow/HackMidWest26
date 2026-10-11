@@ -1,0 +1,27 @@
+# Copy to terraform.tfvars (gitignored) and edit. The token is NOT a variable here:
+#   export LINODE_TOKEN=...   (make deploy-akamai passes it as TF_VAR_linode_token)
+
+region    = "us-ord"
+app_count = 1
+
+# Who may SSH to the app Linodes (the model Linode is only reachable through them).
+admin_cidrs     = ["203.0.113.7/32"]
+ssh_public_keys = ["ssh-ed25519 AAAA... you@laptop"]
+
+# Code the Linodes clone at boot.
+repo_url = "https://github.com/AamirAbatiyow/HackMidWest26.git"
+repo_ref = "main"
+
+# Where the React app runs (CORS). Add the deployed frontend origin when you have one.
+frontend_origins = ["http://localhost:5173", "https://vouch.example.com"]
+
+# Optional: DNS name for the NodeBalancer + real certificate. Leave empty for IP + self-signed.
+# public_domain = "api.vouch.example.com"
+# tls_cert_pem  = file("~/certs/fullchain.pem")
+# tls_key_pem   = file("~/certs/privkey.pem")
+
+# xrpl = real XRPL testnet transactions (seeds pushed by deploy_akamai.sh); mock = simulated receipts.
+settlement_adapter = "xrpl"
+
+# Managed PostgreSQL takes 10-20 minutes; set false to run on SQLite for a quick first deploy.
+enable_postgres = true

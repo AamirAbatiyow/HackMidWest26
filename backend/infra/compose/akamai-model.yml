@@ -1,0 +1,21 @@
+# Model Linode: only the inference service (PyTorch vouch-risk model + LIME) on :8201.
+# Reachable from the app subnet only (Cloud Firewall); the image already contains the trained bundle.
+#   cd backend && docker compose -f infra/compose/akamai-model.yml up -d --build
+services:
+  inference:
+    build:
+      context: ../..
+      dockerfile: infra/docker/python-app.Dockerfile
+      args:
+        PROJECT: vouch
+        EXTRAS: --extra ml
+        APP_MODULE: vouch.services.inference:app
+    environment:
+      PORT: "8000"
+      LOG_JSON: "true"
+    ports:
+      - "8201:8000"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }

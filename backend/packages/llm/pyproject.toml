@@ -1,0 +1,13 @@
+[project]
+name = "hm-llm"
+version = "0.1.0"
+description = "OpenAI-compatible (Akamai) client factory, Bedrock fallback, 60 rpm limiter, 429 retry, token budgets."
+requires-python = ">=3.11"
+dependencies = ["hm-core", "httpx>=0.27", "openai>=1.40", "boto3>=1.34"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hm_llm"]
