@@ -5,7 +5,7 @@ import { SHORTCUTS, type ShortcutId } from '@/lib/shortcuts'
 const GROUPS: { title: string; ids: ShortcutId[] }[] = [
   { title: 'Move', ids: ['next', 'prev', 'open', 'close', 'search', 'palette'] },
   { title: 'Act', ids: ['approve', 'hold', 'verify', 'explain'] },
-  { title: 'Go to', ids: ['goPayments', 'goApprove', 'theme'] },
+  { title: 'Go to', ids: ['goPayments', 'goApprove', 'goLatency', 'goRedTeam', 'goTrust', 'theme'] },
 ]
 
 export function ShortcutsDialog() {

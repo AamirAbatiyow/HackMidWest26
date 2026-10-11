@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom'
 import { useApi } from '@/api/ApiProvider'
 import { useAsync } from '@/api/useAsync'
 import { Sparkline } from '@/components/vouch/Sparkline'
@@ -7,8 +6,6 @@ import { Block, DenseTable, PageFrame, Td, Th } from '@/components/vouch/Table'
 import { series } from '@/data/series'
 import { formatDateTime, formatInt } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { usePayments } from '@/store/PaymentsProvider'
-import { useUi } from '@/store/UiProvider'
 
 /** Fixed topology for the diagram: nodes by name, laid out left to right. */
 const LAYOUT: Record<string, { x: number; y: number }> = {
@@ -24,21 +21,16 @@ const NODE_H = 28
 export function NetworkPage() {
   const { api } = useApi()
   const { data, error, loading, reload } = useAsync(() => api.getNetwork(), [api])
-  const { receipts } = usePayments()
-  const { lastSettlementId } = useUi()
-  const lastId = lastSettlementId ?? Object.keys(receipts).at(-1) ?? '—'
 
   if (error) return <ErrorState message={error.message} onRetry={reload} />
   if (loading || !data) return <LoadingRows count={6} />
 
-  const p50 = data.hops.reduce((s, h) => s + h.p50Ms, 0)
-  const p95 = data.hops.reduce((s, h) => s + h.p95Ms, 0)
   const publicHops = data.hops.filter((h) => !h.isPrivate).length
   const names = Array.from(new Set(data.hops.flatMap((h) => [h.from, h.to])))
 
   return (
     <PageFrame
-      summary={`${data.region} · ${data.hops.length} hops · p50 ${p50}ms · p95 ${p95}ms · ${publicHops} public hop · ${data.hops.length - publicHops} private`}
+      summary={`${data.region} · ${data.hops.length} hops · ${publicHops} public hop · ${data.hops.length - publicHops} private`}
       aside={<span>updated {formatDateTime(data.updatedAt)}</span>}
     >
       <Block title="Topology" meta="p50 / p95 per hop · dashed = private network">
@@ -138,15 +130,12 @@ export function NetworkPage() {
           </thead>
           <tbody>
             {[
-              ['Latency p50 / p95 (end to end)', `${p50} / ${p95} ms`, 'sum of hops'],
               ['Model', data.modelVersion, 'private weights · no third-party inference'],
               ['Region', data.region, 'single region · data never leaves'],
               ['Prompt tokens today', formatInt(data.tokens.promptToday), 'PII masked before context'],
               ['Completion tokens today', formatInt(data.tokens.completionToday), 'model writes explanations only'],
               ['Tokens per payment (avg)', formatInt(data.tokens.perPaymentAvg), ''],
-              ['Policy checks', `${formatInt(data.policyChecks.passed)} / ${formatInt(data.policyChecks.total)}`, 'code-enforced · default-deny'],
               ['Policy mode', 'default-deny', 'nothing moves without owner approval'],
-              ['Last settlement ID', lastId, 'this session'],
             ].map(([k, v, note]) => (
               <tr key={k} className="row-interactive">
                 <Td>{k}</Td>
@@ -158,17 +147,6 @@ export function NetworkPage() {
                 </Td>
               </tr>
             ))}
-            <tr className="row-interactive">
-              <Td>Design tokens</Td>
-              <Td right>
-                <Link to="/tokens" className="num text-xs text-accent-cool underline-offset-2 hover:underline">
-                  /tokens
-                </Link>
-              </Td>
-              <Td muted className="text-xs">
-                colors, type, spacing, radii · defined once in src/index.css
-              </Td>
-            </tr>
           </tbody>
         </DenseTable>
       </Block>

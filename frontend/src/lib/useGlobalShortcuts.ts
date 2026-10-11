@@ -5,6 +5,7 @@ import { usePayments } from '@/store/PaymentsProvider'
 import { useUi } from '@/store/UiProvider'
 import { useVisibleRows } from '@/store/useVisibleRows'
 import { useTheme } from '@/theme/ThemeProvider'
+import { QUEUE_PATH } from './routes'
 import { isEditableTarget } from './shortcuts'
 
 export const SHORTCUTS_EVENT = 'vouch:shortcuts'
@@ -42,7 +43,7 @@ export function useGlobalShortcuts() {
       if (isEditableTarget(e.target) || e.altKey || meta) return
       if (u.paletteOpen) return
 
-      const onPayments = s.pathname === '/'
+      const onPayments = s.pathname === QUEUE_PATH
       const idx = u.activeId ? s.order.indexOf(u.activeId) : -1
       const active = u.activeId ? s.payments.find((p) => p.id === u.activeId) : undefined
       const targets = u.checked.size > 0 ? s.payments.filter((p) => u.checked.has(p.id) && p.lifecycle !== 'settled') : active && active.lifecycle !== 'settled' ? [active] : []
@@ -50,7 +51,8 @@ export function useGlobalShortcuts() {
       if (pendingG.current !== null) {
         window.clearTimeout(pendingG.current)
         pendingG.current = null
-        const map: Record<string, string> = { p: '/', a: '/approve', f: '/fairness', n: '/network', r: '/redteam', t: '/tokens' }
+        // Hidden views keep their chords so a deep link is one keystroke away during a demo.
+        const map: Record<string, string> = { p: QUEUE_PATH, a: '/approve', l: '/netstats', r: '/redteam', u: '/trust', n: '/network', t: '/tokens' }
         const to = map[e.key.toLowerCase()]
         if (to) {
           e.preventDefault()
@@ -65,7 +67,7 @@ export function useGlobalShortcuts() {
           return
         case '/':
           e.preventDefault()
-          if (!onPayments) s.navigate('/')
+          if (!onPayments) s.navigate(QUEUE_PATH)
           window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT))
           return
         case '?':

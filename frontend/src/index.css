@@ -322,3 +322,7 @@
 @utility animate-feed-in {
   animation: v-feed-in var(--duration-base) var(--ease-out-quart) both;
 }
+/* Splash wordmark: one slow fade, nothing else moves. */
+@utility animate-splash-in {
+  animation: v-feed-in 700ms var(--ease-out-quart) both;
+}
