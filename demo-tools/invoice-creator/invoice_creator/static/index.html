@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vouch demo · Invoice creator</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f6e6e'/%3E%3Cpath d='M6 10h20v13H6z' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3Cpath d='m6 10 10 8 10-8' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <a class="skip-link" href="#form-panel">Skip to the invoice form</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">✉</span>
+      <div>
+        <h1>Invoice creator</h1>
+        <p class="sub">Vouch demo operator tool · creates synthetic vendor invoices and emails them to the Vouch mail receiver</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="badge-demo" role="status" aria-label="Demo mode: all data is synthetic">DEMO / SYNTHETIC</span>
+      <span class="target" id="target-pill" title="Where “Send to Vouch” delivers">connecting…</span>
+      <span class="target receiver" id="receiver-pill" role="status" aria-live="polite" title="Live status of the mail receiver (polled)">receiver: …</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ───────────────────────────── left: scenarios + form ───────────────────────────── -->
+    <section class="col col-left" id="form-panel" aria-labelledby="presets-h">
+      <div class="card">
+        <h2 id="presets-h">1 · Pick a scenario</h2>
+        <p class="muted">Each preset fills the whole form. Everything is invented: companies, people, accounts, tax ids, domains.</p>
+        <div class="story-row">
+          <span class="story-label">Vendor world</span>
+          <div class="segmented" id="story-seg" role="radiogroup" aria-label="Preset family (story)"></div>
+        </div>
+        <p class="muted small" id="story-summary"></p>
+        <div class="preset-grid" id="preset-grid" role="group" aria-label="Scenario presets"></div>
+        <div class="scenario-card" id="scenario-card" hidden>
+          <div class="scenario-head">
+            <strong id="scenario-title"></strong>
+            <span class="pill" id="scenario-group"></span>
+          </div>
+          <p id="scenario-summary"></p>
+          <p class="expected"><span class="k">Vouch should:</span> <span id="scenario-expected"></span></p>
+          <p class="hint" id="scenario-hint" hidden></p>
+          <button type="button" class="btn btn-secondary" id="follow-up-btn" hidden></button>
+        </div>
+      </div>
+
+      <form class="card" id="invoice-form" autocomplete="off" novalidate>
+        <h2>2 · Invoice</h2>
+        <div class="grid-2">
+          <label>Vendor name<input data-bind="invoice.vendor_name" required /></label>
+          <label>Vendor email<input data-bind="invoice.vendor_email" type="email" /></label>
+          <label>Invoice number<input data-bind="invoice.invoice_number" required /></label>
+          <label>PO number<input data-bind="invoice.po_number" /></label>
+          <label>Amount due
+            <span class="input-prefix"><span id="currency-prefix">$</span><input data-bind="invoice.amount" type="number" min="0" step="0.01" required /></span>
+          </label>
+          <label>Currency<input data-bind="invoice.currency" maxlength="3" /></label>
+          <label>Invoice date<input data-bind="invoice.invoice_date" type="date" required /></label>
+          <label>Due date<input data-bind="invoice.due_date" type="date" required /></label>
+        </div>
+        <label>Description (one line)<input data-bind="invoice.description" /></label>
+        <div class="grid-2">
+          <label>Bill to (your company)<input data-bind="invoice.bill_to_name" id="bill-to-name" /></label>
+          <label>Bill-to address<input data-bind="invoice.bill_to_address" id="bill-to-address" /></label>
+        </div>
+
+        <fieldset>
+          <legend>Line items</legend>
+          <table class="items" id="items-table">
+            <thead><tr><th scope="col">Item</th><th scope="col" class="num">Qty</th><th scope="col" class="num">Unit price</th><th scope="col" class="num">Amount</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead>
+            <tbody id="items-body"></tbody>
+          </table>
+          <div class="row-actions">
+            <button type="button" class="btn btn-ghost" id="add-item">+ Add line</button>
+            <span class="muted" id="items-total"></span>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Bank account</legend>
+          <div class="grid-2">
+            <label>Bank name<input data-bind="invoice.bank.bank_name" /></label>
+            <label>Account label
+              <select data-bind="invoice.bank.account_label">
+                <option>Account Number</option><option>IBAN</option><option>CLABE</option>
+              </select>
+            </label>
+            <label>Account / IBAN / CLABE<input data-bind="invoice.bank.account_number" class="mono" /></label>
+            <label>Routing label
+              <select data-bind="invoice.bank.routing_label">
+                <option>Routing Number</option><option>SWIFT</option><option>SWIFT / BIC</option><option>Sort Code</option>
+              </select>
+            </label>
+            <label>Routing / SWIFT<input data-bind="invoice.bank.routing_number" class="mono" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Remit-to details</legend>
+          <label>Address<input data-bind="invoice.remit_to.address" /></label>
+          <div class="grid-2">
+            <label>Phone<input data-bind="invoice.remit_to.phone" /></label>
+            <label>Contact name<input data-bind="invoice.remit_to.contact_name" /></label>
+            <label>Tax id label
+              <select data-bind="invoice.remit_to.tax_id_label">
+                <option>Tax ID</option><option>EIN</option><option>RFC</option><option>NIP</option><option>CNPJ</option><option>VAT</option>
+              </select>
+            </label>
+            <label>Tax id<input data-bind="invoice.remit_to.tax_id" class="mono" /></label>
+          </div>
+        </fieldset>
+
+        <label>Notes (printed on the invoice)<textarea data-bind="invoice.notes" rows="3"></textarea></label>
+      </form>
+
+      <section class="card" aria-labelledby="sender-h">
+        <h2 id="sender-h">3 · Sender identity</h2>
+        <div class="segmented" role="radiogroup" aria-label="From address" id="sender-kind"></div>
+        <div class="grid-2">
+          <label>From name<input data-bind="sender.from_name" /></label>
+          <label>From address<input data-bind="sender.from_addr" type="email" class="mono" /></label>
+          <label>Reply-To (optional)<input data-bind="sender.reply_to" type="email" class="mono" placeholder="different from From = red flag" /></label>
+          <label>Envelope sender (MAIL FROM, optional)<input data-bind="sender.envelope_from" type="email" class="mono" placeholder="defaults to From" /></label>
+        </div>
+        <label>Subject<input data-bind="sender.subject" /></label>
+        <label>Cover note (email body)<textarea data-bind="sender.body" rows="4"></textarea></label>
+
+        <fieldset class="auth-sim">
+          <legend>Authentication-Results header <span class="pill pill-warn">demo simulation</span></legend>
+          <p class="muted small">
+            Real SPF/DKIM/DMARC verdicts are produced by the receiving mail server after DNS checks; they cannot be
+            forged for a domain we do not control. For the demo this tool writes the header onto the message it sends
+            and the receiver passes it through verbatim (every simulated header carries a <code>(demo-simulated)</code> comment).
+          </p>
+          <label class="check"><input type="checkbox" data-bind="sender.auth.enabled" /> Write an Authentication-Results header</label>
+          <div class="grid-3" id="auth-fields">
+            <label>SPF<select data-bind="sender.auth.spf"><option>pass</option><option>fail</option><option>softfail</option><option>none</option></select></label>
+            <label>DKIM<select data-bind="sender.auth.dkim"><option>pass</option><option>fail</option><option>softfail</option><option>none</option></select></label>
+            <label>DMARC<select data-bind="sender.auth.dmarc"><option>pass</option><option>fail</option><option>softfail</option><option>none</option></select></label>
+          </div>
+          <div class="row-actions">
+            <button type="button" class="btn btn-ghost" data-auth="pass">All pass</button>
+            <button type="button" class="btn btn-ghost" data-auth="fail">All fail</button>
+            <button type="button" class="btn btn-ghost" data-auth="none">None</button>
+          </div>
+          <label class="check"><input type="checkbox" data-bind="sender.add_received_header" /> Add a simulated upstream <code>Received:</code> trace line</label>
+        </fieldset>
+      </section>
+
+      <section class="card" aria-labelledby="send-h">
+        <h2 id="send-h">4 · Format &amp; send</h2>
+        <div class="segmented" role="radiogroup" aria-label="Output format" id="format-seg"></div>
+        <label>Delivery<select id="delivery"></select></label>
+        <p class="muted small" id="delivery-detail"></p>
+        <div class="send-row">
+          <button type="button" class="btn btn-primary" id="send-btn">Send to Vouch</button>
+          <button type="button" class="btn btn-secondary" id="download-eml">Download .eml</button>
+          <button type="button" class="btn btn-secondary" id="open-attachment">Open attachment</button>
+        </div>
+        <p class="status" id="send-status" role="status" aria-live="polite"></p>
+        <div class="demo-run">
+          <div>
+            <strong>Judge demo sequence</strong>
+            <p class="muted small" id="send-all-detail">Sends every scenario in order with its own format and sender. The form is left untouched.</p>
+          </div>
+          <button type="button" class="btn btn-secondary" id="send-all-btn">Send all scenarios</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- ───────────────────────────── right: preview + log ───────────────────────────── -->
+    <section class="col col-right" aria-label="Preview and send log">
+      <div class="card">
+        <div class="card-head">
+          <h2>Live invoice preview</h2>
+          <span class="pill" id="preview-format"></span>
+        </div>
+        <article class="paper" id="paper" aria-live="polite"></article>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Message as the receiver will see it</h2>
+          <span class="muted small" id="message-meta"></span>
+        </div>
+        <pre class="headers" id="headers-pre" aria-label="Email headers"></pre>
+        <details>
+          <summary>Body text</summary>
+          <pre class="body-pre" id="body-pre"></pre>
+        </details>
+        <details>
+          <summary>Intake JSON the receiver forwards to the backend</summary>
+          <pre class="body-pre" id="intake-pre"></pre>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Send log</h2>
+          <button type="button" class="btn btn-ghost" id="clear-log">Clear</button>
+        </div>
+        <div class="log-wrap">
+          <table class="log" id="log-table">
+            <thead><tr><th scope="col">When</th><th scope="col">Scenario</th><th scope="col">Invoice</th><th scope="col" class="num">Amount</th><th scope="col">Fmt</th><th scope="col">From → To</th><th scope="col">Auth</th><th scope="col">Via</th><th scope="col">Status</th><th scope="col" title="What the mail receiver did with it: queued, forwarded to the backend, or dead-lettered">Receiver → backend</th><th scope="col">.eml</th></tr></thead>
+            <tbody id="log-body"></tbody>
+          </table>
+          <p class="muted small" id="log-empty">Nothing sent yet.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span class="badge-demo small">DEMO / SYNTHETIC</span>
+    No real companies, people or bank accounts. Sender authentication headers are simulated and labelled.
+    <span id="version"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

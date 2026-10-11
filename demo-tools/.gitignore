@@ -1,0 +1,20 @@
+# Demo tools: never commit secrets, generated artifacts or local state.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Runtime data (received mail, dead letters, send logs, generated .eml files)
+data/
+**/data/
+*.eml
+!tests/fixtures/*.eml
+e2e/.run/

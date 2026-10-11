@@ -1,0 +1,37 @@
+# Vouch inbound mail receiver.
+#   cp .env.example .env   # edit BACKEND_INTAKE_URL / INTAKE_SHARED_SECRET
+#   docker compose up -d --build
+#   curl http://localhost:8025/health
+services:
+  mail-receiver:
+    build: .
+    image: vouch-mail-receiver:local
+    container_name: vouch-mail-receiver
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    ports:
+      - "25:25"       # SMTP (open only to the demo tool's IPs and the VPC — see DEPLOY.md)
+      - "2525:2525"   # alternate SMTP port for hosts/networks where 25 is filtered
+      - "8025:8025"   # HTTP: /health, /recent, /inbound fallback — VPC only
+    volumes:
+      - mail-data:/data
+    # Lets the non-root process bind port 25 inside the container.
+    sysctls:
+      - net.ipv4.ip_unprivileged_port_start=0
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mail-data:
