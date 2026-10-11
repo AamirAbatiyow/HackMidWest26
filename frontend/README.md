@@ -54,9 +54,9 @@ The frontend auto-detects the backend: when `/v1/health` responds, it switches t
 - **Owner actions**: approve, hold, appeal call the real API and update state
 - **Settlement**: `/v1/batch/settle` returns real XRPL testnet transaction IDs
 - **Receipt links**: open in the XRPL testnet explorer (`https://testnet.xrpl.org/transactions/...`)
-- **Agent feed**: polls `/v1/runs/{id}/events` for live intake, scoring, and settlement events
+- **Orchestrator timeline** (`f`): reads each payment's `steps[]` (the graph steps that actually ran: tool or model, code / llm / model / owner, duration, result, including which classifier engine routed the file and its confidence) and refreshes every 3 s while open
 - **Status bar**: shows real `/v1/netz` latencies and `/v1/info` service info
-- **Email/file intake**: new invoices from `/v1/intake/*` appear in the feed automatically
+- **Email/file intake**: new invoices from `/v1/intake/*` appear in the timeline automatically
 
 ## Deploy (production build)
 
@@ -142,7 +142,7 @@ Add `?theme=dark` or `?theme=light` to any URL to force a theme (also saved to `
 
 ## Keyboard
 
-`j` / `k` move (the panel follows) · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` agent log · `?` all shortcuts · `g` then `p a l r u` to switch views (`g n` / `g t` reach the hidden Network and Tokens pages).
+`j` / `k` move (the panel follows) · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` orchestrator timeline · `?` all shortcuts · `g` then `p a l r u` to switch views (`g n` / `g t` reach the hidden Network and Tokens pages).
 
 ## Click-through demo
 
@@ -161,7 +161,7 @@ src/
     ui/         shadcn/ui primitives
     vouch/      StatusChip, RiskTag, TrustMeter, EvidenceBar, VendorTimelineRow,
                 SlideToApprove, Sparkline, Table (DenseTable/Th/Td/Block/PageFrame), States
-    workspace/  Shell, TopBar, StatusBar, AgentFeed (rail), PaymentsTable,
+    workspace/  Shell, TopBar, StatusBar, OrchestratorTimeline (rail), PaymentsTable,
                 DetailPanel, RingGraph, DecisionMatrix, CommandPalette, dialogs
   pages/        one file per route
   store/        PaymentsProvider (list + actions + batch), UiProvider, useVisibleRows

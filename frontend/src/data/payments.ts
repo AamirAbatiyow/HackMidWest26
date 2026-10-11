@@ -1,4 +1,5 @@
 import type { Payment, Vendor } from '@/api/types'
+import { demoSteps } from './steps'
 
 function daysFromNow(n: number, hour = 9): string {
   const d = new Date()
@@ -58,7 +59,7 @@ const vendors = {
   },
 } satisfies Record<string, Vendor>
 
-export const DEMO_PAYMENTS: Payment[] = [
+const PAYMENTS: Omit<Payment, 'steps'>[] = [
   {
     id: 'pay-001',
     vendor: vendors.reyes,
@@ -334,5 +335,8 @@ export const DEMO_PAYMENTS: Payment[] = [
     auditNotes: [],
   },
 ]
+
+/** Demo payments with their mock orchestrator timelines (data/steps.ts) attached. */
+export const DEMO_PAYMENTS: Payment[] = PAYMENTS.map((p) => ({ ...p, steps: demoSteps(p.id) }))
 
 export const APPROVAL_LIMIT = 5000

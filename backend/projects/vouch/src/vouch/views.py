@@ -32,6 +32,7 @@ from vouch.policy import (
     R_UNKNOWN_VENDOR,
     R_VENDOR_AMBIGUOUS,
 )
+from vouch.steps import steps_of
 from vouch.vendors import ring_graph
 
 QUICK_CHECK_REASONS = {R_DUPLICATE, R_SPLIT, R_LINES, R_LLM_AMOUNT, R_LIMIT, R_KICKBACK}
@@ -612,6 +613,8 @@ def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, 
         "receipt": receipt,
         "settlement_tx_id": receipt.get("tx_id") if receipt else None,
         "explorer_url": receipt.get("explorer_url") if receipt else None,
+        # orchestrator timeline: the steps that ran for this card, with tool/model, kind, ms and result
+        "steps": steps_of(engine, run, card),
     }
 
 

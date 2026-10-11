@@ -50,6 +50,9 @@ class PaymentCard(BaseModel):
     resolutions: list[Resolution] = Field(default_factory=list)
     receipt: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = Field(default_factory=list)
+    # wall-clock ms each orchestrator step spent on this card (``vouch.timing.card_step``); batch stages
+    # (score, explain, settle) have no per-card sample and fall back to the run's node time in the view
+    step_ms: dict[str, float] = Field(default_factory=dict)
 
     def log(self, event: str, **data: Any) -> None:
         self.timeline.append({"at": now_iso(), "event": event, **data})
