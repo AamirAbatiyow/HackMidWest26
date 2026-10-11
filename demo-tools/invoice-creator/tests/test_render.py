@@ -47,7 +47,8 @@ def test_pdf_is_real_and_extractable():
         "PO Number: 7744",
         "Total Due: $6,400.00 USD",
         "Bank Name: BBVA Mexico",
-        "CLABE: 012180001234567891",
+        # CLABE is not a label the backend parser knows, so it prints on a canonical "Bank account" line
+        "Bank account: 012180001234567891  (CLABE)",
         "SWIFT: BCMRMXMMPYM",
         "Email: ar@reyespackaging.mx",
         "RFC: RPA230214001",
@@ -55,8 +56,9 @@ def test_pdf_is_real_and_extractable():
         DEMO_FOOTER,
     ):
         assert needle in text, needle
-    # the vendor name is the first line (what the backend's vendor guesser reads first)
-    assert text.strip().splitlines()[0] == "Reyes Packaging"
+    # the vendor name is the first line (what the backend's vendor guesser reads first) and is
+    # repeated as an explicit "From:" line, the label its deterministic parser keys on
+    assert text.strip().splitlines()[:2] == ["Reyes Packaging", "From: Reyes Packaging"]
 
 
 def test_pdf_handles_many_line_items_across_pages():

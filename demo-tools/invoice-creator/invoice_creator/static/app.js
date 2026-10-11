@@ -223,6 +223,9 @@
   }
 
   // ------------------------------------------------------------ paper preview ----
+  // Mirrors render.account_line(): labels the backend parser knows stay; others print as "Bank account".
+  const PARSEABLE_ACCOUNT_LABELS = new Set(["iban", "account number", "account no", "account no.", "account #", "acct", "acct."]);
+  const accountLabel = (label) => (PARSEABLE_ACCOUNT_LABELS.has(String(label || "").trim().toLowerCase()) ? label : "Bank account");
   function renderPaper() {
     const inv = state.invoice, c = state.config || {};
     const cur = inv.currency || "USD";
@@ -232,6 +235,7 @@
     $("#paper").innerHTML = `
       ${state.format === "body" ? '<div class="body-only">Body format: this text is pasted into the email instead of being attached.</div>' : ""}
       <h3>${esc(inv.vendor_name) || "<span style='color:#999'>Vendor name</span>"}</h3>
+      <div class="addr muted">From: ${esc(inv.vendor_name)}</div>
       <div class="addr">${esc(inv.remit_to.address)}</div>
       <div class="addr">${contact}</div>
       ${inv.remit_to.tax_id ? `<div class="addr">${esc(inv.remit_to.tax_id_label)}: ${esc(inv.remit_to.tax_id)}</div>` : ""}
@@ -249,7 +253,7 @@
       <hr/>
       <div class="title" style="font-size:14px">Payment Details</div>
       ${inv.bank.bank_name ? `<div class="kv"><b>Bank Name:</b> ${esc(inv.bank.bank_name)}</div>` : ""}
-      ${inv.bank.account_number ? `<div class="kv"><b>${esc(inv.bank.account_label)}:</b> <span class="mono">${esc(inv.bank.account_number)}</span></div>` : ""}
+      ${inv.bank.account_number ? `<div class="kv"><b>${esc(accountLabel(inv.bank.account_label))}:</b> <span class="mono">${esc(inv.bank.account_number)}</span>${accountLabel(inv.bank.account_label) === "Bank account" ? ` <span class="muted">(${esc(inv.bank.account_label)})</span>` : ""}</div>` : ""}
       ${inv.bank.routing_number ? `<div class="kv"><b>${esc(inv.bank.routing_label)}:</b> <span class="mono">${esc(inv.bank.routing_number)}</span></div>` : ""}
       ${inv.remit_to.contact_name ? `<div class="kv"><b>Contact:</b> ${esc(inv.remit_to.contact_name)}</div>` : ""}
       ${inv.notes ? `<div class="notes"><b>Notes:</b> ${esc(inv.notes)}</div>` : ""}

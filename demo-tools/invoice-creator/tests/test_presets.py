@@ -15,7 +15,9 @@ TODAY = date(2026, 10, 11)
 BACKEND_RING_BANK = "998877664471"
 BACKEND_RING_PHONE_DIGITS = "8165550192"
 BACKEND_RING_ADDRESS = "1201 N Orange St, Suite 600, Wilmington, DE 19801"
-BACKEND_SAMPLE_INVOICE_NUMBERS = {"RP-10482", "WS-2026-0917", "MP-5521", "BL-3307", "BL-3308", "NT-0001", "CSR-0001"}
+BACKEND_SAMPLE_INVOICE_NUMBERS = {
+    "RP-10482", "WS-2026-0917", "MP-5521", "BL-3307", "BL-3308", "NT-0001", "CSR-0001",
+}
 
 
 def digits(s: str) -> str:
@@ -74,7 +76,8 @@ def test_legit_vendor_matches_known_history():
     assert p.sender.from_addr.endswith("@reyespackaging.mx")
     assert p.invoice.bank.account_label == "CLABE"
     assert p.invoice.bank.account_number == "012180001234567891"  # the account on file
-    assert p.sender.auth.enabled and (p.sender.auth.spf, p.sender.auth.dkim, p.sender.auth.dmarc) == ("pass",) * 3
+    auth = p.sender.auth
+    assert auth.enabled and (auth.spf, auth.dkim, auth.dmarc) == ("pass",) * 3
     assert not p.sender.reply_to
     assert "fast-pay" in p.expected.lower()
 

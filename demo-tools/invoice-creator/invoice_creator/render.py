@@ -62,9 +62,28 @@ def safe_filename(stem: str, ext: str) -> str:
     return f"{stem}.{ext}"
 
 
+# Labels the backend's deterministic parser recognises for the account field
+# (``iban`` / ``account no|number|#`` / ``acct``). Anything else (CLABE, Sort Code, …) is printed as
+# a canonical "Bank account:" line with the local name alongside, so the number is always extracted.
+_PARSEABLE_ACCOUNT_LABELS = {
+    "iban", "account number", "account no", "account no.", "account #", "acct", "acct.",
+}
+
+
+def account_line(inv: Invoice) -> tuple[str, str] | None:
+    """``(label, value)`` for the account line, or None when the invoice has no account."""
+    if not inv.bank.account_number:
+        return None
+    label = inv.bank.account_label.strip()
+    if label.lower() in _PARSEABLE_ACCOUNT_LABELS:
+        return label, inv.bank.account_number
+    return "Bank account", f"{inv.bank.account_number}  ({label})"
+
+
 def invoice_lines(inv: Invoice, owner_name: str = "", owner_address: str = "") -> list[str]:
-    """Canonical plain-text form of the invoice (email body, PNG and the PDF are built from it)."""
-    lines: list[str] = [inv.vendor_name]
+    """Canonical plain-text form of the invoice (email body, PNG and the PDF are built from it).
+    The ``From:`` line and the label vocabulary below are what the backend's parser keys on."""
+    lines: list[str] = [inv.vendor_name, f"From: {inv.vendor_name}"]
     if inv.remit_to.address:
         lines.append(inv.remit_to.address)
     contact = []
@@ -107,8 +126,8 @@ def invoice_lines(inv: Invoice, owner_name: str = "", owner_address: str = "") -
     ]
     if inv.bank.bank_name:
         lines.append(f"Bank Name: {inv.bank.bank_name}")
-    if inv.bank.account_number:
-        lines.append(f"{inv.bank.account_label}: {inv.bank.account_number}")
+    if acct := account_line(inv):
+        lines.append(f"{acct[0]}: {acct[1]}")
     if inv.bank.routing_number:
         lines.append(f"{inv.bank.routing_label}: {inv.bank.routing_number}")
     if inv.remit_to.contact_name:
@@ -119,8 +138,8 @@ def invoice_lines(inv: Invoice, owner_name: str = "", owner_address: str = "") -
 
 
 def invoice_rows(inv: Invoice, owner_name: str = "", owner_address: str = "") -> list[list[str]]:
-    """Tabular form used for XLSX and CSV."""
-    rows: list[list[str]] = [[inv.vendor_name, ""]]
+    """Tabular form used for XLSX and CSV. Two-cell rows read as ``Label: value`` downstream."""
+    rows: list[list[str]] = [[inv.vendor_name, ""], ["From", inv.vendor_name]]
     if inv.remit_to.address:
         rows.append([inv.remit_to.address, ""])
     if inv.vendor_email:
@@ -158,8 +177,8 @@ def invoice_rows(inv: Invoice, owner_name: str = "", owner_address: str = "") ->
     ]
     if inv.bank.bank_name:
         rows.append(["Bank Name", inv.bank.bank_name])
-    if inv.bank.account_number:
-        rows.append([inv.bank.account_label, inv.bank.account_number])
+    if acct := account_line(inv):
+        rows.append(list(acct))
     if inv.bank.routing_number:
         rows.append([inv.bank.routing_label, inv.bank.routing_number])
     if inv.remit_to.contact_name:
@@ -218,6 +237,7 @@ def render_pdf(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
     c.setFillColor(colors.HexColor("#1f3a5f"))
     c.rect(0, height - 18, width, 18, stroke=0, fill=1)
     line(inv.vendor_name, 20, bold, colors.HexColor("#1f3a5f"), dy=24)
+    line(f"From: {inv.vendor_name}", 10, color=colors.HexColor("#444444"), dy=14)
     if inv.remit_to.address:
         line(inv.remit_to.address, 10, dy=14)
     contact = []
@@ -279,8 +299,8 @@ def render_pdf(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
     line("Payment Details", 11, bold, colors.HexColor("#444444"), dy=17)
     if inv.bank.bank_name:
         line(f"Bank Name: {inv.bank.bank_name}")
-    if inv.bank.account_number:
-        line(f"{inv.bank.account_label}: {inv.bank.account_number}")
+    if acct := account_line(inv):
+        line(f"{acct[0]}: {acct[1]}")
     if inv.bank.routing_number:
         line(f"{inv.bank.routing_label}: {inv.bank.routing_number}")
     if inv.remit_to.contact_name:
