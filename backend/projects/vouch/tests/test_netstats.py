@@ -27,10 +27,10 @@ class TestRingStats:
     def test_single_sample(self):
         ring = RingStats("test", max_size=10)
         ring.record(42.5)
-        assert ring.p50() == 42.5
-        assert ring.p95() == 42.5
+        assert ring.p50() == pytest.approx(42.5)
+        assert ring.p95() == pytest.approx(42.5)
         assert ring.count() == 1
-        assert ring.latest() == 42.5
+        assert ring.latest() == pytest.approx(42.5)
 
     def test_multiple_samples_percentiles(self):
         ring = RingStats("test", max_size=100)
@@ -39,14 +39,14 @@ class TestRingStats:
         assert ring.count() == 100
         assert 49.0 <= ring.p50() <= 52.0
         assert 94.0 <= ring.p95() <= 96.0
-        assert ring.latest() == 100.0
+        assert ring.latest() == pytest.approx(100.0)
 
     def test_ring_buffer_eviction(self):
         ring = RingStats("test", max_size=5)
         for i in range(1, 11):
             ring.record(float(i))
         assert ring.count() == 5
-        assert ring.latest() == 10.0
+        assert ring.latest() == pytest.approx(10.0)
         assert 6.0 <= ring.p50() <= 10.0
 
     def test_stats_dict(self):
@@ -113,6 +113,17 @@ class TestTimingRegistry:
         assert registry.stats("test")["count"] == 1
         registry.clear()
         assert registry.all_stats() == {}
+
+    def test_reset_drops_one_ring_and_leaves_the_others(self):
+        registry = TimingRegistry()
+        registry.record("decider", 40.0)
+        registry.record("scorer", 2.0)
+        registry.reset("decider")
+        registry.reset("never-recorded")
+        assert registry.stats("decider") == {"p50": None, "p95": None, "count": 0, "latest": None}
+        assert registry.stats("scorer")["count"] == 1
+        registry.record("decider", 50.0)
+        assert registry.stats("decider")["count"] == 1 and registry.p50("decider") == pytest.approx(50.0)
 
 
 class TestTimedContextManager:
@@ -244,10 +255,16 @@ class TestNetstatsAPI:
         data = response.json()
 
         decider = data["decider"]
-        assert "engine" in decider
-        assert "engines_available" in decider
-        assert "p50_ms" in decider
-        assert "p95_ms" in decider
+        # no Decider server and an offline LLM: code routes alone, and the page says so
+        assert decider["engine"] == "deterministic" and decider["client"] is None
+        assert decider["engines_available"] == ["decider", "hackathon-chat", "deterministic"]
+        assert {"p50_ms", "p95_ms", "count", "latest_ms"} <= decider.keys()
+        snapshot = decider["classifier"]
+        assert snapshot["enabled"] is False and snapshot["cooling_down"] is False
+        assert snapshot["schemas"] == ["FormatDecision", "ToolDecision", "KickbackDecision"]
+        assert {"classified", "decider", "hackathon-chat", "deterministic", "validation_failures"} <= (
+            snapshot.keys()
+        )
 
     def test_latency_tiers(self, client):
         response = client.get("/v1/latency")

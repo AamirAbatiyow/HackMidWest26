@@ -21,7 +21,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
@@ -111,6 +111,11 @@ class TimingRegistry:
             names = list(self._rings.keys())
         return {name: self.stats(name) for name in names}
 
+    def reset(self, name: str) -> None:
+        """Drop one ring (its next sample starts it again)."""
+        with self._lock:
+            self._rings.pop(name, None)
+
     def clear(self) -> None:
         with self._lock:
             self._rings.clear()
@@ -120,7 +125,7 @@ TIMING = TimingRegistry()
 
 
 @contextmanager
-def timed(step: str, registry: TimingRegistry | None = None) -> Iterator[None]:
+def timed(step: str, registry: TimingRegistry | None = None) -> Generator[None, None, None]:
     """Context manager that records elapsed time in milliseconds to the registry.
 
     Safe: catches all exceptions from the timing machinery itself.
@@ -169,4 +174,8 @@ INFERENCE_ENDPOINTS = [
     "hackathon-embedding",
 ]
 
-DECIDER_ENGINES = ["local-torch", "inference-service", "heuristic-fallback"]
+# The engines an intake routing decision can carry (``vouch.decider.classify.Engine``): the Strands
+# Decider 2B server, the hackathon chat classifier, or code alone. ``DECIDER_STEP`` is the ring the
+# classifier feeds with one sample per answered Decider question.
+DECIDER_ENGINES = ["decider", "hackathon-chat", "deterministic"]
+DECIDER_STEP = "decider"

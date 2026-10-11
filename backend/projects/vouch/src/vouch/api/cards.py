@@ -160,6 +160,8 @@ def _start(svc: VouchEngine, r: Run, wait: bool) -> dict[str, Any]:
 )
 def submit_invoices(req: SubmitRequest) -> dict[str, Any]:
     svc = get_engine()
+    for sub in req.invoices:
+        sub.routing = None  # the decision chain is settled by the service/engine, never supplied by a client
     r = svc.new_run(req.invoices, label=req.label)
     return _start(svc, r, req.wait)
 

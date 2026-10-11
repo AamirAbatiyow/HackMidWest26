@@ -25,6 +25,7 @@ RULES: dict[str, str] = {
     "P-06": "Bank changes require owner call-back verification",
     "P-07": "Model may read and explain; explanations carry no authority",
     "P-08": "Owner decides whether a drafted kickback email is sent; nothing auto-sends a reply",
+    "P-09": "Owner sends an approved kickback email, once; System and Model never email a vendor",
     "DEFAULT-DENY": "No matching permit: denied by default (fees, rounding, amount edits, denials, model actions)",
 }
 
@@ -37,6 +38,7 @@ AUTOMATED_ACTIONS = [
     "modify_amount",
     "settle",
     "approve_kickback",
+    "send_kickback",
 ]
 MODEL_ACTIONS = [
     "approve",
@@ -47,6 +49,7 @@ MODEL_ACTIONS = [
     "change_bank_details",
     "explain",
     "approve_kickback",
+    "send_kickback",
 ]
 
 
@@ -152,6 +155,13 @@ def _mirror(principal_type: str, action: str, attrs: PaymentAttrs, ctx: dict[str
             return AuthzOutcome(True, ["P-06"])
         if action in ("approve_kickback", "decline_kickback") and attrs.lifecycle != "settled":
             return AuthzOutcome(True, ["P-08"])
+        if (
+            action == "send_kickback"
+            and ctx.get("kickback_approved")
+            and not ctx.get("kickback_sent")
+            and attrs.lifecycle != "settled"
+        ):
+            return AuthzOutcome(True, ["P-09"])
     if principal_type == "System":
         if action == "hold":
             return AuthzOutcome(True, ["P-03"])
@@ -183,6 +193,8 @@ def authorize(
         "approval_limit_cents": 0,
         "owner_approval_recorded": False,
         "callback_verified": False,
+        "kickback_approved": False,  # the owner's P-08 approval of the draft is on record
+        "kickback_sent": False,  # the draft was already handed to the mail integration
         **(context or {}),
     }
     principal_id = {"Owner": "owner", "System": "vouch", "Model": "model"}.get(

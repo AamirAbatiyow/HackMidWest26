@@ -27,10 +27,13 @@ from vouch.audit import AuditStore
 from vouch.cards import PaymentCard, now_iso
 from vouch.config import Settings, get_settings
 from vouch.contracts import ExtractedDocument, IntakeRequest, iso, utcnow
+from vouch.decider import KINDS_FOR_TOOL, IntakeClassification, extractor_for, probes_from_files
 from vouch.domain import CardStatus, Lane, Resolution
 from vouch.engine import Run, Submission, VouchEngine
-from vouch.intake import combine_documents, extract_file, intake_body_text, parse_eml
+from vouch.intake import combine_documents, envelope_from_headers, extract_file, intake_body_text, parse_eml
+from vouch.intake.extract import detect_kind
 from vouch.llm import LLMRuntime
+from vouch.mail import Mailer, OutboxMailer
 from vouch.policy import PaymentAttrs, authorize, cedar_available
 from vouch.scorer import Scorer
 from vouch.storage import AttachmentStore
@@ -54,12 +57,14 @@ class VouchService:
         today: date | None = None,
         seed_demo: bool | None = None,
         restore: bool = True,
+        mailer: Mailer | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         s = self.settings
         url = database_url or s.effective_database_url
         self.store = store or AuditStore.open(url, s.sqlite_url)
         self.attachments = AttachmentStore(s)
+        self.mailer: Mailer = mailer or OutboxMailer()
         self.lock = threading.RLock()
         self.started_at = utcnow()
         self.vendors_indexed = 0
@@ -203,20 +208,36 @@ class VouchService:
             return run
 
     def intake(self, request: IntakeRequest, label: str = "") -> Run:
-        """One email or upload -> one invoice -> one run through the full graph."""
-        docs: list[ExtractedDocument] = []
-        stored: list[tuple[ExtractedDocument, str | None]] = []
+        """One email or upload -> one invoice -> one run through the full graph.
+
+        The decision chain runs *before* extraction: cheap probes (MIME type, extension, magic bytes, PDF
+        text layer; no OCR) -> ``IntakeClassifier.classify`` (deterministic first; the Decider or the chat
+        classifier only when the route is ambiguous) -> the tool decision picks the extractor
+        (``extractor_for``). A tool that does not read a file, raises, or is ``request_resubmission`` falls
+        back to the default extractor, so the record always has the hash and whatever text there is. Which
+        tool was decided, which extractor ran and why is recorded per document (card timeline, run,
+        ``intake_documents``); the engine completes the chain once the kernel has parsed the text.
+        """
         intake_id = f"in-{secrets.token_hex(4)}"
         body = intake_body_text(request)
+        source = "email" if request.source == "email" else "upload"
+        files = [(att, base64.b64decode(att.data_b64)) for att in request.attachments if att.data_b64]
+        files = [(att, data) for att, data in files if data]
+        routing = self._route_intake(
+            [(att.filename, att.content_type, data) for att, data in files], body, request.headers, source
+        )
+        tool = routing.tool if routing is not None else None
+        docs: list[ExtractedDocument] = []
+        records: list[dict[str, Any]] = []
+        stored: list[tuple[ExtractedDocument, str | None, dict[str, Any]]] = []
         if body.strip():
-            docs.append(
-                ExtractedDocument(filename="email-body", kind="email_body", text=body, extractor="email-body")
+            doc = ExtractedDocument(
+                filename="email-body", kind="email_body", text=body, extractor="email-body"
             )
-        for att in request.attachments:
-            data = base64.b64decode(att.data_b64) if att.data_b64 else b""
-            if not data:
-                continue
-            doc = extract_file(data, att.filename, att.content_type)
+            docs.append(doc)
+            records.append(_document_record(doc))
+        for att, data in files:
+            doc, choice = self._extract_routed(data, att.filename, att.content_type, tool)
             key = None
             try:
                 key = self.attachments.put(
@@ -227,7 +248,8 @@ class VouchService:
             except Exception as exc:  # storage is best effort; the hash is what the audit trail needs
                 log.warning("attachment not stored: %s", exc)
             docs.append(doc)
-            stored.append((doc, key))
+            records.append({**_document_record(doc), **choice})
+            stored.append((doc, key, choice))
         text = combine_documents(docs).strip()
         if not text:
             raise ValidationFailedError(
@@ -237,29 +259,84 @@ class VouchService:
         sub = Submission(
             text=text,
             headers=dict(request.headers),
-            source="email" if request.source == "email" else "upload",
+            source=source,
             received_at=iso(request.received_at) if request.received_at else now_iso(),
-            documents=[
-                {
-                    "filename": d.filename,
-                    "kind": d.kind,
-                    "sha256": d.sha256,
-                    "extractor": d.extractor,
-                    "warnings": d.warnings,
-                }
-                for d in docs
-            ],
+            documents=records,
+            routing=routing.model_dump(mode="json") if routing is not None else None,
             submitted_by=request.submitted_by,
             delivery_confirmed=request.delivery_confirmed,
             po_number=request.po_number,
         )
         run = self.submit([sub], label=label or f"{request.source} intake")
         card_id = f"{run.id}.1"
-        for doc, key in stored:
+        for doc, key, choice in stored:
             self.store.record_document(
-                run.id, card_id, doc.filename, doc.kind, doc.sha256, doc.extractor, doc.text, key
+                run.id,
+                card_id,
+                doc.filename,
+                doc.kind,
+                doc.sha256,
+                doc.extractor,
+                doc.text,
+                key,
+                tool=choice.get("tool"),
+                fallback=choice.get("fallback"),
             )
         return run
+
+    def _route_intake(
+        self,
+        files: list[tuple[str, str | None, bytes]],
+        body: str,
+        headers: dict[str, str],
+        source: str,
+    ) -> IntakeClassification | None:
+        """The decision chain over pre-extraction probes. Advisory: if it fails, extraction uses the default
+        extractors and the engine classifies after the fact, as it does for text-only submissions."""
+        if not files and not body.strip():
+            return None
+        try:
+            probes = probes_from_files(files, body_text=body)
+            envelope = envelope_from_headers(dict(headers)) if headers else None
+            cls = self.engine.classifier.classify(probes, envelope, source=source)
+        except Exception as exc:
+            log.warning("intake routing before extraction failed: %s", exc)
+            return None
+        cls.before_extraction = True
+        cls.notes.append("decided before extraction; the tool decision chose the extractor")
+        return cls
+
+    @staticmethod
+    def _extract_routed(
+        data: bytes, filename: str, content_type: str | None, tool: str | None
+    ) -> tuple[ExtractedDocument, dict[str, Any]]:
+        """Extract one attachment with the extractor the tool decision maps to, or the default one.
+
+        Returns the document and the record for the audit trail: ``tool`` (the chain's decision) and
+        ``fallback`` (``None`` when that tool's extractor ran on this file, otherwise why the default ran).
+        """
+        kind = detect_kind(filename, content_type, data)
+        choice: dict[str, Any] = {"tool": tool, "fallback": None}
+        serves = KINDS_FOR_TOOL.get(tool or "", ())
+        fn = extractor_for(tool, kind) if tool and kind in serves else None
+        if fn is None:
+            if tool is None:
+                choice["fallback"] = "no routing decision; default extractor"
+            elif tool == "request_resubmission":
+                choice["fallback"] = (
+                    "request_resubmission: default extractor keeps the hash and any text for the record"
+                )
+            else:
+                choice["fallback"] = (
+                    f"default extractor: {tool} reads {', '.join(serves) or 'no'} files, this one is {kind}"
+                )
+            return extract_file(data, filename, content_type), choice
+        try:
+            return fn(data, filename), choice
+        except Exception as exc:  # the chosen extractor must never lose the document
+            log.warning("%s failed on %s (%s); default extractor used", tool, filename, exc)
+            choice["fallback"] = f"{tool} failed ({type(exc).__name__}); default extractor"
+            return extract_file(data, filename, content_type), choice
 
     def intake_eml(self, raw: bytes, *, submitted_by: str = "ap-inbox") -> Run:
         req = parse_eml(raw)
@@ -455,8 +532,55 @@ class VouchService:
                 self.engine.changed(run)
             return payment_view(self.engine, run, card)
 
+    def kickback_send(self, card_id: str, note: str | None = None, author: str = "Owner") -> dict[str, Any]:
+        """The owner hands an approved kickback draft to the mail integration.
+
+        Cedar P-09 is the only gate between a draft and the ``Mailer``: Owner principal, the owner's P-08
+        approval on record (``kickback_approved``), not sent before (``kickback_sent``), payment not
+        settled. System and Model have no permit, so a draft that is awaiting the owner, declined or
+        already sent is a 403 and the mailer is never called. Sending changes nothing about the payment:
+        it stays on hold until a readable invoice arrives or the owner re-keys it.
+        """
+        with self.lock:
+            run, card = self.engine.find_card(card_id)
+            draft = card.intake.kickback_draft if card.intake else None
+            if draft is None:
+                raise NotFoundError(f"no kickback draft for {card_id}")
+            text = (note or "").strip()
+            rules = self._authorize(
+                card,
+                "Owner",
+                "send_kickback",
+                {
+                    "kickback_approved": draft.status in ("approved", "sent"),
+                    "kickback_sent": draft.sent_at is not None,
+                },
+            )
+            message_id = self.mailer.send(draft.to, draft.subject, draft.body)
+            draft.status = "sent"
+            draft.sent_at, draft.sent_by, draft.sent_via, draft.message_id = (
+                now_iso(),
+                author,
+                self.mailer.name,
+                message_id,
+            )
+            card.log(
+                "kickback_sent",
+                actor=author,
+                note=text,
+                to=draft.to,
+                code=draft.code,
+                via=self.mailer.name,
+                message_id=message_id,
+            )
+            run.emit("kickback_sent", card_id=card.id, actor=author, via=self.mailer.name)
+            self.store.record_approval(card.id, "send_kickback", text, author, rules[0] if rules else None)
+            self.store.save_kickback_draft(card)
+            self.engine.changed(run)
+            return payment_view(self.engine, run, card)
+
     def outbox(self, status: str | None = None) -> list[dict[str, Any]]:
-        """Kickback drafts, newest first (``status`` filters: awaiting_owner | approved | declined)."""
+        """Kickback drafts, newest first (``status`` filters: awaiting_owner | approved | declined | sent)."""
         items = []
         for run, card in self._pairs():
             draft = card.intake.kickback_draft if card.intake else None
@@ -759,6 +883,16 @@ def _pct(values: list[float], p: float) -> float | None:
         return None
     s = sorted(values)
     return round(s[min(int(p * len(s)), len(s) - 1)], 1)
+
+
+def _document_record(doc: ExtractedDocument) -> dict[str, Any]:
+    return {
+        "filename": doc.filename,
+        "kind": doc.kind,
+        "sha256": doc.sha256,
+        "extractor": doc.extractor,
+        "warnings": list(doc.warnings),
+    }
 
 
 __all__ = ["NotFoundError", "VouchService"]

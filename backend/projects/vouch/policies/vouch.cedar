@@ -80,3 +80,14 @@ permit(
   action in [Action::"approve_kickback", Action::"decline_kickback"],
   resource is Payment
 ) when { resource.lifecycle != "settled" };
+
+// P-09: the approved draft is handed to the mail integration by the owner, once, and only while the
+// approval is on record. No permit for System or Model: the automated system never emails a vendor.
+@id("P-09")
+permit(
+  principal is Owner,
+  action == Action::"send_kickback",
+  resource is Payment
+) when {
+  context.kickback_approved && !context.kickback_sent && resource.lifecycle != "settled"
+};

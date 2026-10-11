@@ -803,6 +803,86 @@ def c_kickback_never_auto_sends(make: Callable[..., VouchEngine]) -> dict[str, A
     }
 
 
+def c_kickback_send_needs_the_owners_approval(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """Sending is a separate, Cedar-gated step (P-09). System, Model and Vendor can never send, approved or
+    not; the owner cannot send a draft that is awaiting or declined; a forged ``author`` changes nothing
+    (the principal is the authenticated owner, the mailer is reached only through the service); after the
+    owner's approval exactly one send goes to the mailer, a second is denied, and the payment stays on hold."""
+    from hm_core.errors import ForbiddenError
+    from vouch.policy import authorize
+
+    svc = make()
+    facade = _facade(svc)
+    mailer = facade.mailer
+    run = facade.intake(_email("", _attachment("scan.png", "image/png", _blank_scan_png())))
+    card = run.card_list()[0]
+    attrs = facade._attrs(card)
+    contexts = [
+        {},
+        {"kickback_approved": True},
+        {"kickback_approved": True, "owner_approval_recorded": True, "approval_limit_cents": 10**9},
+    ]
+    leaks = [
+        (principal, ctx)
+        for principal in ("System", "Model", "Vendor")
+        for ctx in contexts
+        if authorize(principal, "send_kickback", attrs, ctx).allowed
+    ]
+    owner_without_approval = authorize("Owner", "send_kickback", attrs).allowed
+    attempts: list[str] = []
+
+    def try_send(label: str, **kw: Any) -> None:
+        try:
+            facade.kickback_send(card.id, **kw)
+            attempts.append(f"{label}: SENT")
+        except ForbiddenError as exc:
+            attempts.append(f"{label}: 403 {exc.details.get('rules')}")
+
+    try_send("awaiting_owner")
+    try_send("awaiting_owner as 'System'", author="System")
+    # a second, declined draft can never be sent either
+    other = facade.intake(_email("", _attachment("scan2.png", "image/png", _blank_scan_png()))).card_list()[0]
+    facade.kickback_decide(other.id, False, "I will call them", author="Dana")
+    try:
+        facade.kickback_send(other.id, author="Dana")
+        attempts.append("declined: SENT")
+    except ForbiddenError as exc:
+        attempts.append(f"declined: 403 {exc.details.get('rules')}")
+    nothing_before = not mailer.sent and card.intake.kickback_draft.sent_at is None
+    facade.kickback_decide(card.id, True, "ok to send", author="Dana")
+    try_send("after approval", author="Dana")
+    one_sent = len(mailer.sent) == 1 and card.intake.kickback_draft.status == "sent"
+    try_send("second send")
+    paid_after = False
+    try:
+        facade.settle([card.id], "now")
+        paid_after = card.status == CardStatus.PAID
+    except Exception:
+        pass
+    draft = card.intake.kickback_draft
+    return {
+        "blocked": not leaks
+        and not owner_without_approval
+        and nothing_before
+        and one_sent
+        and len(mailer.sent) == 1
+        and [a for a in attempts if a.endswith("SENT")] == ["after approval: SENT"]
+        and draft.sent_via == "outbox"
+        and "$" not in mailer.sent[0]["body"]
+        and other.intake.kickback_draft.sent_at is None
+        and card.status == CardStatus.HOLD
+        and R_KICKBACK in card.policy.reasons
+        and not paid_after
+        and not _paid(run),
+        "leaks": leaks,
+        "attempts": attempts,
+        "mailer_calls": len(mailer.sent),
+        "status": draft.status,
+        "sent_via": draft.sent_via,
+        "lane": card.policy.lane,
+    }
+
+
 def c_kickback_template_never_leaks_money(make: Callable[..., VouchEngine]) -> dict[str, Any]:
     """Amounts and account numbers are everywhere in the evidence (subject, sender name, file name, body)
     but the kickback reply is a fixed template: none of them can reach the draft."""
@@ -1020,6 +1100,13 @@ CASES: list[Case] = [
         "approval",
         "System / Model try to approve the kickback email; the owner's approval must not send or pay",
         c_kickback_never_auto_sends,
+    ),
+    Case(
+        "kickback-send-needs-owner-approval",
+        "approval",
+        "System / Model / a forged author try to send a kickback email that is awaiting the owner, declined "
+        "or already sent",
+        c_kickback_send_needs_the_owners_approval,
     ),
     Case(
         "kickback-template-never-leaks-money",

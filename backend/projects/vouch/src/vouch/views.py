@@ -321,16 +321,35 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                         if ev.get("kickback")
                         else ""
                     )
-                    + (" · owner review required" if ev.get("review_required") else ""),
+                    + (" · owner review required" if ev.get("review_required") else "")
+                    + (
+                        " · decided before extraction; the tool decision chose the extractor"
+                        if ev.get("before_extraction")
+                        else ""
+                    ),
                     "kind": "check",
                 }
             )
-        elif name in ("kickback_drafted", "kickback_approved", "kickback_declined"):
+        elif name == "document_extracted":
+            k += 1
+            events.append(
+                {
+                    "id": f"t{k}",
+                    "date": ev["at"],
+                    "title": f"Extracted {ev.get('filename')} with {ev.get('extractor')}",
+                    "detail": f"tool decision {ev.get('tool')}"
+                    + (f" · fallback: {ev['fallback']}" if ev.get("fallback") else " · as decided")
+                    + (f" · {'; '.join(ev['warnings'])}" if ev.get("warnings") else ""),
+                    "kind": "check",
+                }
+            )
+        elif name in ("kickback_drafted", "kickback_approved", "kickback_declined", "kickback_sent"):
             k += 1
             label = {
                 "kickback_drafted": "Kickback email drafted (awaiting the owner)",
                 "kickback_approved": f"Kickback email approved by {ev.get('actor')}",
                 "kickback_declined": f"Kickback email declined by {ev.get('actor')}",
+                "kickback_sent": f"Kickback email sent by {ev.get('actor')} (Cedar P-09)",
             }[name]
             events.append(
                 {
@@ -338,6 +357,7 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                     "date": ev["at"],
                     "title": label,
                     "detail": f"to {ev.get('to')} · template {ev.get('code')}"
+                    + (f" · via {ev['via']} ({ev.get('message_id')})" if ev.get("via") else "")
                     + (f" · {ev['note']}" if ev.get("note") else "")
                     + (f" · {ev['reason']}" if ev.get("reason") else ""),
                     "kind": "change" if name != "kickback_drafted" else "check",

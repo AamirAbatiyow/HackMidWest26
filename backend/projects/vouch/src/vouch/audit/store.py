@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, create_engine, select, text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
@@ -133,6 +133,9 @@ class DocumentRow(Base):
     kind: Mapped[str] = mapped_column(String(16))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     extractor: Mapped[str] = mapped_column(String(40))
+    # The chain's tool decision and, when the default extractor ran instead of that tool's, why.
+    tool: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fallback: Mapped[str | None] = mapped_column(Text, nullable=True)
     storage_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     text_excerpt: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -166,8 +169,8 @@ class IntakeDecisionRow(Base):
 
 
 class KickbackDraftRow(Base):
-    """The kickback outbox: drafted replies to senders. Nothing here is ever sent by this service; the
-    owner approves or declines, and ``sent_at`` stays NULL until a mail integration records a send."""
+    """The kickback outbox: drafted replies to senders. The owner approves or declines (P-08); ``sent_at``
+    stays NULL until the owner hands the approved draft to the mail integration (P-09)."""
 
     __tablename__ = "kickback_drafts"
     card_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -184,6 +187,9 @@ class KickbackDraftRow(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    sent_via: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -209,11 +215,32 @@ def _json(obj: Any) -> Any:
     return json.loads(json.dumps(obj, default=str))
 
 
+def _ensure_columns(engine: Engine) -> None:
+    """Add columns this version declares on tables an older deployment already created.
+
+    ``create_all`` only creates missing tables. Columns are added without NOT NULL so existing rows stay
+    valid; new rows always carry the Python-side defaults.
+    """
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"
+                log.info("audit store: %s", ddl)
+                conn.execute(text(ddl))
+
+
 class AuditStore:
     def __init__(self, url: str) -> None:
         self.url = url
         self.engine = make_engine(url)
         Base.metadata.create_all(self.engine)
+        _ensure_columns(self.engine)
 
     @classmethod
     def open(cls, url: str, fallback_url: str | None = None) -> AuditStore:
@@ -503,6 +530,9 @@ class AuditStore:
         extractor: str,
         text_excerpt: str,
         storage_key: str | None,
+        *,
+        tool: str | None = None,
+        fallback: str | None = None,
     ) -> None:
         with self.session() as s:
             s.add(
@@ -514,6 +544,8 @@ class AuditStore:
                     kind=kind,
                     sha256=sha256,
                     extractor=extractor,
+                    tool=tool,
+                    fallback=fallback,
                     text_excerpt=text_excerpt[:4000],
                     storage_key=storage_key,
                 )
@@ -569,31 +601,32 @@ class AuditStore:
         with self.session() as s:
             row = s.get(KickbackDraftRow, card.id)
             decided_at = datetime.fromisoformat(draft.decided_at) if draft.decided_at else None
+            sent_at = datetime.fromisoformat(draft.sent_at) if draft.sent_at else None
             if row is None:
-                s.add(
-                    KickbackDraftRow(
-                        card_id=card.id,
-                        run_id=card.run_id,
-                        to=draft.to,
-                        subject=draft.subject,
-                        body=draft.body,
-                        code=draft.code,
-                        reason=draft.reason,
-                        missing_fields=list(draft.missing_fields),
-                        chosen_by=draft.chosen_by,
-                        status=draft.status,
-                        decided_by=draft.decided_by,
-                        decided_at=decided_at,
-                        note=draft.note,
-                    )
+                row = KickbackDraftRow(
+                    card_id=card.id,
+                    run_id=card.run_id,
+                    to=draft.to,
+                    subject=draft.subject,
+                    body=draft.body,
+                    code=draft.code,
+                    reason=draft.reason,
+                    missing_fields=list(draft.missing_fields),
+                    chosen_by=draft.chosen_by,
                 )
-            else:
-                row.status, row.decided_by, row.decided_at, row.note = (
-                    draft.status,
-                    draft.decided_by,
-                    decided_at,
-                    draft.note,
-                )
+                s.add(row)
+            row.status, row.decided_by, row.decided_at, row.note = (
+                draft.status,
+                draft.decided_by,
+                decided_at,
+                draft.note,
+            )
+            row.sent_at, row.sent_by, row.sent_via, row.message_id = (
+                sent_at,
+                draft.sent_by,
+                draft.sent_via,
+                draft.message_id,
+            )
             s.commit()
 
     def kickback_drafts(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -719,6 +752,8 @@ class AuditStore:
                         "kind": d.kind,
                         "sha256": d.sha256,
                         "extractor": d.extractor,
+                        "tool": d.tool,
+                        "fallback": d.fallback,
                         "storage_key": d.storage_key,
                     }
                     for d in docs
@@ -771,6 +806,9 @@ def _draft_dict(r: KickbackDraftRow) -> dict[str, Any]:
         "decided_at": r.decided_at.isoformat() if r.decided_at else None,
         "note": r.note,
         "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+        "sent_by": r.sent_by,
+        "sent_via": r.sent_via,
+        "message_id": r.message_id,
         "created_at": r.created_at.isoformat(),
     }
 

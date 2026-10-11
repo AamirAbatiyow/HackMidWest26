@@ -76,7 +76,7 @@ demo-vouch-files: ## Same demo, but the invoices enter as .eml / PDF / XLSX / PN
 demo-vouch-xrpl: ## Demo settling on the XRPL testnet (needs XRPL_WALLET_SEED from `make xrpl-wallets`)
 	$(RUN) vouch-demo --xrpl
 
-redteam-vouch: ## Run the 30-attack red-team suite (prompt injection, LLM output, approvals, limits, identity, Cedar)
+redteam-vouch: ## Run the 31-attack red-team suite (prompt injection, LLM output, approvals, limits, identity, Cedar)
 	$(RUN) vouch-redteam
 
 smoke-llm: ## Live Akamai inference smoke (chat + embeddings); skips cleanly when AKAMAI_INFERENCE_API_KEY is unset
