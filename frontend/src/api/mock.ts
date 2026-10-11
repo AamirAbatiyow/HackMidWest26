@@ -6,6 +6,7 @@ import type {
   VouchApi,
 } from './types'
 import { DEMO_PAYMENTS } from '@/data/payments'
+import { withDemoDetail } from '@/data/highlights'
 import { DEMO_NETWORK } from '@/data/network'
 import { DEMO_LATENCY, DEMO_TOPOLOGY } from '@/data/netstats'
 import { DEMO_REDTEAM } from '@/data/redteam'
@@ -41,7 +42,7 @@ function note(text: string | undefined, fallback: string): AuditNote {
  * which is what we want for a demo walkthrough.
  */
 export function createMockApi(): VouchApi {
-  let payments: Payment[] = clone(DEMO_PAYMENTS)
+  let payments: Payment[] = clone(DEMO_PAYMENTS).map(withDemoDetail)
 
   const find = (id: string): Payment => {
     const p = payments.find((x) => x.id === id)

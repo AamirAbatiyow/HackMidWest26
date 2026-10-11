@@ -3,8 +3,12 @@ import type {
   ChecklistItem,
   CountryCode,
   EvidenceFactor,
+  HighlightSeverity,
+  InvoiceHighlight,
   LatencyStats,
   Lifecycle,
+  LimeFactor,
+  ModelExplanation,
   NetworkStatus,
   Payment,
   RedTeamReport,
@@ -17,6 +21,7 @@ import type {
   VouchApi,
   VouchStatus,
 } from './types'
+import { limeLabel } from '@/lib/lime'
 
 export class ApiError extends Error {
   readonly status?: number
@@ -86,6 +91,63 @@ function normalizeEvidence(v: unknown): EvidenceFactor[] {
       label: str(pick(e, 'label', 'feature', 'text', 'reason'), 'Factor'),
       weight: Math.min(1, Math.abs(weight)),
       direction,
+    }
+  })
+}
+
+/**
+ * `lime` rows are `{feature, label, rule, weight, value}` toward `lime_class`. When the explained
+ * class is legitimacy a positive weight is reassuring; for a risk head it is a concern.
+ */
+export function normalizeModel(p: Json): ModelExplanation | undefined {
+  const rows = pick(p, 'lime')
+  const limeClass = pick(p, 'lime_class', 'limeClass')
+  const scorer = pick(p, 'scorer')
+  if (!Array.isArray(rows) && limeClass == null && scorer == null) return undefined
+  const targetClass = limeClass == null ? null : str(limeClass)
+  const towardLegit = targetClass === 'legitimacy' || targetClass === 'honest'
+  const factors: LimeFactor[] = (Array.isArray(rows) ? rows : []).map((raw, i) => {
+    const r = asRecord(raw)
+    const weight = num(pick(r, 'weight', 'contribution'), 0)
+    const valueRaw = pick(r, 'value')
+    const value = valueRaw == null ? null : num(valueRaw, 0)
+    const feature = str(pick(r, 'feature', 'name'), `f${i}`)
+    const rawLabel = str(pick(r, 'label'), feature)
+    const concern = towardLegit ? weight < 0 : weight > 0
+    return {
+      id: str(pick(r, 'id'), `l-${i}`),
+      feature,
+      label: limeLabel(feature, value, rawLabel),
+      rawLabel,
+      weight,
+      value,
+      direction: concern ? 'concern' : 'reassuring',
+    }
+  })
+  return {
+    factors,
+    targetClass,
+    scorer: scorer == null ? null : str(scorer),
+    modelVersion: pick(p, 'model_version', 'modelVersion') == null ? null : str(pick(p, 'model_version', 'modelVersion')),
+  }
+}
+
+export function normalizeHighlights(v: unknown): InvoiceHighlight[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  return v.map((raw) => {
+    const h = asRecord(raw)
+    const sev = str(pick(h, 'severity'), 'ok').toLowerCase()
+    const severity: HighlightSeverity = sev === 'high' || sev === 'red' || sev === 'danger' ? 'high' : sev === 'warn' || sev === 'warning' || sev === 'amber' ? 'warn' : 'ok'
+    const reasonsRaw = pick(h, 'reasons')
+    const reason = pick(h, 'reason')
+    const reasons = Array.isArray(reasonsRaw) ? reasonsRaw.map((r) => str(r)).filter(Boolean) : reason ? [str(reason)] : []
+    const field = str(pick(h, 'field', 'key'), 'field')
+    return {
+      field,
+      label: str(pick(h, 'label'), field.replace(/_/g, ' ')),
+      value: str(pick(h, 'value'), '—'),
+      severity,
+      reasons,
     }
   })
 }
@@ -190,6 +252,8 @@ export function normalizePayment(raw: unknown): Payment {
     checklist: normalizeChecklist(pick(p, 'checklist', 'callback_checklist')),
     ring: normalizeRing(pick(p, 'ring', 'network', 'graph')),
     auditNotes: normalizeNotes(pick(p, 'audit_notes', 'auditNotes', 'notes')),
+    model: normalizeModel(p),
+    highlights: normalizeHighlights(pick(p, 'highlights', 'invoice_highlights')),
   }
 }
 

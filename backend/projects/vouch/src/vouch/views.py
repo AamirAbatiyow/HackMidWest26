@@ -15,6 +15,7 @@ from vouch.cards import PaymentCard
 from vouch.contracts import iso, utcnow
 from vouch.domain import CardStatus, Lane, Vendor
 from vouch.engine import Run, VouchEngine
+from vouch.highlights import highlights_of
 from vouch.policy import (
     R_BANK,
     R_DUPLICATE,
@@ -581,6 +582,8 @@ def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, 
         "checklist": checklist_of(card),
         "ring": ring.model_dump(by_alias=True) if ring else None,
         "audit_notes": audit_notes_of(card),
+        # the invoice as document fields, each with severity ok | warn | high and short reasons
+        "highlights": highlights_of(card, engine.vendors),
         # engine facts (the detail panel and the judges' API view)
         "lane": card.policy.lane.value if card.policy else None,
         "card_status": card.status.value,
