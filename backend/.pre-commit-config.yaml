@@ -1,0 +1,33 @@
+# Install from backend/: `uv run --all-packages pre-commit install`
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  # Uses the ruff version pinned in uv.lock so hooks, `make lint` and CI agree.
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff check
+        entry: uv run --all-packages ruff check --fix --force-exclude
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --all-packages ruff format --force-exclude
+        language: system
+        types: [python]
+      - id: no-secrets-in-env-example
+        name: .env.example carries names only
+        entry: bash -c 'grep -nE "^(AKAMAI_INFERENCE_API_KEY|XRPL_WALLET_SEED|OBJECT_STORAGE_SECRET_KEY|LINODE_TOKEN|DATABASE_URL)=.+" .env.example && exit 1 || exit 0'
+        language: system
+        files: ^\.env\.example$
+        pass_filenames: false

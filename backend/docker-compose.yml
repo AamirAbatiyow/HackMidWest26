@@ -1,0 +1,86 @@
+# Local dev stack. Defaults below are throwaway local credentials, not secrets.
+#   make up                  -> postgres (pgvector), valkey, S3-compatible object store (SeaweedFS)
+#   make up project=vouch    -> also builds/runs the Vouch API (:8101) + risk-model inference (:8201)
+# The same two images run on the Akamai app / model Linodes (infra/terraform/akamai/cloud-init).
+
+x-app-env: &app-env
+  APP_ENV: dev
+  DATABASE_URL: postgresql+psycopg://vouch:vouch@postgres:5432/vouch
+  REDIS_URL: redis://valkey:6379/0
+  OBJECT_STORAGE_ENDPOINT: http://objectstore:9000
+  OBJECT_STORAGE_BUCKET: vouch-attachments
+  OBJECT_STORAGE_ACCESS_KEY: local
+  OBJECT_STORAGE_SECRET_KEY: local
+  VOUCH_INFERENCE_URL: http://inference:8000
+  VOUCH_MODEL_SERVER_URL: http://inference:8000
+  VOUCH_PUBLIC_URL: http://localhost:8101
+  CORS_ALLOW_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: vouch
+      POSTGRES_PASSWORD: vouch
+      POSTGRES_DB: vouch
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vouch"]
+      interval: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports: ["6379:6379"]
+
+  # Local S3-compatible stand-in for Akamai Object Storage. No identities configured = any key works.
+  # Buckets are created on first use by hm_storage.ObjectStore.ensure_bucket().
+  objectstore:
+    image: chrislusf/seaweedfs:latest
+    command: server -s3 -s3.port=9000 -dir=/data
+    ports: ["9000:9000"]
+    volumes: [objdata:/data]
+
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: infra/docker/python-app.Dockerfile
+      args:
+        PROJECT: ${PROJECT:-vouch}
+        EXTRAS: ${API_EXTRAS:---extra ml --extra cedar}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+    ports: ["8101:8000"]
+    volumes:
+      - apidata:/app/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      inference: { condition: service_started }
+
+  inference:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: infra/docker/python-app.Dockerfile
+      args:
+        PROJECT: ${PROJECT:-vouch}
+        EXTRAS: ${INFERENCE_EXTRAS:---extra ml}
+        APP_MODULE: ${PROJECT:-vouch}.services.inference:app
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+    ports: ["8201:8000"]
+    volumes:
+      - ./artifacts:/app/artifacts
+
+volumes:
+  pgdata:
+  objdata:
+  apidata:

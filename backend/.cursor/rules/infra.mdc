@@ -1,0 +1,15 @@
+---
+description: Docker, Terraform (Linode), Kubernetes and deploy script conventions
+globs: infra/**,docker-compose.yml,.github/**
+alwaysApply: false
+---
+# Infra
+
+- Templates, not live config: mark anything account-specific with `TODO:` and keep it in variables / tfvars / overlays.
+- Credentials only via env (`LINODE_TOKEN`, `.env` → k8s Secret `app-secrets`). Never in `.tf`, `.tfvars` (git-ignored), YAML or images.
+- One shared image: `infra/docker/python-app.Dockerfile` with `PROJECT`, `EXTRAS`, `APP_MODULE` build args. Containers listen on 8000; config via env (`INFERENCE_URL`, `DATABASE_URL`, ...).
+- Local: `docker compose` (postgres+pgvector, valkey, SeaweedFS S3; project services under profile `app`).
+- Akamai fast path: one Linode in a VPC + NodeBalancer + Cloud Firewall (SSH from `admin_cidrs` only). LKE path via `use_lke=true` + `infra/k8s/overlays/<project>`.
+- Keep API replicas at 1 per LLM team key (in-process rate limiter).
+- Validate Terraform with `terraform -chdir=infra/terraform validate`; render k8s with `kubectl kustomize infra/k8s/overlays/<project>`.
+- CI runs lint + tests only; deployments are manual (`make deploy-akamai`).

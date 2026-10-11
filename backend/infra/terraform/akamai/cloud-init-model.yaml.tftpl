@@ -1,0 +1,56 @@
+#cloud-config
+# Model-serving Linode: PyTorch risk model + LIME behind :${model_port}. This machine has only a VPC
+# interface (no public IPv4/IPv6, no 1:1 NAT). apt, git and Docker reach the internet through the
+# forward proxy on app Linode #1 (${proxy_url}); nothing on the internet can reach this machine.
+apt:
+  proxy: "${proxy_url}"
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - curl
+
+write_files:
+  - path: /etc/profile.d/vouch-proxy.sh
+    content: |
+      export http_proxy=${proxy_url} https_proxy=${proxy_url}
+      export HTTP_PROXY=${proxy_url} HTTPS_PROXY=${proxy_url}
+      export no_proxy=localhost,127.0.0.1,10.0.0.0/8 NO_PROXY=localhost,127.0.0.1,10.0.0.0/8
+  - path: /etc/systemd/system/docker.service.d/proxy.conf
+    content: |
+      [Service]
+      Environment="HTTP_PROXY=${proxy_url}"
+      Environment="HTTPS_PROXY=${proxy_url}"
+      Environment="NO_PROXY=localhost,127.0.0.1,10.0.0.0/8"
+  - path: /root/.docker/config.json
+    permissions: "0600"
+    content: |
+      {
+        "proxies": {
+          "default": {
+            "httpProxy": "${proxy_url}",
+            "httpsProxy": "${proxy_url}",
+            "noProxy": "localhost,127.0.0.1,10.0.0.0/8"
+          }
+        }
+      }
+  - path: /opt/vouch/bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /etc/profile.d/vouch-proxy.sh
+      mkdir -p /opt/vouch
+      if [ ! -d /opt/vouch/repo/.git ]; then
+        git -c http.proxy="${proxy_url}" clone --depth 1 --branch "${repo_ref}" "${repo_url}" /opt/vouch/repo
+      fi
+      cd /opt/vouch/repo/backend
+      docker compose -f infra/compose/akamai-model.yml up -d --build
+      echo "vouch inference started on :${model_port}"
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now docker
+  - systemctl restart docker
+  - /opt/vouch/bootstrap.sh > /var/log/vouch-bootstrap.log 2>&1 || echo "bootstrap failed; see /var/log/vouch-bootstrap.log"

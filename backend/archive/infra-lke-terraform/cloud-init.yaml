@@ -1,0 +1,13 @@
+#cloud-config
+# Single-instance path: Docker + compose, repo checkout. Secrets (.env) are copied by deploy_akamai.sh, never baked in.
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - make
+runcmd:
+  - systemctl enable --now docker
+  - mkdir -p /opt/app
+  - [sh, -c, 'if [ -n "${repo_url}" ]; then git clone "${repo_url}" /opt/app/repo; fi']
+  # TODO: after `.env` is copied: cd /opt/app/repo && PROJECT=<name> docker compose --profile app up -d --build

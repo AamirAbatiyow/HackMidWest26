@@ -1,0 +1,31 @@
+---
+description: Strands Agents conventions and Akamai LLM rate-limit/context budget
+globs: projects/**/agents/**,projects/**/tools/**,packages/agents_common/**,packages/llm/**
+alwaysApply: false
+---
+# LLM budget (Akamai hosted inference)
+- **60 requests/min per team key**, 32k context, 4096 max output tokens, tool calling + JSON schema supported, **no image input** (images need our own model or Bedrock).
+- Build agents with `hm_agents_common.model.make_agent(...)` and raw calls with `hm_llm.make_openai_client()` / `hm_llm.chat()`. They share one limiter and retry 429s. Never instantiate `OpenAI(...)` or `OpenAIModel(...)` directly.
+- Each tool loop iteration is a request. Prefer fewer, richer tools; keep tool results short (summaries, top-N, IDs); no raw dumps into context.
+- Long inputs: `hm_llm.TokenBudget().trim(messages)`; agents use a sliding window (`AGENT_WINDOW_SIZE`).
+- Tests/rehearsals: `hm_agents_common.testing.ScriptedModel([...])`, zero network.
+
+# Strands patterns
+```python
+from strands import tool
+from hm_agents_common.model import make_agent
+from hm_agents_common.approval import ApprovalHook, PolicyHook, pending_approvals, approval_responses
+from hm_agents_common.policy import PolicySet, permit, forbid
+
+agent = make_agent(name="x", system_prompt=PROMPT, tools=[predict, send_payment],
+                   hooks=[PolicyHook(policy), ApprovalHook(tools={"send_payment"})], session_id=run_id)
+result = agent("...")                        # result.stop_reason == "interrupt" -> pending_approvals(result)
+result = agent(approval_responses({iid: True}))   # resume after the human decides (keep agent alive or use session_id)
+verdict = agent("...", structured_output_model=Verdict).structured_output
+```
+- Agents-as-tools: wrap a specialist `make_agent(...)` call inside a `@tool` function for an orchestrator.
+- Fixed pipelines: `strands.multiagent.GraphBuilder`; open-ended handoffs: `strands.multiagent.Swarm`. Only when the demo story needs it.
+- MCP: `hm_agents_common.mcp.http_mcp_client(url)` / `stdio_mcp_client(cmd, args)`; A2A: `strands.multiagent.a2a.A2AServer` (`a2a` extra).
+- Tracing: call `hm_agents_common.tracing.setup_tracing("<project>")` once at API startup (no-op without OTEL env).
+- Anything that moves money or is irreversible: `ApprovalHook` and/or a `forbid` rule. Show the policy reason in the API response.
+- The ML model is a fixed tool (`tools.predict`) calling the inference service; the agent must cite its score/factors, never invent numbers.

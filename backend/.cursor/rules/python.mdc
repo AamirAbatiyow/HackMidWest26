@@ -1,0 +1,16 @@
+---
+description: Python style for this repo
+globs: **/*.py
+alwaysApply: false
+---
+# Python
+
+- Python 3.11+, full type hints, `from __future__ import annotations` in library modules.
+- Ruff is the formatter and linter (`make format`). Line length 110. Imports sorted by ruff (`hm_*` and project packages are first-party).
+- Pydantic models at every boundary (HTTP bodies, tool inputs/outputs, structured LLM output). Return JSON-serializable data from tools.
+- Settings: subclass `hm_core.config.HMSettings` (projects use an env prefix, e.g. `VOUCH_`). Cache with `@lru_cache` getters. No ad-hoc `os.environ`.
+- Errors: raise `hm_core.errors` types (`NotFoundError`, `ValidationFailedError`, `UpstreamError`, `ConfigError`); don't return error dicts.
+- Logging: `logging.getLogger(__name__)`, structured fields via `extra={...}`. No `print` outside CLI entrypoints like `models/train.py`.
+- Optional heavy deps (strands, torch, lime, sklearn, xrpl, web3): import inside functions in shared code; guard tests with `pytest.importorskip`.
+- Tests: pytest, fast and offline (moto for S3, sqlite for SQL, `httpx.MockTransport` for HTTP, `ScriptedModel` for agents). Name test files `test_<unique>.py`.
+- Comments only for constraints the code can't show. No narration.

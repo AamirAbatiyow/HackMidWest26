@@ -1,0 +1,34 @@
+{
+  "name": "vouch-risk",
+  "version": "v20261010-210114",
+  "framework": "pickle",
+  "created_at": "2026-10-10T21:01:14.751055+00:00",
+  "metrics": {
+    "ato_bec_precision": 1.0,
+    "ato_bec_recall": 1.0,
+    "ato_bec_roc_auc": 1.0,
+    "ato_bec_support": 90.0,
+    "insider_precision": 1.0,
+    "insider_recall": 0.926829268292683,
+    "insider_roc_auc": 0.9990112063282794,
+    "insider_support": 123.0,
+    "fake_vendor_precision": 0.9896907216494846,
+    "fake_vendor_recall": 0.9795918367346939,
+    "fake_vendor_roc_auc": 0.9998471635350176,
+    "fake_vendor_support": 98.0,
+    "system_honest_hold_rate": 0.010845986984815618,
+    "system_honest_unusual_hold_rate": 0.00784313725490196,
+    "system_bad_actor_catch_rate": 0.9485530546623794,
+    "system_honest_fast_pay_rate": 0.026030368763557483,
+    "system_n_honest": 922.0,
+    "system_n_honest_unusual": 255.0,
+    "system_n_bad": 311.0
+  },
+  "params": {
+    "algo": "VouchNet",
+    "epochs": 60,
+    "seed": 0,
+    "emb_dim": 4,
+    "hidden": 64
+  }
+}

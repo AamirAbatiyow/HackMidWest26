@@ -1,0 +1,17 @@
+---
+description: Hackathon repo ground rules (no frontend, no secrets, demo-first, smallest change)
+alwaysApply: true
+---
+# Ground rules
+
+- Backend/infra/ML/docs only. **Never create frontend code** (HTML, JS/TS, CSS, templates, static sites, UI frameworks). The frontend is a separate repo calling our FastAPI services over HTTP; CORS comes from `CORS_ALLOW_ORIGINS`.
+- **Never commit secrets.** Values go in `.env` (git-ignored); add only variable *names* to `.env.example`. No keys in code, tests, tfvars, YAML or docs.
+- **Demo first.** Keep the end-to-end path in `docs/DEMO.md` working at every commit. Stub with fakes (mock settlement, `ScriptedModel`) before integrating real services.
+- **Smallest viable change.** Don't add frameworks, layers, or packages the demo doesn't need. Edit the project before generalizing into `packages/`.
+- Done = `make lint && make test` pass and `make run-<project>` serves `/health`. Log pivots in `docs/DECISIONS.md`.
+
+# Layout
+- `packages/<lib>/hm_<lib>/`: shared libs (`hm_core`, `hm_llm`, `hm_agents_common`, `hm_ml_common`, `hm_settlement`, `hm_storage`, `hm_api_common`).
+- `projects/<name>/<name>/`: `main.py` (API), `config.py`, `agents/`, `tools/`, `models/train.py`, `services/inference.py`; tests in `projects/<name>/tests/`.
+- New concept: `make new-project name=<x> desc="..."` (renders `templates/project/`, assigns ports 81NN/82NN). Don't copy another project by hand.
+- Dependencies: `uv add --package <member> <dep>`. Heavy stacks stay optional extras (`agents`, `ml`, `explain`, `chain`).
