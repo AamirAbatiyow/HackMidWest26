@@ -41,6 +41,10 @@ R_SENDER = "invoice email failed sender checks (authentication, lookalike domain
 R_OWNER_HOLD = "owner placed a hold"
 R_NOTHING = "nothing payable after credit notes"
 R_KICKBACK = "submission could not be read; a kickback email to the sender awaits the owner's approval"
+R_OCR_UNAVAILABLE = (
+    "image invoice could not be read: this server has no OCR engine (tesseract-ocr is not installed), "
+    "so the attachment was never OCRed"
+)
 R_INTAKE_REVIEW = (
     "intake routing was ambiguous and no classifier answer passed validation; owner confirms the document"
 )
@@ -61,6 +65,7 @@ REQUIRED_ACTIONS = {
     R_NOTHING: "no payment needed; credit carried forward",
     R_LINES: "owner checks the line items; the vendor re-issues a corrected invoice",
     R_KICKBACK: "owner approves the kickback email asking the sender for a readable invoice (or re-keys it from the original)",
+    R_OCR_UNAVAILABLE: "install tesseract-ocr + tesseract-ocr-eng on the app server (/v1/health shows ocr.state) and resubmit the image, or re-key the invoice from the original",
     R_INTAKE_REVIEW: "owner confirms which document is the invoice and resolves with a note (or asks the sender for one invoice per email)",
 }
 
@@ -78,6 +83,13 @@ def build_policy(limits: Limits) -> PolicySet:
                 action="payment:release",
                 when=lambda r: bool(_c(r, "vendor_found")),
                 description="known vendor with a kernel-computed amount",
+            ),
+            # First so it heads the card's reasons: an image the server could not OCR is a deployment fault
+            # that explains every downstream "missing" below it (vendor, amount, nothing payable).
+            forbid(
+                action="payment:release",
+                when=lambda r: _c(r, "ocr_unavailable") and not resolved(r),
+                description=R_OCR_UNAVAILABLE,
             ),
             forbid(
                 action="payment:release",
@@ -226,6 +238,7 @@ def card_context(card: PaymentCard) -> dict[str, Any]:
         "owner_hold": _owner_hold_active(card),
         "intake_kickback": bool(card.intake and card.intake.kickback),
         "intake_review": bool(card.intake and card.intake.review_required),
+        "ocr_unavailable": bool(card.intake and card.intake.ocr_unavailable),
         "verified_vendor": bool(vendor and (vendor.oob_verified or len(vendor.history) >= 3)),
         "flags": card.flags,
     }

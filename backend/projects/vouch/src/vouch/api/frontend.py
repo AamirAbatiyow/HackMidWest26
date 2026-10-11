@@ -202,7 +202,9 @@ def health(request: Request) -> Any:
 def health_v1() -> dict[str, Any]:
     svc = get_service()
     from vouch import __version__
+    from vouch.intake.extract import ocr_status
 
+    ocr = ocr_status()  # cached per process: no subprocess on the poll path
     return {
         "status": "ok",
         "service": "vouch-api",
@@ -212,6 +214,14 @@ def health_v1() -> dict[str, Any]:
         "settlement_adapter": svc.engine.adapter.name,
         "database": svc.store.backend,
         "uptime_s": svc.uptime_s(),
+        # additive: image invoices need an OCR engine in the API container (tesseract-ocr + -eng)
+        "ocr": {
+            "state": ocr["state"],
+            "backend": ocr["backend"],
+            "tesseract_version": ocr["tesseract_version"],
+            "languages": ocr["languages"],
+            "detail": ocr["detail"],
+        },
     }
 
 
