@@ -1,0 +1,103 @@
+#cloud-config
+# Vouch inbound mail receiver on a Linode (Akamai) instance inside the VPC.
+#
+# Terraform: pass this file as the instance's metadata user_data, e.g.
+#   metadata { user_data = base64encode(templatefile("${path.module}/cloud-init.yaml", { ... })) }
+# (see linode.tf.example next to this file). Nothing here is applied automatically; review and
+# fill in every <PLACEHOLDER> before use. Ubuntu 22.04/24.04 images with the Metadata service
+# are required for cloud-init on Linode.
+
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - ufw
+
+groups:
+  - docker
+
+users:
+  - name: vouch
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - <SSH_PUBLIC_KEY>
+
+write_files:
+  # Runtime configuration for the container (secrets come from Terraform variables, not git).
+  - path: /opt/vouch-mail/.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      MAIL_DOMAIN=<MAIL_DOMAIN e.g. vouch.local or mail.yourdomain.com>
+      MAIL_ACCEPT=business
+      SMTP_PORTS=25,2525
+      HTTP_PORT=8025
+      DATA_DIR=/data
+      BACKEND_INTAKE_URL=http://<BACKEND_VPC_IP>:8101/v1/intake/email
+      BACKEND_INTAKE_FORMAT=json
+      INTAKE_SHARED_SECRET=<INTAKE_SHARED_SECRET>
+      INTAKE_SECRET_HEADER=X-Vouch-Intake-Secret
+      # Optional Akamai Object Storage mirror
+      OBJ_ENDPOINT=
+      OBJ_BUCKET=
+      OBJ_ACCESS_KEY=
+      OBJ_SECRET_KEY=
+      LOG_LEVEL=INFO
+
+  # Host firewall as defence in depth; the Linode Cloud Firewall (linode.tf.example) is primary.
+  - path: /opt/vouch-mail/firewall.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      VPC_CIDR="<VPC_SUBNET_CIDR e.g. 10.0.0.0/24>"
+      DEMO_IPS="<DEMO_TOOL_PUBLIC_IPS comma-separated, e.g. 203.0.113.7/32>"
+      ufw --force reset
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp
+      for ip in ${DEMO_IPS//,/ }; do
+        ufw allow from "$ip" to any port 25 proto tcp
+        ufw allow from "$ip" to any port 2525 proto tcp
+      done
+      ufw allow from "$VPC_CIDR" to any port 25 proto tcp
+      ufw allow from "$VPC_CIDR" to any port 2525 proto tcp
+      ufw allow from "$VPC_CIDR" to any port 8025 proto tcp   # health / recent / inbound: VPC only
+      ufw --force enable
+
+  - path: /etc/systemd/system/vouch-mail.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Vouch inbound mail receiver (docker compose)
+      Requires=docker.service
+      After=docker.service network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/vouch-mail/repo/demo-tools/mail-receiver
+      ExecStart=/usr/bin/docker compose --env-file /opt/vouch-mail/.env up -d --build
+      ExecStop=/usr/bin/docker compose --env-file /opt/vouch-mail/.env down
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # Docker Engine + compose plugin
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # Fetch the receiver source (or copy an image from your registry instead).
+  - git clone --depth 1 --branch <GIT_BRANCH> https://github.com/AamirAbatiyow/HackMidWest26.git /opt/vouch-mail/repo
+  - cp /opt/vouch-mail/.env /opt/vouch-mail/repo/demo-tools/mail-receiver/.env
+  - /opt/vouch-mail/firewall.sh
+  - systemctl daemon-reload
+  - systemctl enable --now vouch-mail.service
+  - sleep 10
+  - curl -fsS http://127.0.0.1:8025/health || journalctl -u vouch-mail.service --no-pager | tail -50
+
+final_message: "vouch mail receiver boot finished after $UPTIME seconds; check http://<VPC_IP>:8025/health"

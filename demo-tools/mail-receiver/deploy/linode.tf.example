@@ -1,0 +1,114 @@
+# EXAMPLE ONLY — not applied by anyone. Review, rename to *.tf, provide variables, then plan.
+#
+# One Linode in the Vouch VPC running the mail receiver (docker compose via cloud-init), with a
+# Cloud Firewall that opens SMTP (25, 2525) only to the demo tool's IPs and the VPC subnet, and
+# the HTTP port (8025) only to the VPC. The instance keeps a public IPv4 (1:1 NAT on the VPC
+# interface) so the invoice-creator running on a laptop can reach it directly by IP — no DNS
+# or domain is required for the demo.
+
+terraform {
+  required_providers {
+    linode = {
+      source  = "linode/linode"
+      version = "~> 2.0"
+    }
+  }
+}
+
+variable "linode_token" { sensitive = true }
+variable "region" { default = "us-ord" }                     # Chicago — same region as the backend
+variable "vpc_id" { type = number }                          # existing Vouch VPC
+variable "vpc_subnet_id" { type = number }                   # existing private subnet
+variable "vpc_subnet_cidr" { default = "10.0.0.0/24" }
+variable "backend_vpc_ip" { default = "10.0.0.5" }           # backend's address inside the VPC
+variable "demo_tool_ips" { type = list(string) }             # e.g. ["203.0.113.7/32"] (Faris's laptop)
+variable "ssh_public_key" {}
+variable "intake_shared_secret" { sensitive = true }
+variable "mail_domain" { default = "vouch.local" }
+variable "git_branch" { default = "main" }
+
+provider "linode" {
+  token = var.linode_token
+}
+
+resource "linode_firewall" "mail" {
+  label           = "vouch-mail-receiver"
+  inbound_policy  = "DROP"
+  outbound_policy = "ACCEPT"
+
+  inbound {
+    label    = "ssh"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "22"
+    ipv4     = var.demo_tool_ips
+  }
+  inbound {
+    label    = "smtp-from-demo-tool"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "25,2525"
+    ipv4     = var.demo_tool_ips
+  }
+  inbound {
+    label    = "smtp-from-vpc"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "25,2525"
+    ipv4     = [var.vpc_subnet_cidr]
+  }
+  inbound {
+    label    = "http-health-inbound-vpc-only"
+    action   = "ACCEPT"
+    protocol = "TCP"
+    ports    = "8025"
+    ipv4     = [var.vpc_subnet_cidr]
+  }
+
+  linodes = [linode_instance.mail.id]
+}
+
+resource "linode_instance" "mail" {
+  label           = "vouch-mail-receiver"
+  region          = var.region
+  type            = "g6-nanode-1"
+  image           = "linode/ubuntu24.04"
+  authorized_keys = [var.ssh_public_key]
+  private_ip      = false
+  tags            = ["vouch", "demo"]
+
+  interface {
+    purpose   = "vpc"
+    subnet_id = var.vpc_subnet_id
+    primary   = true
+    ipv4 {
+      nat_1_1 = "any" # public IPv4 mapped 1:1 so SMTP from outside the VPC can reach the receiver
+    }
+  }
+
+  metadata {
+    user_data = base64encode(local.cloud_init)
+  }
+}
+
+# cloud-init.yaml is kept copy-pasteable (plain <PLACEHOLDER> tokens), so substitute step by step.
+locals {
+  ci0 = file("${path.module}/cloud-init.yaml")
+  ci1 = replace(local.ci0, "<SSH_PUBLIC_KEY>", var.ssh_public_key)
+  ci2 = replace(local.ci1, "<INTAKE_SHARED_SECRET>", var.intake_shared_secret)
+  ci3 = replace(local.ci2, "<BACKEND_VPC_IP>", var.backend_vpc_ip)
+  ci4 = replace(local.ci3, "<VPC_SUBNET_CIDR e.g. 10.0.0.0/24>", var.vpc_subnet_cidr)
+  ci5 = replace(local.ci4, "<DEMO_TOOL_PUBLIC_IPS comma-separated, e.g. 203.0.113.7/32>", join(",", var.demo_tool_ips))
+  ci6 = replace(local.ci5, "<GIT_BRANCH>", var.git_branch)
+  cloud_init = replace(local.ci6, "<MAIL_DOMAIN e.g. vouch.local or mail.yourdomain.com>", var.mail_domain)
+}
+
+output "mail_receiver_public_ip" {
+  value       = linode_instance.mail.ip_address
+  description = "Set DEMO_SMTP_HOST to this for the invoice-creator (port 25, or 2525 if 25 is filtered)."
+}
+
+output "mail_receiver_vpc_ip" {
+  value       = linode_instance.mail.interface[0].ipv4[0].vpc
+  description = "Reach /health, /recent and /inbound from inside the VPC on port 8025."
+}
