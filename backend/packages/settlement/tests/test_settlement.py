@@ -14,8 +14,8 @@ from hm_settlement.arc_adapter import ArcUSDCAdapter
 from hm_settlement.xrpl_adapter import XRPLTestnetAdapter
 
 
-def req(key="k1", amount="12.50"):
-    return PaymentRequest(amount=Decimal(amount), destination="rDEST", idempotency_key=key)
+def req(key="k1", amount="12.50", currency="USD"):
+    return PaymentRequest(amount=Decimal(amount), destination="rDEST", idempotency_key=key, currency=currency)
 
 
 def test_mock_send_is_idempotent():
@@ -71,7 +71,7 @@ def test_xrpl_requires_a_seed():
 
 
 def test_xrpl_scaling_destination_and_memo():
-    adapter = _xrpl(xrpl_xrp_per_usd=Decimal("0.0001"))
+    adapter = _xrpl(xrpl_xrp_per_usd=Decimal("0.0001"), xrpl_use_iou=False)
     r = PaymentRequest(
         amount=Decimal("8240.00"),
         destination="vendor:v-rheinland",
@@ -87,7 +87,8 @@ def test_xrpl_scaling_destination_and_memo():
 
 
 def test_xrpl_batch_is_idempotent_per_key(monkeypatch):
-    adapter = _xrpl()
+    adapter = _xrpl(xrpl_use_iou=False)
+    adapter._batch_available = True  # pretend Batch is available
     calls = []
 
     def fake_batch(chunk, atomic):
@@ -98,3 +99,72 @@ def test_xrpl_batch_is_idempotent_per_key(monkeypatch):
     first = adapter.send_batch([req("a"), req("b")])
     again = adapter.send_batch([req("a"), req("b")])
     assert calls == [["a", "b"]] and [r.tx_id for r in first] == [r.tx_id for r in again]
+
+
+def test_xrpl_iou_mode():
+    """IOU mode uses issued currency amount instead of XRP drops."""
+    adapter = _xrpl(
+        xrpl_use_iou=True,
+        xrpl_iou_issuer="rISSUER123456789012345678901234",
+        xrpl_iou_currency="USD",
+    )
+    assert adapter._uses_iou() is True
+    assert adapter.network == "xrpl-testnet-USD"
+
+    r = PaymentRequest(
+        amount=Decimal("100.50"),
+        destination="vendor:v-test",
+        idempotency_key="vouch:iou-test",
+        memo="IOU-1",
+    )
+    iou_amount = adapter.to_iou_amount(r)
+    assert iou_amount == {
+        "currency": "USD",
+        "issuer": "rISSUER123456789012345678901234",
+        "value": "100.50",
+    }
+    tx = adapter._payment(r)
+    assert tx.amount == iou_amount
+
+
+def test_xrpl_iou_disabled_falls_back_to_xrp():
+    """When IOU is disabled, payments use XRP drops."""
+    adapter = _xrpl(xrpl_use_iou=False)
+    assert adapter._uses_iou() is False
+    assert adapter.network == "xrpl-testnet-xrp"
+
+
+def test_xrpl_iou_without_issuer_falls_back_to_xrp():
+    """When IOU issuer is empty, payments use XRP drops."""
+    adapter = _xrpl(xrpl_use_iou=True, xrpl_iou_issuer="")
+    assert adapter._uses_iou() is False
+    assert adapter.network == "xrpl-testnet-xrp"
+
+
+def test_xrpl_batch_fallback_when_not_available(monkeypatch):
+    """When Batch amendment is not available, falls back to sequential payments."""
+    adapter = _xrpl(xrpl_use_iou=False)
+    adapter._batch_available = False  # simulate Batch not available
+
+    sent = []
+
+    def fake_send(r):
+        receipt = adapter._receipt(r, f"H{len(sent)}", True, {"engine_result": "tesSUCCESS"})
+        sent.append(r.idempotency_key)
+        return receipt
+
+    monkeypatch.setattr(adapter, "send", fake_send)
+    receipts = adapter.send_batch([req("seq-a"), req("seq-b")])
+    assert sent == ["seq-a", "seq-b"]
+    assert receipts[0].raw.get("batch_mode") == "sequential"
+    assert receipts[1].raw.get("batch_mode") == "sequential"
+
+
+def test_mock_adapter_used_when_env_vars_unset():
+    """Mock adapter is used when XRPL_* env vars are unset (default)."""
+    adapter = make_adapter("mock")
+    assert isinstance(adapter, MockSettlementAdapter)
+    assert adapter.network == "mock-ledger"
+    receipt = adapter.send(req("mock-test"))
+    assert receipt.status == PaymentStatus.SETTLED
+    assert receipt.tx_id.startswith("mock_")
