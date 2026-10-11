@@ -17,7 +17,7 @@ from hm_api_common import create_app, run
 from hm_core.config import AppSettings
 from hm_core.errors import AppError
 from vouch import __version__
-from vouch.api import cards, frontend, intake, netstats
+from vouch.api import cards, frontend, intake, netstats, trust
 from vouch.api.state import _state, get_engine, get_service, set_service  # noqa: F401  (re-exported for tests)
 from vouch.config import get_settings
 
@@ -71,6 +71,7 @@ app.include_router(frontend.payments)
 app.include_router(cards.router)
 app.include_router(intake.router)
 app.include_router(netstats.router)
+app.include_router(trust.router)
 setup_tracing("vouch-api")
 
 

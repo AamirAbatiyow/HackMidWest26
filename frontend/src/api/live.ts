@@ -14,6 +14,7 @@ import type {
   SettlementReceipt,
   TimelineEvent,
   TopologyData,
+  TrustData,
   VouchApi,
   VouchStatus,
 } from './types'
@@ -644,6 +645,10 @@ export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): V
     async getTopology(): Promise<TopologyData> {
       const raw = asRecord(await request<unknown>('/topology'))
       return normalizeTopology(raw)
+    },
+
+    async getTrust(): Promise<TrustData> {
+      return await request<TrustData>('/trust')
     },
 
     async listRuns() {
