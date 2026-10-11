@@ -57,7 +57,8 @@ def qty_text(q: float) -> str:
 
 
 def safe_filename(stem: str, ext: str) -> str:
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-") or "invoice"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-.") or "invoice"
+    stem = re.sub(r"\.{2,}", ".", stem).replace("-.", "-").replace(".-", "-")
     return f"{stem}.{ext}"
 
 
