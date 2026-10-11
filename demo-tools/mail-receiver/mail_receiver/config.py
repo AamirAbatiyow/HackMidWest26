@@ -68,8 +68,8 @@ class Settings:
     obj_prefix: str = "mail/"
 
     # --- forwarding to the backend ---
-    # json → POST IntakeRequest JSON to e.g. http://10.0.0.5:8000/v1/intake
-    # eml  → multipart upload (field "file") to e.g. http://10.0.0.5:8000/v1/intake/eml
+    # json → POST IntakeRequest JSON to e.g. http://10.0.1.10:8101/v1/intake
+    # eml  → multipart upload (field "file") to e.g. http://10.0.1.10:8101/v1/intake/eml
     backend_intake_url: str = ""
     backend_intake_format: str = "json"
     backend_submitted_by: str = "ap-inbox"  # the backend's "who submitted this" label

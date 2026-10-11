@@ -145,7 +145,7 @@ def describe(msg: EmailMessage, attachment: Rendered | None, built_id: str, raw:
 
 
 def eml_to_intake_json(raw: bytes, *, source: str = "email", received_at: datetime | None = None) -> dict:
-    """Mirror of the backend's ``parse_eml``: the JSON body ``POST /v1/intake/email`` accepts.
+    """Mirror of the backend's ``parse_eml``: the JSON body ``POST /v1/intake`` accepts.
 
     Headers are kept verbatim (repeated headers joined with newlines, as the backend does);
     attachments are base64 with sha256 and size.

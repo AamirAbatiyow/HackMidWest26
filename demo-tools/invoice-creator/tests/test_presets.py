@@ -24,7 +24,13 @@ BACKEND_RING_BANK = "998877664471"
 BACKEND_RING_PHONE_DIGITS = "8165550192"
 BACKEND_RING_ADDRESS = "1201 N Orange St, Suite 600, Wilmington, DE 19801"
 BACKEND_SAMPLE_INVOICE_NUMBERS = {
-    "RP-10482", "WS-2026-0917", "MP-5521", "BL-3307", "BL-3308", "NT-0001", "CSR-0001",
+    "RP-10482",
+    "WS-2026-0917",
+    "MP-5521",
+    "BL-3307",
+    "BL-3308",
+    "NT-0001",
+    "CSR-0001",
 }
 
 
@@ -60,14 +66,18 @@ def test_reyes_story_demo_sequence_includes_follow_ups():
         "nova",
         "santa-rita",
     ]
-    assert demo_sequence() == demo_sequence("heartland") == [
-        "prairie",
-        "sonora",
-        "midwest-facility",
-        "rheinland",
-        "apex",
-        "baolin",
-    ]
+    assert (
+        demo_sequence()
+        == demo_sequence("heartland")
+        == [
+            "prairie",
+            "sonora",
+            "midwest-facility",
+            "rheinland",
+            "apex",
+            "baolin",
+        ]
+    )
 
 
 def test_invoice_numbers_do_not_collide_with_backend_samples():

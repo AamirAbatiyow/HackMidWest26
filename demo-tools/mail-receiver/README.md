@@ -23,7 +23,7 @@ curl -s localhost:8025/health
 
 # Bare Python (local demo / tests) — needs Python 3.12
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-SMTP_PORTS=2525 DATA_DIR=./data BACKEND_INTAKE_URL=http://127.0.0.1:8101/v1/intake/email \
+SMTP_PORTS=2525 DATA_DIR=./data BACKEND_INTAKE_URL=http://127.0.0.1:8101/v1/intake \
   INTAKE_SHARED_SECRET=dev-secret python -m mail_receiver
 ```
 
@@ -56,8 +56,9 @@ Exactly the backend's `IntakeRequest` (`vouch.models`), as JSON by default:
 ```
 
 Request headers on the POST: `X-Vouch-Intake-Secret` (shared secret), `X-Vouch-Receiver-Message-Id`,
-`X-Vouch-Envelope-From`. Set `BACKEND_INTAKE_FORMAT=eml` to POST the raw message as
-`message/rfc822` instead.
+`X-Vouch-Envelope-From`. `submitted_by` defaults to `BACKEND_SUBMITTED_BY` (`ap-inbox`). Set
+`BACKEND_INTAKE_FORMAT=eml` and point `BACKEND_INTAKE_URL` at `.../v1/intake/eml` to upload the raw
+message instead (multipart form, field `file` = the `.eml`, plus `submitted_by`).
 
 ## HTTP API (port 8025 — keep it inside the VPC)
 
@@ -65,7 +66,7 @@ Request headers on the POST: `X-Vouch-Intake-Secret` (shared secret), `X-Vouch-R
 |------------------------------|-------------------------------------------------------------------------|
 | `GET /health`                | status, queue depth, totals, last delivery result, public config         |
 | `GET /recent`                | last 20 messages, **metadata only** (no bodies, no attachment payloads) |
-| `POST /inbound`              | fallback transport when SMTP is blocked: body `message/rfc822`, header `X-Vouch-Intake-Secret`, optional `X-Vouch-Envelope-From`, `X-Vouch-Rcpt-To` |
+| `POST /inbound`              | fallback transport when SMTP is blocked: body `message/rfc822` (or multipart field `file`), header `X-Vouch-Intake-Secret`, optional `X-Vouch-Envelope-From`, `X-Vouch-Rcpt-To` |
 | `POST /dead-letter/retry`    | requeue every dead-lettered message (same secret)                       |
 
 ## Storage layout

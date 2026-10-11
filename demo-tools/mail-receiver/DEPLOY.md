@@ -7,19 +7,25 @@ yourself (no credentials are stored in the repo).
 ## Topology
 
 ```
- Faris's laptop                       Linode VPC (us-ord)
+ Faris's laptop                       Linode VPC (us-ord) — backend/infra/terraform/akamai
  ┌──────────────────┐   SMTP 25/2525  ┌────────────────────────┐  HTTP (private)  ┌──────────────────┐
- │ invoice-creator  │ ──────────────▶ │ mail-receiver          │ ───────────────▶ │ Vouch backend    │
- │ (web UI, :8300)  │  public IP      │ 10.0.0.x  (+1:1 NAT)   │  10.0.0.5:8101   │ /v1/intake/email │
- └──────────────────┘                 │ :25 :2525 :8025        │  X-Vouch-Intake- │                  │
+ │ invoice-creator  │ ──────────────▶ │ mail-receiver          │ ───────────────▶ │ Vouch API        │
+ │ (web UI, :8300)  │  public IP      │ 10.0.1.20  (+1:1 NAT)  │  10.0.1.10:8101  │ POST /v1/intake  │
+ └──────────────────┘                 │ :25 :2525 :8025        │  X-Vouch-Intake- │ (app Linode)     │
           │  HTTP fallback (if SMTP   └────────────────────────┘  Secret: …       └──────────────────┘
           └─ is blocked) → receiver /inbound, or straight to the backend intake
 ```
 
-* The receiver sits in the private subnet. It gets a public IPv4 via the VPC interface's 1:1 NAT
-  so the demo tool can reach it **by IP** — no domain or DNS is needed for the demo.
-* The backend is reached over the VPC private address; the shared secret
-  (`INTAKE_SHARED_SECRET`) is sent as `X-Vouch-Intake-Secret` on every POST.
+* The receiver joins the backend's **ingress-app subnet** (`10.0.1.0/24`; the app Linodes are
+  `10.0.1.10` / `10.0.1.11`, API port `8101`). The backend's Cloud Firewall already accepts the
+  API port from that subnet, so no backend-side firewall change is needed. It gets a public IPv4
+  via the VPC interface's 1:1 NAT so the demo tool can reach it **by IP** — no domain or DNS is
+  needed for the demo.
+* The backend is reached over the VPC private address: `BACKEND_INTAKE_URL=http://10.0.1.10:8101/v1/intake`
+  (`BACKEND_INTAKE_FORMAT=json`), or `…/v1/intake/eml` with `BACKEND_INTAKE_FORMAT=eml` (multipart
+  `file` upload). The shared secret (`INTAKE_SHARED_SECRET`) is sent as `X-Vouch-Intake-Secret`
+  on every POST. The backend does not validate that header yet; it protects the receiver's own
+  `POST /inbound` and `POST /dead-letter/retry` in the meantime.
 
 ## Firewall (Linode Cloud Firewall + ufw on the host)
 
@@ -63,6 +69,12 @@ cp .env.example .env            # set BACKEND_INTAKE_URL, INTAKE_SHARED_SECRET, 
 docker compose up -d --build
 curl -s http://127.0.0.1:8025/health | jq .
 ```
+
+With Terraform (`deploy/linode.tf.example`): the backend stack exports `vpc_id` (`terraform output
+-raw vpc_id` in `backend/infra/terraform/akamai`); the ingress subnet id comes from
+`linode-cli vpcs subnets-list <vpc_id>`. Pass `demo_tool_ips` (the laptop's public IP as `/32`),
+`ssh_public_key`, `intake_shared_secret` and `git_branch`; `backend_vpc_ip` defaults to `10.0.1.10`.
+Afterwards `terraform output mail_receiver_public_ip` is the value for `DEMO_SMTP_HOST`.
 
 Binding port 25 as the container's non-root user works because `docker-compose.yml` sets
 `net.ipv4.ip_unprivileged_port_start=0` for the container. If a port cannot be bound the

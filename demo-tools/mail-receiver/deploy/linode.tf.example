@@ -17,10 +17,11 @@ terraform {
 
 variable "linode_token" { sensitive = true }
 variable "region" { default = "us-ord" }                     # Chicago — same region as the backend
-variable "vpc_id" { type = number }                          # existing Vouch VPC
-variable "vpc_subnet_id" { type = number }                   # existing private subnet
-variable "vpc_subnet_cidr" { default = "10.0.0.0/24" }
-variable "backend_vpc_ip" { default = "10.0.0.5" }           # backend's address inside the VPC
+variable "vpc_id" { type = number }                          # backend stack: `terraform output -raw vpc_id`
+variable "vpc_subnet_id" { type = number }                   # the "ingress-app" subnet: `linode-cli vpcs subnets-list <vpc_id>`
+variable "vpc_subnet_cidr" { default = "10.0.1.0/24" }       # backend/infra/terraform/akamai: var.vpc_cidrs.ingress
+variable "vpc_ip" { default = "10.0.1.20" }                  # fixed VPC address for the receiver (outside the app IPs and the NodeBalancer /30)
+variable "backend_vpc_ip" { default = "10.0.1.10" }          # first app Linode (var.app_vpc_ips[0]); API port 8101
 variable "demo_tool_ips" { type = list(string) }             # e.g. ["203.0.113.7/32"] (Faris's laptop)
 variable "ssh_public_key" {}
 variable "intake_shared_secret" { sensitive = true }
@@ -82,6 +83,7 @@ resource "linode_instance" "mail" {
     subnet_id = var.vpc_subnet_id
     primary   = true
     ipv4 {
+      vpc     = var.vpc_ip
       nat_1_1 = "any" # public IPv4 mapped 1:1 so SMTP from outside the VPC can reach the receiver
     }
   }
@@ -97,7 +99,7 @@ locals {
   ci1 = replace(local.ci0, "<SSH_PUBLIC_KEY>", var.ssh_public_key)
   ci2 = replace(local.ci1, "<INTAKE_SHARED_SECRET>", var.intake_shared_secret)
   ci3 = replace(local.ci2, "<BACKEND_VPC_IP>", var.backend_vpc_ip)
-  ci4 = replace(local.ci3, "<VPC_SUBNET_CIDR e.g. 10.0.0.0/24>", var.vpc_subnet_cidr)
+  ci4 = replace(local.ci3, "<VPC_SUBNET_CIDR e.g. 10.0.1.0/24>", var.vpc_subnet_cidr)
   ci5 = replace(local.ci4, "<DEMO_TOOL_PUBLIC_IPS comma-separated, e.g. 203.0.113.7/32>", join(",", var.demo_tool_ips))
   ci6 = replace(local.ci5, "<GIT_BRANCH>", var.git_branch)
   cloud_init = replace(local.ci6, "<MAIL_DOMAIN e.g. vouch.local or mail.yourdomain.com>", var.mail_domain)

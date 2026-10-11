@@ -36,8 +36,8 @@ class Settings:
     smtp_timeout_s: float = 15.0
 
     # --- HTTP fallbacks ---
-    # eml  → multipart upload (field "file") to e.g. http://127.0.0.1:8000/v1/intake/eml
-    # json → IntakeRequest JSON to e.g. http://127.0.0.1:8000/v1/intake
+    # eml  → multipart upload (field "file") to e.g. http://127.0.0.1:8101/v1/intake/eml
+    # json → IntakeRequest JSON to e.g. http://127.0.0.1:8101/v1/intake
     backend_intake_url: str = ""
     backend_intake_format: str = "eml"
     receiver_inbound_url: str = ""  # e.g. http://127.0.0.1:8025/inbound

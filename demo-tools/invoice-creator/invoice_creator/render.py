@@ -66,7 +66,13 @@ def safe_filename(stem: str, ext: str) -> str:
 # (``iban`` / ``account no|number|#`` / ``acct``). Anything else (CLABE, Sort Code, …) is printed as
 # a canonical "Bank account:" line with the local name alongside, so the number is always extracted.
 _PARSEABLE_ACCOUNT_LABELS = {
-    "iban", "account number", "account no", "account no.", "account #", "acct", "acct.",
+    "iban",
+    "account number",
+    "account no",
+    "account no.",
+    "account #",
+    "acct",
+    "acct.",
 }
 
 
