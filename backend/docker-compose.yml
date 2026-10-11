@@ -1,0 +1,79 @@
+# Local dev stack. Defaults below are throwaway local credentials, not secrets.
+#   make up                    -> postgres (pgvector), valkey, S3-compatible object store (SeaweedFS)
+#   make up project=vouch   -> also builds/runs vouch API (:8100) + inference (:8200)
+
+x-app-env: &app-env
+  APP_ENV: dev
+  DATABASE_URL: postgresql+psycopg://hack:hack@postgres:5432/hack
+  REDIS_URL: redis://valkey:6379/0
+  OBJECT_STORAGE_ENDPOINT: http://objectstore:9000
+  OBJECT_STORAGE_ACCESS_KEY: local
+  OBJECT_STORAGE_SECRET_KEY: local
+  INFERENCE_URL: http://inference:8000
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: hack
+      POSTGRES_PASSWORD: hack
+      POSTGRES_DB: hack
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hack"]
+      interval: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports: ["6379:6379"]
+
+  # Local S3-compatible stand-in for Akamai Object Storage. No identities configured = any key works.
+  # Buckets are created on first use by hm_storage.ObjectStore.ensure_bucket().
+  objectstore:
+    image: chrislusf/seaweedfs:latest
+    command: server -s3 -s3.port=9000 -dir=/data
+    ports: ["9000:9000"]
+    volumes: [objdata:/data]
+
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: infra/docker/python-app.Dockerfile
+      args:
+        PROJECT: ${PROJECT:-vouch}
+        EXTRAS: --extra agents
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+    ports: ["8100:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      inference: { condition: service_started }
+
+  inference:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: infra/docker/python-app.Dockerfile
+      args:
+        PROJECT: ${PROJECT:-vouch}
+        # vouch serves a torch model: INFERENCE_EXTRAS="--extra explain --extra ml" make up project=vouch
+        EXTRAS: ${INFERENCE_EXTRAS:---extra explain}
+        APP_MODULE: ${PROJECT:-vouch}.services.inference:app
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+    ports: ["8200:8000"]
+    volumes:
+      - ./artifacts:/app/artifacts
+
+volumes:
+  pgdata:
+  objdata:

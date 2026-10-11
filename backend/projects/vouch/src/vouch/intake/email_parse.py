@@ -9,7 +9,7 @@ from email import message_from_bytes, policy
 from email.message import EmailMessage
 from email.utils import getaddresses, parseaddr
 
-from ..models import Attachment, EmailEnvelope, IntakeRequest
+from ..contracts import Attachment, EmailEnvelope, IntakeRequest
 
 
 def _addr(value: str | None) -> tuple[str, str]:

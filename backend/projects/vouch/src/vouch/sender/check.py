@@ -1,16 +1,17 @@
-"""Deterministic sender check. Produces structured findings consumed by the bank-change
-(account-takeover) detector, the trust score and the policy engine."""
+"""Deterministic sender check: SPF/DKIM/DMARC results, lookalike domains, reply-to and display-name
+mismatches. Runs as a graph node right after intake and feeds the kernel checks, the policy and the
+owner-facing evidence. It never denies: a suspicious sender places the card on hold with a next step."""
 
 from __future__ import annotations
 
-from ..intake.amounts import email_domain
-from ..models import EmailEnvelope, SenderFindings, Vendor
+from ..contracts import EmailEnvelope, SenderFindings, email_domain
+from ..domain import Vendor
 from .auth_results import parse_auth_results
 from .lookalike import FREEMAIL, check_lookalike, registrable_label
 
 
 def _name_tokens(name: str) -> set[str]:
-    stop = {"inc", "llc", "ltd", "co", "sp", "z", "o", "the", "and", "de", "sa", "gmbh", "corp"}
+    stop = {"inc", "llc", "ltd", "co", "sp", "z", "o", "the", "and", "de", "sa", "gmbh", "corp", "cv"}
     return {
         t
         for t in "".join(ch if ch.isalnum() else " " for ch in name.lower()).split()
@@ -18,18 +19,24 @@ def _name_tokens(name: str) -> set[str]:
     }
 
 
+def vendor_domains(vendor: Vendor) -> list[str]:
+    d = email_domain(vendor.email)
+    return [d] if d else []
+
+
 def check_sender(
     envelope: EmailEnvelope | None,
     vendors: list[Vendor],
     claimed_vendor: Vendor | None = None,
 ) -> SenderFindings:
-    """Evaluate who sent the invoice. ``claimed_vendor`` is the vendor the invoice text claims
-    to be from (after resolution), used to detect new/mismatched senders."""
+    """Evaluate who sent the invoice. `claimed_vendor` is the master-file vendor the invoice resolved
+    to (if any), used to detect new or mismatched senders for a known vendor."""
     findings = SenderFindings()
-    if envelope is None:
+    if envelope is None or not envelope.from_addr:
         findings.flags.append("no_email_envelope")
         return findings
-    known_domains = [d for v in vendors for d in v.domains]
+    findings.checked = True
+    known_domains = sorted({d for v in vendors for d in vendor_domains(v) if d not in FREEMAIL})
     findings.from_addr = envelope.from_addr
     findings.from_domain = email_domain(envelope.from_addr) or ""
     findings.reply_to = envelope.reply_to
@@ -54,10 +61,14 @@ def check_sender(
     if a.dmarc == "fail":
         findings.flags.append("dmarc_fail")
         risk += 0.3
-    if a.dkim_domain and findings.from_domain and a.dkim_domain != findings.from_domain:
-        if registrable_label(a.dkim_domain) != registrable_label(findings.from_domain):
-            findings.flags.append("dkim_domain_differs_from_from")
-            risk += 0.15
+    if (
+        a.dkim_domain
+        and findings.from_domain
+        and a.dkim_domain != findings.from_domain
+        and registrable_label(a.dkim_domain) != registrable_label(findings.from_domain)
+    ):
+        findings.flags.append("dkim_domain_differs_from_from")
+        risk += 0.15
 
     if findings.reply_to_domain and findings.reply_to_domain != findings.from_domain:
         findings.reply_to_mismatch = True
@@ -76,20 +87,17 @@ def check_sender(
 
     if findings.from_domain in FREEMAIL:
         findings.flags.append("freemail_sender")
-        risk += 0.2 if claimed_vendor and claimed_vendor.payments_completed > 0 else 0.05
+        risk += 0.2 if claimed_vendor and claimed_vendor.history else 0.05
 
     if claimed_vendor is not None:
-        if (
-            claimed_vendor.domains
-            and findings.from_domain
-            and findings.from_domain not in claimed_vendor.domains
-        ):
+        domains = vendor_domains(claimed_vendor)
+        if domains and findings.from_domain and findings.from_domain not in domains:
             findings.flags.append("new_sender_for_known_vendor")
             risk += 0.25
         if envelope.from_name:
             claimed = _name_tokens(claimed_vendor.name)
             shown = _name_tokens(envelope.from_name)
-            if claimed and shown & claimed and findings.from_domain not in claimed_vendor.domains:
+            if claimed and shown & claimed and findings.from_domain not in domains:
                 findings.display_name_mismatch = True
                 findings.flags.append("display_name_mismatch")
                 risk += 0.2

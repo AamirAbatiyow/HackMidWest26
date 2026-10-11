@@ -12,7 +12,7 @@ from .audit import AuditStore, new_id
 from .config import LlmMode, Settings, get_settings
 from .graph import Services, VouchPipeline
 from .llm import LlmRuntime
-from .models import AuditNote, IntakeRequest, PaymentRecord, iso, utcnow
+from .contracts import AuditNote, IntakeRequest, PaymentRecord, iso, utcnow
 from .policy import PaymentAttrs, authorize
 from .storage import AttachmentStore
 from .vendors import VendorDirectory, index_vendors, make_embedding_index

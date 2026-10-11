@@ -1,8 +1,9 @@
-"""Settings for the Vouch backend, read from the environment (and a local .env).
+"""Settings for the Vouch backend, read from the environment and a local .env.
 
-Every Akamai service is optional. When its setting is missing the backend uses a local
-fallback and says so on /health. Secrets are never read from files other than .env and
-never logged.
+Every Akamai service is optional: when its setting is missing the backend uses a local fallback
+and says so on /health. Env vars are prefixed `VOUCH_` (e.g. VOUCH_PORT=9000) except the shared
+ones used by the hm_* packages (AKAMAI_INFERENCE_*, DATABASE_URL, OBJECT_STORAGE_*,
+SETTLEMENT_ADAPTER). Secrets are never read from files other than .env and never logged.
 """
 
 from __future__ import annotations
@@ -13,73 +14,114 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field
+from pydantic_settings import SettingsConfigDict
+
+from hm_core.config import HMSettings
 
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 POLICY_DIR = PROJECT_ROOT / "policies"
 SAMPLES_DIR = PROJECT_ROOT / "samples"
 
-LlmMode = Literal["live", "template"]
+LlmMode = Literal["live", "offline"]
+_ENV_FILES = (BACKEND_ROOT.parent / ".env", BACKEND_ROOT / ".env")  # later wins
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore", populate_by_name=True)
+class Settings(HMSettings):
+    """Project settings. `VOUCH_*` for everything Vouch-specific; shared names are aliased explicitly."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VOUCH_",
+        env_file=_ENV_FILES,
+        extra="ignore",
+        case_sensitive=False,
+        env_ignore_empty=True,
+        populate_by_name=True,
+    )
 
     # --- product / server ---
-    app_name: str = Field(default="Vouch", alias="VOUCH_APP_NAME")
-    version: str = Field(default="0.1.0", alias="VOUCH_VERSION")
-    host: str = Field(default="0.0.0.0", alias="VOUCH_HOST")
-    port: int = Field(default=8101, alias="VOUCH_PORT")
+    app_name: str = "Vouch"
+    version: str = "0.1.0"
+    host: str = "0.0.0.0"  # noqa: S104 - container/VM bind address; the NodeBalancer fronts it
+    port: int = 8101
+    inference_port: int = 8201
+    # Containers/k8s set the generic INFERENCE_URL; local dev uses the default.
+    inference_url: str = Field(
+        "http://localhost:8201", validation_alias=AliasChoices("VOUCH_INFERENCE_URL", "INFERENCE_URL")
+    )
     cors_origins: str = Field(
-        default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173",
-        alias="VOUCH_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://localhost:3000",
+        validation_alias=AliasChoices("VOUCH_CORS_ORIGINS", "CORS_ALLOW_ORIGINS"),
     )
-    region: str = Field(default="us-ord (Chicago)", alias="VOUCH_REGION")
-    approval_limit_cents: int = Field(default=500_000, alias="VOUCH_APPROVAL_LIMIT_CENTS")
-    new_vendor_limit_cents: int = Field(default=250_000, alias="VOUCH_NEW_VENDOR_LIMIT_CENTS")
-    data_dir: Path = Field(default=BACKEND_ROOT / "data", alias="VOUCH_DATA_DIR")
-    seed_demo: bool = Field(default=True, alias="VOUCH_SEED_DEMO")
-    seed_live: bool = Field(default=False, alias="VOUCH_SEED_LIVE")
+    region: str = "us-ord (Chicago)"
+    data_dir: Path = BACKEND_ROOT / "data"
+    seed_demo: bool = True  # seed the vendor master + scripted run when the store is empty
 
-    # --- LLM: Akamai hosted inference (OpenAI-compatible) ---
-    llm_mode_setting: Literal["auto", "live", "template"] = Field(default="auto", alias="VOUCH_LLM_MODE")
-    akamai_api_key: str = Field(default="", alias="AKAMAI_INFERENCE_API_KEY")
+    # --- risk model ---
+    model_name: str = "vouch-risk"
+    model_registry_dir: Path = Field(
+        BACKEND_ROOT / "artifacts" / "models", validation_alias="MODEL_REGISTRY_DIR"
+    )
+    # auto: inference service if reachable, else in-process torch model, else heuristic fallback.
+    scorer: Literal["auto", "http", "local", "heuristic"] = "auto"
+    lime_samples: int = 400
+    model_server_url: str = ""  # private model-serving Linode inside the VPC (shown on /health)
+
+    # --- LLM: Akamai hosted inference (OpenAI-compatible) through Strands ---
+    # auto: live when AKAMAI_INFERENCE_API_KEY (or Bedrock) is configured, else deterministic templates.
+    llm_mode: Literal["auto", "live", "offline", "template"] = "auto"
+    akamai_api_key: str = Field("", validation_alias="AKAMAI_INFERENCE_API_KEY")
     akamai_base_url: str = Field(
-        default="https://ws.akamai-workshops.com/v1", alias="AKAMAI_INFERENCE_BASE_URL"
+        "https://ws.akamai-workshops.com/v1", validation_alias="AKAMAI_INFERENCE_BASE_URL"
     )
-    akamai_chat_model: str = Field(default="hackathon-chat", alias="AKAMAI_INFERENCE_MODEL")
-    akamai_embedding_model: str = Field(default="hackathon-embedding", alias="AKAMAI_EMBEDDING_MODEL")
-    llm_rpm: int = Field(default=45, alias="VOUCH_LLM_RPM")
-    llm_max_tokens: int = Field(default=1024, alias="VOUCH_LLM_MAX_TOKENS")
-    llm_timeout_s: float = Field(default=30.0, alias="VOUCH_LLM_TIMEOUT_S")
-    llm_max_retries: int = Field(default=1, alias="VOUCH_LLM_MAX_RETRIES")
+    akamai_chat_model: str = Field("hackathon-chat", validation_alias="AKAMAI_INFERENCE_MODEL")
+    akamai_embedding_model: str = Field("hackathon-embedding", validation_alias="AKAMAI_EMBEDDING_MODEL")
+    llm_rpm: int = 45  # team key allows 60/min shared by chat, embeddings and images
+    llm_max_tokens: int = 1024  # service default is 512, maximum 4096
+    llm_timeout_s: float = 45.0
+    llm_max_retries: int = 1
 
-    # --- private model server inside the VPC (optional) ---
-    model_server_url: str = Field(default="", alias="VOUCH_MODEL_SERVER_URL")
+    # --- money limits, integer cents ---
+    approval_limit_cents: int = 500_000  # $5,000 clerk approval limit
+    fast_pay_limit_cents: int = 250_000  # $2,500
+    single_payment_limit_cents: int = 5_000_000  # $50,000
+    batch_limit_cents: int = 10_000_000  # $100,000 per batch
+
+    # --- cash-forecast stub ---
+    opening_balance_cents: int = 18_500_000
+    cash_buffer_cents: int = 2_500_000
+
+    owner_name: str = "Dana Whitfield"
+    business_name: str = "Heartland Provisions Co."
 
     # --- data stores ---
-    database_url: str = Field(default="", alias="DATABASE_URL")
-    obj_endpoint: str = Field(default="", alias="OBJ_ENDPOINT")
-    obj_bucket: str = Field(default="", alias="OBJ_BUCKET")
-    obj_access_key: str = Field(default="", alias="OBJ_ACCESS_KEY")
-    obj_secret_key: str = Field(default="", alias="OBJ_SECRET_KEY")
+    database_url: str = Field("", validation_alias="DATABASE_URL")
+    settlement_adapter: str = Field("mock", validation_alias="SETTLEMENT_ADAPTER")
+    obj_endpoint: str = Field("", validation_alias=AliasChoices("OBJECT_STORAGE_ENDPOINT", "OBJ_ENDPOINT"))
+    obj_region: str = Field("us-ord-1", validation_alias=AliasChoices("OBJECT_STORAGE_REGION", "OBJ_REGION"))
+    obj_bucket: str = Field("", validation_alias=AliasChoices("OBJECT_STORAGE_BUCKET", "OBJ_BUCKET"))
+    obj_access_key: str = Field(
+        "", validation_alias=AliasChoices("OBJECT_STORAGE_ACCESS_KEY", "OBJ_ACCESS_KEY")
+    )
+    obj_secret_key: str = Field(
+        "", validation_alias=AliasChoices("OBJECT_STORAGE_SECRET_KEY", "OBJ_SECRET_KEY")
+    )
 
     # --- deployment metadata shown on /health ---
-    behind_nodebalancer: bool = Field(default=False, alias="VOUCH_BEHIND_NODEBALANCER")
-    firewall_label: str = Field(default="", alias="VOUCH_FIREWALL_LABEL")
-    vpc_label: str = Field(default="", alias="VOUCH_VPC_LABEL")
-
-    @property
-    def llm_mode(self) -> LlmMode:
-        if self.llm_mode_setting == "auto":
-            return "live" if self.akamai_api_key else "template"
-        return self.llm_mode_setting
+    behind_nodebalancer: bool = False
+    firewall_label: str = ""
+    vpc_label: str = ""
 
     @property
     def has_llm_key(self) -> bool:
         return bool(self.akamai_api_key)
+
+    @property
+    def effective_llm_mode(self) -> LlmMode:
+        if self.llm_mode == "auto":
+            return "live" if self.has_llm_key else "offline"
+        return "offline" if self.llm_mode == "template" else self.llm_mode
 
     @property
     def has_bucket(self) -> bool:
@@ -95,6 +137,10 @@ class Settings(BaseSettings):
             elif url.startswith("postgresql://"):
                 url = "postgresql+psycopg://" + url[len("postgresql://") :]
             return url
+        return self.sqlite_url
+
+    @property
+    def sqlite_url(self) -> str:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{(self.data_dir / 'vouch.sqlite3').as_posix()}"
 
@@ -108,9 +154,9 @@ class Settings(BaseSettings):
 
 
 def _load_env_files() -> None:
-    # .env in the backend root wins over the shell, like the Akamai workshop notebooks; a
-    # repo-root .env is also honoured so one file can serve frontend and backend.
-    for candidate in (BACKEND_ROOT / ".env", BACKEND_ROOT.parent / ".env"):
+    # Export .env values so the hm_* settings classes (which read the process environment) see the
+    # same configuration regardless of the working directory. Real environment variables always win.
+    for candidate in reversed(_ENV_FILES):
         if candidate.exists():
             load_dotenv(candidate, override=False)
 

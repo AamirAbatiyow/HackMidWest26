@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any
 
 from ..config import POLICY_DIR
-from ..models import PolicyResult
+from ..contracts import PolicyResult
 
 log = logging.getLogger(__name__)
 

@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
-from ..models import PaymentRecord, Vendor
+from ..contracts import PaymentRecord, Vendor
 
 log = logging.getLogger(__name__)
 

@@ -1,0 +1,21 @@
+# Copy this folder to overlays/<project> and change the names/images.
+# kubectl apply -k infra/k8s/overlays/vouch
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vouch
+resources:
+  - ../../base
+patches:
+  - target: { kind: Namespace, name: hackmw }
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: vouch
+images:
+  # TODO: your registry (GHCR / Docker Hub). Akamai has no managed registry; images must be pullable by LKE.
+  - name: hackmw-api
+    newName: ghcr.io/CHANGE_ME/vouch-api
+    newTag: latest
+  - name: hackmw-inference
+    newName: ghcr.io/CHANGE_ME/vouch-inference
+    newTag: latest

@@ -1,3 +1,6 @@
+# Virtual uv workspace root: no code lives here.
+# Members: packages/* (shared hm_* libraries) and projects/* (the Vouch backend).
+
 [project]
 name = "vouch-backend"
 version = "0.1.0"
@@ -6,34 +9,63 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["projects/*", "packages/*"]
+members = ["packages/*", "projects/*"]
 
 [tool.uv]
-default-groups = ["dev"]
+default-groups = ["dev", "explain"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3",
-    "pytest-asyncio>=0.24",
-    "ruff>=0.8",
-    "reportlab>=4.2",
+    "ruff>=0.6",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
     "httpx>=0.27",
+    "moto[s3]>=5.0",
+    "pre-commit>=3.7",
+    "reportlab>=4.2",
 ]
+# Small CPU-only stack so the LIME smoke test runs in `make test` on a clean machine.
+explain = ["hm-ml-common[explain]"]
+# Heavy / optional stacks. `make setup` installs ml + chain so the trained model and XRPL work out of the box.
+ml = ["hm-ml-common[ml]"]
+tf = ["hm-ml-common[tf]"]
+agents = ["hm-agents-common[agents]"]
+chain = ["hm-settlement[xrpl,arc]"]
 
 [tool.uv.sources]
+hm-core = { workspace = true }
+hm-llm = { workspace = true }
+hm-agents-common = { workspace = true }
+hm-ml-common = { workspace = true }
+hm-settlement = { workspace = true }
+hm-storage = { workspace = true }
+hm-api-common = { workspace = true }
 vouch = { workspace = true }
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+
+# CPU wheels only: avoids pulling multi-GB CUDA libraries on Linux.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-extend-exclude = ["archive", "infra", ".venv"]
+src = ["packages/*", "projects/*/src"]
+extend-exclude = ["archive", "data", "infra", ".venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "W"]
-ignore = ["B008", "E501"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S"]
+# E501: the formatter owns line length; long prompt/description strings are fine.
+ignore = ["E501", "S101", "S311", "RUF001", "RUF002", "RUF003", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "B", "RUF059"]
 
 [tool.pytest.ini_options]
-testpaths = ["projects/vouch/tests"]
+testpaths = ["packages", "projects"]
+addopts = "-q --import-mode=importlib"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore:.*httpx2.*"]

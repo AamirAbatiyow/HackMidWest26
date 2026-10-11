@@ -10,7 +10,7 @@ import unicodedata
 
 from rapidfuzz.distance import Levenshtein
 
-from ..models import LookalikeFinding
+from ..contracts import LookalikeFinding
 
 _CONFUSABLES = {
     "0": "o",

@@ -1,0 +1,27 @@
+[project]
+name = "untangle"
+version = "0.1.0"
+description = "Business vs personal transaction classification with explanations a bookkeeper can trust."
+requires-python = ">=3.11"
+dependencies = [
+    "hm-core",
+    "hm-api-common",
+    "hm-llm",
+    "hm-agents-common",
+    "hm-ml-common",
+    "hm-settlement",
+    "hm-storage",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+agents = ["hm-agents-common[agents]"]
+explain = ["hm-ml-common[explain]"]
+ml = ["hm-ml-common[ml]"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["untangle"]

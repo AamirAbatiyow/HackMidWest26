@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ..models import Attachment, IntakeRequest, Source
+from ..contracts import Attachment, IntakeRequest, Source
 
 
 class ActionBody(BaseModel):

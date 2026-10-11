@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import AuthResults
+from ..contracts import AuthResults
 
 _RESULT_RE = re.compile(r"\b(spf|dkim|dmarc)\s*=\s*([a-z]+)", re.IGNORECASE)
 _DKIM_D_RE = re.compile(r"header\.d\s*=\s*([A-Za-z0-9.-]+)", re.IGNORECASE)

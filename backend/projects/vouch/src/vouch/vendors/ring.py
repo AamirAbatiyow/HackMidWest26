@@ -1,86 +1,46 @@
-"""Fake-vendor ring detector: shared bank accounts, phone numbers and addresses across vendors."""
+"""Ring graph for the frontend, built from the engine's `VendorGraph` (shared bank / tax id / phone /
+address / email domain links). Detection itself lives in `vouch.graph_features`; this only renders it."""
 
 from __future__ import annotations
 
-from ..models import ParsedInvoice, RingEdge, RingFindings, RingGraph, RingNode, Vendor, VendorResolution
-from .directory import VendorDirectory, normalize_address
+from ..contracts import RingEdge, RingGraph, RingNode, digits_only
+from ..domain import Vendor
+from ..graph_features import VendorGraph
 
-VIRTUAL_OFFICE_HINTS = (
-    "1201 n orange st",
-    "1209 orange st",
-    "1209 n orange st",
-    "8 the green",
-    "30 n gould st",
-    "2093 philadelphia pike",
-    "1309 coffeen ave",
-    "16192 coastal hwy",
-    "251 little falls dr",
-    "virtual office",
-    "registered agent",
-)
+_KIND = {"bank": "bank", "phone": "phone", "address": "address", "tax_id": "bank", "email_domain": "address"}
 
 
-def _mask_phone(digits: str) -> str:
-    tail = digits[-4:]
-    area = digits[-10:-7] if len(digits) >= 10 else ""
-    return f"({area}) ···{tail}" if area else f"···{tail}"
+def _label(kind: str, vendor: Vendor) -> str:
+    if kind == "bank":
+        acct = vendor.bank_account or ""
+        return f"Bank acct ···{acct[-4:]}"
+    if kind == "tax_id":
+        return f"Tax id ···{(digits_only(vendor.tax_id) or '')[-4:]}"
+    if kind == "phone":
+        d = digits_only(vendor.phone) or ""
+        return f"Phone ···{d[-4:]}"
+    if kind == "email_domain":
+        return f"@{vendor.email.rsplit('@', 1)[-1]}" if vendor.email else "shared domain"
+    return (vendor.address or "shared address").split(",")[0].strip()
 
 
-def detect_ring(
-    parsed: ParsedInvoice,
-    resolution: VendorResolution,
-    directory: VendorDirectory,
-) -> RingFindings:
-    findings = RingFindings()
-    me = directory.get(resolution.vendor_id) if resolution.vendor_id else None
-    my_id = me.id if me else "__candidate__"
-    my_name = me.name if me else resolution.vendor_name
-
-    account = parsed.bank_account_digits or (me.current_bank.digits if me and me.current_bank else None)
-    phone = parsed.phone_digits or (me.phone_digits if me else None)
-    address = parsed.fields.vendor_address or (me.address if me else None)
-
-    shared_bank = [v for v in directory.by_bank_account(account) if v.id != my_id]
-    shared_phone = [v for v in directory.by_phone(phone) if v.id != my_id]
-    shared_addr = [v for v in directory.by_address(address) if v.id != my_id]
-    findings.shared_bank_with = [v.name for v in shared_bank]
-    findings.shared_phone_with = [v.name for v in shared_phone]
-    findings.shared_address_with = [v.name for v in shared_addr]
-    addr_norm = normalize_address(address)
-    findings.virtual_office = any(h in addr_norm for h in VIRTUAL_OFFICE_HINTS) if addr_norm else False
-
-    if shared_bank:
-        findings.flags.append("shared_bank_account")
-    if shared_phone:
-        findings.flags.append("shared_phone")
-    if shared_addr:
-        findings.flags.append("shared_address")
-    if findings.virtual_office:
-        findings.flags.append("virtual_office_address")
-
-    if shared_bank or shared_phone or shared_addr:
-        nodes: dict[str, RingNode] = {my_id: RingNode(id=my_id, label=my_name, kind="vendor", focus=True)}
-        edges: list[RingEdge] = []
-
-        def vendor_node(v: Vendor) -> str:
-            nodes.setdefault(v.id, RingNode(id=v.id, label=v.name, kind="vendor"))
-            return v.id
-
-        if shared_bank and account:
-            nodes["bank"] = RingNode(id="bank", label=f"Bank acct ···{account[-4:]}", kind="bank")
-            edges.append(RingEdge(**{"from": my_id, "to": "bank"}))
-            for v in shared_bank:
-                edges.append(RingEdge(**{"from": vendor_node(v), "to": "bank"}))
-        if shared_phone and phone:
-            nodes["phone"] = RingNode(id="phone", label=_mask_phone(phone), kind="phone")
-            edges.append(RingEdge(**{"from": my_id, "to": "phone"}))
-            for v in shared_phone:
-                edges.append(RingEdge(**{"from": vendor_node(v), "to": "phone"}))
-        if shared_addr and address:
-            short = address.split(",")[0].strip()
-            nodes["addr"] = RingNode(id="addr", label=short, kind="address")
-            edges.append(RingEdge(**{"from": my_id, "to": "addr"}))
-            for v in shared_addr:
-                edges.append(RingEdge(**{"from": vendor_node(v), "to": "addr"}))
-        findings.graph = RingGraph(nodes=list(nodes.values()), edges=edges)
-    return findings
+def ring_graph(graph: VendorGraph, vendors: dict[str, Vendor], vendor_id: str | None) -> RingGraph | None:
+    me = vendors.get(vendor_id or "")
+    if me is None:
+        return None
+    shared = graph.shared(me.id)
+    if not shared:
+        return None
+    nodes: dict[str, RingNode] = {me.id: RingNode(id=me.id, label=me.name, kind="vendor", focus=True)}
+    edges: list[RingEdge] = []
+    for kind, others in shared.items():
+        hub = f"{kind}:{me.id}"
+        nodes[hub] = RingNode(id=hub, label=_label(kind, me), kind=_KIND.get(kind, "address"))  # type: ignore[arg-type]
+        edges.append(RingEdge(**{"from": me.id, "to": hub}))
+        for other in others:
+            ov = vendors.get(other)
+            if ov is None:
+                continue
+            nodes.setdefault(ov.id, RingNode(id=ov.id, label=ov.name, kind="vendor"))
+            edges.append(RingEdge(**{"from": ov.id, "to": hub}))
+    return RingGraph(nodes=list(nodes.values()), edges=edges)

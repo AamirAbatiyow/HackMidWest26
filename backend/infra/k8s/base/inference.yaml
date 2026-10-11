@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: inference }
+  template:
+    metadata:
+      labels: { app: inference }
+    spec:
+      # TODO: add an initContainer that pulls weights from Object Storage into /app/artifacts
+      #       (ModelRegistry.pull(name, version, ObjectStore())) instead of baking them into the image.
+      volumes:
+        - name: artifacts
+          emptyDir: {}
+      containers:
+        - name: inference
+          image: hackmw-inference # set per project in overlays/<name>
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets, optional: true }
+          volumeMounts:
+            - { name: artifacts, mountPath: /app/artifacts }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 2Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference
+spec:
+  selector: { app: inference }
+  ports:
+    - port: 8000
+      targetPort: 8000

@@ -15,7 +15,7 @@ import shutil
 from functools import lru_cache
 from pathlib import Path
 
-from ..models import ExtractedDocument, ExtractedTable
+from ..contracts import ExtractedDocument, ExtractedTable
 
 log = logging.getLogger(__name__)
 

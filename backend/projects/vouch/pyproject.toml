@@ -1,9 +1,17 @@
 [project]
 name = "vouch"
 version = "0.1.0"
-description = "Vouch: a payment trust layer for business owners (API, intake, identity checks, Strands graph on Akamai inference)."
+description = "Vouch: a payment trust layer for business owners. Deterministic money kernel, own PyTorch risk model with LIME, a Strands agent graph on Akamai inference, Cedar default-deny policy, and XRPL testnet settlement that keeps irreversible payouts away from bad actors without slowing honest vendors."
 requires-python = ">=3.12"
 dependencies = [
+    "hm-core",
+    "hm-api-common",
+    "hm-llm",
+    # Strands is central to Vouch (the payment graph), so it is a base dependency here.
+    "hm-agents-common[agents]",
+    "hm-ml-common[explain]",
+    "hm-settlement[xrpl]",
+    "hm-storage",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.9",
@@ -12,11 +20,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.27",
     "openai>=1.50",
-    "strands-agents[openai]>=1.0",
+    "numpy>=1.26",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
     "pgvector>=0.3",
-    "numpy>=1.26",
     "rapidfuzz>=3.9",
     "pypdf>=5.0",
     "pdfplumber>=0.11",
@@ -28,16 +35,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# PyTorch (CPU) for training/serving the risk model: installed by `make setup` (ml group) or `--extra ml`.
+ml = ["hm-ml-common[ml]"]
+# Already base dependencies; declared so the shared Dockerfile/compose `--extra agents|explain` flags resolve.
+agents = ["hm-agents-common[agents]"]
+explain = ["hm-ml-common[explain]"]
 # Pure-Python OCR fallback for hosts without the Tesseract binary (large wheel: onnxruntime).
 ocr-rapid = ["rapidocr-onnxruntime>=1.3"]
 # Real Cedar engine. When absent the shipped Python mirror of policies/vouch.cedar is used.
 cedar = ["cedarpy>=4.0"]
 
 [project.scripts]
-vouch-api = "vouch.api.app:main"
+vouch-api = "vouch.main:main"
 vouch-demo = "vouch.demo.cli:main"
 vouch-smoke-llm = "vouch.llm.smoke:main"
-vouch-redteam = "vouch.demo.redteam:main"
+vouch-redteam = "vouch.redteam:main"
 vouch-make-samples = "vouch.demo.samples:main"
 
 [build-system]

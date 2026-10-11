@@ -15,7 +15,7 @@ from email.message import EmailMessage
 from email.utils import format_datetime
 
 from ..config import SAMPLES_DIR
-from ..models import Attachment, IntakeRequest
+from ..contracts import Attachment, IntakeRequest
 
 # ----------------------------------------------------------------- renderers ----
 

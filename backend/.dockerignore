@@ -1,0 +1,15 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+.ruff_cache
+.env
+.env.*
+data
+artifacts
+.sessions
+infra/terraform
+docs
+templates
+*.md
+!projects/**/README.md
