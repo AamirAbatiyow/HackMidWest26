@@ -23,7 +23,7 @@ from vouch.demo.samples import make_png
 from vouch.domain import CardStatus, Lane
 from vouch.intake import claims, extract
 from vouch.kernel import parse_invoice_text
-from vouch.policy import R_KICKBACK, R_OCR_MISSING
+from vouch.policy import R_INJECTION, R_KICKBACK, R_OCR_MISSING
 from vouch.service import VouchService
 
 INVOICE_CREATOR = Path(__file__).resolve().parents[4] / "demo-tools" / "invoice-creator"
@@ -138,6 +138,19 @@ def test_invoice_creator_pngs_land_in_their_lanes_through_intake(svc):
     assert card.invoice.bank_account == apex.invoice.bank.account_number
     assert card.intake and not card.intake.kickback, "the fraud is caught by the kernel, not by unreadability"
     assert card.policy and card.policy.lane == Lane.HOLD and R_OCR_MISSING not in card.policy.reasons
+
+    # BEC attempt: the injection lives only in the invoice notes, which the PNG must carry in full
+    sonora = presets.get_preset("sonora")
+    run = svc.intake(
+        IntakeRequest(
+            attachments=[_png_attachment(render.render_png(sonora.invoice, *OWNER), "SFP-88219.png")],
+            source="upload",
+        )
+    )
+    card = run.card_list()[0]
+    assert card.invoice.amount_cents == 985_000 and card.invoice.invoice_number == "SFP-88219"
+    assert card.checks.get("injection"), "the 'pre-approved / skip the review' note survived OCR"
+    assert card.policy and card.policy.lane == Lane.HOLD and R_INJECTION in card.policy.reasons
 
 
 # ------------------------------------------------------------------ without an OCR engine ----

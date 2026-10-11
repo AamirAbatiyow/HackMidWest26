@@ -341,46 +341,110 @@ def render_pdf(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
 # ---------------------------------------------------------------------- PNG ----
 
 
-def render_png(inv: Invoice, owner_name: str = "", owner_address: str = "") -> bytes:
-    from PIL import Image, ImageDraw, ImageFont
+# PNG geometry, tuned for Tesseract (the backend OCRs at native size when the image is >= 1200 px wide):
+# body text ~27 px x-height at 300 dpi metadata, pure black on white, every line wrapped inside the margins
+# so long notes (the BEC "URGENT, pay today" text the backend's injection check looks for) are never cut off.
+PNG_WIDTH = 1600
+PNG_MARGIN = 90
+PNG_DPI = 300
+PNG_BODY_PT = 38
+PNG_TITLE_PT = 50
+PNG_FOOTER_PT = 26
+PNG_LINE_PITCH = 60
+_HAS_IDENTIFIER = re.compile(r"\d{4,}|[A-Z]{2}\d{2}")  # account numbers, tax ids, phones, dates
+
+
+def _png_fonts():
+    from PIL import ImageFont
 
     try:
-        font = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans.ttf", 34)
-        bold = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans-Bold.ttf", 46)
-        small = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans.ttf", 22)
+        font = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans.ttf", PNG_BODY_PT)
+        bold = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans-Bold.ttf", PNG_TITLE_PT)
+        small = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans.ttf", PNG_FOOTER_PT)
         # Slashed-zero monospace for identifiers: OCR otherwise reads "US0710…" as "USO710…".
-        mono = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSansMono.ttf", 34)
+        mono = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSansMono.ttf", PNG_BODY_PT)
     except OSError:  # pragma: no cover - font layout differs per host
-        font = ImageFont.load_default(size=34)
-        bold = ImageFont.load_default(size=46)
-        small = ImageFont.load_default(size=22)
+        font = ImageFont.load_default(size=PNG_BODY_PT)
+        bold = ImageFont.load_default(size=PNG_TITLE_PT)
+        small = ImageFont.load_default(size=PNG_FOOTER_PT)
         mono = font
-    has_identifier = re.compile(r"\d{4,}|[A-Z]{2}\d{2}")  # account numbers, tax ids, phones, dates
+    return font, bold, small, mono
 
+
+def _wrap(text: str, font, max_width: int, measure) -> list[str]:
+    """Word-wrap ``text`` so every piece fits ``max_width`` pixels (a single over-long token stays whole)."""
+    words = text.split(" ")
+    out: list[str] = []
+    cur = ""
+    for w in words:
+        trial = f"{cur} {w}" if cur else w
+        if cur and measure(trial, font) > max_width:
+            out.append(cur)
+            cur = w
+        else:
+            cur = trial
+    if cur:
+        out.append(cur)
+    return out or [""]
+
+
+def png_layout(inv: Invoice, owner_name: str = "", owner_address: str = "") -> list[tuple[str, str]]:
+    """``(style, text)`` rows the PNG draws, after wrapping: title | heading | total | mono | body | blank."""
+    from PIL import Image, ImageDraw
+
+    font, bold, _small, mono = _png_fonts()
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength
+    usable = PNG_WIDTH - 2 * PNG_MARGIN
+    rows: list[tuple[str, str]] = []
     lines = invoice_lines(inv, owner_name, owner_address)
-    width = 1600
-    height = 220 + 54 * len(lines) + 70
-    img = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, width, 22], fill=(31, 58, 95))
-    y = 70
-    draw.text((90, y), lines[0], fill="black", font=bold)
-    y += 100
+    for piece in _wrap(lines[0], bold, usable, measure):
+        rows.append(("title", piece))
     for ln in lines[1:]:
-        if ln == "INVOICE" or ln == "Payment Details":
-            draw.line([(90, y - 10), (width - 90, y - 10)], fill=(180, 180, 180), width=2)
-            draw.text((90, y), ln, fill=(40, 40, 40), font=bold)
-            y += 64
-            continue
-        if ln.startswith("Total Due:"):
-            draw.text((90, y), ln, fill="black", font=bold)
-            y += 64
-            continue
-        draw.text((90, y), ln, fill="black", font=mono if has_identifier.search(ln) else font)
-        y += 54
-    draw.text((90, height - 44), DEMO_FOOTER, fill=(130, 130, 130), font=small)
+        if ln == "":
+            rows.append(("blank", ""))
+        elif ln in ("INVOICE", "Payment Details"):
+            rows.append(("heading", ln))
+        elif ln.startswith("Total Due:"):
+            rows.extend(("total", p) for p in _wrap(ln, bold, usable, measure))
+        elif _HAS_IDENTIFIER.search(ln):
+            rows.extend(("mono", p) for p in _wrap(ln, mono, usable, measure))
+        else:
+            rows.extend(("body", p) for p in _wrap(ln, font, usable, measure))
+    return rows
+
+
+def render_png(inv: Invoice, owner_name: str = "", owner_address: str = "") -> bytes:
+    from PIL import Image, ImageDraw
+
+    font, bold, small, mono = _png_fonts()
+    rows = png_layout(inv, owner_name, owner_address)
+    pitch = {
+        "title": PNG_TITLE_PT + 30,
+        "heading": PNG_TITLE_PT + 24,
+        "total": PNG_TITLE_PT + 20,
+        "blank": PNG_LINE_PITCH // 2,
+    }
+    height = (
+        2 * PNG_MARGIN + sum(pitch.get(style, PNG_LINE_PITCH) for style, _ in rows) + 2 * PNG_FOOTER_PT + 40
+    )
+    img = Image.new("RGB", (PNG_WIDTH, height), "white")
+    draw = ImageDraw.Draw(img)
+    x, y = PNG_MARGIN, PNG_MARGIN
+    for style, text in rows:
+        if style == "heading":
+            # a rule above each section; drawn well clear of the glyphs so OCR does not read it as a char
+            draw.line([(x, y - 14), (PNG_WIDTH - PNG_MARGIN, y - 14)], fill=(150, 150, 150), width=3)
+            y += 8
+        if style in ("title", "heading", "total"):
+            draw.text((x, y), text, fill="black", font=bold)
+        elif style == "mono":
+            draw.text((x, y), text, fill="black", font=mono)
+        elif style == "body":
+            draw.text((x, y), text, fill="black", font=font)
+        y += pitch.get(style, PNG_LINE_PITCH)
+    draw.text((x, height - PNG_FOOTER_PT - 30), DEMO_FOOTER, fill=(80, 80, 80), font=small)
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", dpi=(PNG_DPI, PNG_DPI))
     return buf.getvalue()
 
 

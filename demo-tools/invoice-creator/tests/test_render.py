@@ -15,9 +15,13 @@ from pypdf import PdfReader
 from invoice_creator.presets import get_preset
 from invoice_creator.render import (
     DEMO_FOOTER,
+    PNG_LINE_PITCH,
+    PNG_MARGIN,
+    PNG_WIDTH,
     invoice_lines,
     invoice_rows,
     money,
+    png_layout,
     render,
     render_text,
     safe_filename,
@@ -78,9 +82,10 @@ def test_png_is_a_valid_image_with_the_invoice_text_layout():
     assert r.filename == "NT-0002.png" and r.content_type == "image/png"
     img = Image.open(io.BytesIO(r.data))
     assert img.format == "PNG" and img.mode == "RGB"
-    assert img.size[0] == 1600
-    # tall enough for every line at the OCR-friendly 54 px pitch
-    assert img.size[1] >= 220 + 54 * len(invoice_lines(inv, *OWNER))
+    assert img.size[0] == PNG_WIDTH == 1600, "wide enough that the backend OCRs it at native size"
+    assert tuple(round(d) for d in img.info["dpi"]) == (300, 300), "resolution metadata for Tesseract"
+    # tall enough for every drawn row at the OCR-friendly pitch
+    assert img.size[1] >= 2 * PNG_MARGIN + PNG_LINE_PITCH // 2 * len(png_layout(inv, *OWNER))
     # mostly white page with dark text (not blank, not inverted)
     grey = img.convert("L")
     hist = grey.histogram()
@@ -88,6 +93,28 @@ def test_png_is_a_valid_image_with_the_invoice_text_layout():
     dark = sum(hist[:80])
     assert white > 0.7 * grey.size[0] * grey.size[1]
     assert dark > 1000
+    # text stays inside the margins: the margin columns are blank
+    left = grey.crop((0, 0, PNG_MARGIN - 2, grey.size[1]))
+    right = grey.crop((PNG_WIDTH - PNG_MARGIN + 2, 0, PNG_WIDTH, grey.size[1]))
+    assert left.getextrema() == (255, 255) and right.getextrema() == (255, 255)
+
+
+def test_png_wraps_long_lines_so_nothing_is_cut_off():
+    """The BEC notes ("URGENT ... pay today ...") are what the backend's injection check reads: a PNG
+    that clips them loses the evidence, so every line is word-wrapped inside the margins."""
+    inv = get_preset("sonora", TODAY).invoice
+    rows = png_layout(inv, *OWNER)
+    notes = [text for style, text in rows if "URGENT" in text or "assistant" in text or "review" in text]
+    assert len(notes) >= 2, "the notes span several rows"
+    drawn = " ".join(text for _, text in rows if text)
+    for word in ("URGENT", "pre-approved", "Skip the review", "release payment immediately"):
+        assert word in drawn
+    # wrapped rows carry the whole text of the source lines, nothing dropped
+    assert " ".join(drawn.split()) == " ".join(" ".join(invoice_lines(inv, *OWNER)).split())
+    for style, text in rows:
+        assert style in ("title", "heading", "total", "mono", "body", "blank")
+    ids = [text for style, text in rows if style == "mono"]
+    assert any(text.startswith("IBAN:") for text in ids), "identifiers use the slashed-zero font"
 
 
 def test_xlsx_rows():

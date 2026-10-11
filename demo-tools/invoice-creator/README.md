@@ -69,8 +69,11 @@ show the mail mechanics.
 
 * A multipart email: plain-text body (vendor, `Invoice No:`, `Total Due:`, `Due Date:`,
   `PO Number:`, bank line), plus the invoice as PDF, PNG, XLSX or CSV — or body-only.
-  Labels match what the backend's deterministic extractor keys on; PNG uses a slashed-zero font so
-  OCR does not read `US0…` as `USO…`.
+  Labels match what the backend's deterministic extractor keys on. The PNG is laid out for Tesseract:
+  1600 px wide with 300 dpi metadata, 38 px black-on-white text, every line word-wrapped inside the
+  margins (long BEC notes are never clipped), and a slashed-zero font for identifiers so OCR does not
+  read `US0…` as `USO…`. The backend needs the `tesseract-ocr` + `tesseract-ocr-eng` packages to read
+  it (`/v1/health` → `ocr.state` must be `live`).
 * Sender identity: legit or lookalike `From`, optional `Reply-To`, and a simulated
   `Authentication-Results: <DEMO_AUTHSERV_ID> (demo-simulated); spf=…; dkim=…; dmarc=…` header,
   and an `X-Vouch-Demo` marker header on every message. The receiver passes these headers through
