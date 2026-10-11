@@ -28,12 +28,15 @@ class Receiver:
         self.state = ReceiverState(settings.recent_limit)
         self.state.seed_recent(self.store.recent_metas(settings.recent_limit))
         self.worker = DeliveryWorker(settings, self.store, self.state)
+        self._mirrors: set[asyncio.Task[None]] = set()  # object-store uploads in flight (kept referenced)
 
     async def start(self) -> None:
         await self.worker.start()
 
     async def stop(self) -> None:
         await self.worker.stop()
+        if self._mirrors:
+            await asyncio.gather(*self._mirrors, return_exceptions=True)
 
     def receiver_trace(self, msg_id: str, received_at: str, *, via: str, peer: str, helo: str) -> str:
         """A ``Received:``-style trace line describing *our* hop. Kept in meta.json only: the
@@ -118,7 +121,9 @@ class Receiver:
             len(raw),
         )
         if self.objects.enabled:
-            asyncio.create_task(self._mirror(msg_id, directory), name=f"mirror-{msg_id}")
+            task = asyncio.create_task(self._mirror(msg_id, directory), name=f"mirror-{msg_id}")
+            self._mirrors.add(task)
+            task.add_done_callback(self._mirrors.discard)
         await self.worker.enqueue(msg_id)
         return msg_id
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 
@@ -37,10 +38,8 @@ async def serve() -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        with contextlib.suppress(NotImplementedError):  # pragma: no cover - Windows
             loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:  # pragma: no cover - Windows
-            pass
     await stop.wait()
     log.info("shutting down")
     for server in smtp_servers:
@@ -51,10 +50,8 @@ async def serve() -> None:
 
 
 def main() -> int:
-    try:
+    with contextlib.suppress(KeyboardInterrupt):  # pragma: no cover
         asyncio.run(serve())
-    except KeyboardInterrupt:  # pragma: no cover
-        pass
     return 0
 
 

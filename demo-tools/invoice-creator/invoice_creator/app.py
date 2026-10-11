@@ -176,10 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         built_id, msg, attachment, raw = _build(req)
         envelope_from = req.sender.envelope_from or req.sender.from_addr
         result = deliver(req.delivery, msg, raw, settings, envelope_from=envelope_from)
-        if req.delivery == "none":
-            status = "built"
-        else:
-            status = "sent" if result.ok else "failed"
+        status = "built" if req.delivery == "none" else ("sent" if result.ok else "failed")
         entry = SendLogEntry(
             id=built_id,
             at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -277,4 +274,4 @@ def run(settings: Settings | None = None) -> None:
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info")
 
 
-__all__ = ["create_app", "run", "Store"]
+__all__ = ["Store", "create_app", "run"]

@@ -162,7 +162,7 @@ def parse_message(
 ) -> ParsedMail:
     msg = message_from_bytes(raw, policy=policy.default)
     headers: dict[str, str] = {}
-    for key in msg.keys():
+    for key in msg:
         if key in headers:
             continue
         values = _header_values(msg, key)

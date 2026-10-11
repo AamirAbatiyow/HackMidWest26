@@ -33,3 +33,11 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+
+# Same rule set as backend/pyproject.toml so the demo tools follow the repo convention.
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S"]
+ignore = ["E501", "S101", "S110", "S311", "RUF001", "RUF002", "RUF003", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "B", "RUF059"]

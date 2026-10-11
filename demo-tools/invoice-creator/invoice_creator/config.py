@@ -43,7 +43,7 @@ class Settings:
     receiver_inbound_url: str = ""  # e.g. http://127.0.0.1:8025/inbound
     receiver_api_url: str = ""  # receiver HTTP API base for /health and /recent; derived when empty
     intake_shared_secret: str = ""
-    intake_secret_header: str = "X-Vouch-Intake-Secret"
+    intake_secret_header: str = "X-Vouch-Intake-Secret"  # noqa: S105 - header *name*, not a secret
     http_timeout_s: float = 20.0
 
     # --- simulation ---

@@ -4,6 +4,7 @@ backoff and jitter, dead-letter after the last attempt. Runs on the receiver's e
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 from datetime import UTC, datetime
@@ -62,10 +63,8 @@ class DeliveryWorker:
                 except TimeoutError:
                     log.warning("drain timed out; unfinished deliveries will be re-queued on restart")
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         if self._session:
             await self._session.close()
 

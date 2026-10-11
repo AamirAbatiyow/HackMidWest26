@@ -152,7 +152,7 @@ def eml_to_intake_json(raw: bytes, *, source: str = "email", received_at: dateti
     """
     msg = message_from_bytes(raw, policy=policy.default)
     headers: dict[str, str] = {}
-    for key in msg.keys():
+    for key in msg:
         values = [str(v) for v in msg.get_all(key, [])]
         headers[key] = "\n".join(values) if len(values) > 1 else values[0]
     body_text, body_html = "", ""

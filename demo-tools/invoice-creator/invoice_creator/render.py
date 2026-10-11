@@ -411,7 +411,7 @@ def render_csv(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
 
 
 def render_text(inv: Invoice, owner_name: str = "", owner_address: str = "") -> str:
-    return "\n".join(invoice_lines(inv, owner_name, owner_address) + ["", DEMO_FOOTER])
+    return "\n".join([*invoice_lines(inv, owner_name, owner_address), "", DEMO_FOOTER])
 
 
 # -------------------------------------------------------------------- facade ----

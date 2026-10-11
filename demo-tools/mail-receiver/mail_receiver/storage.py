@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -19,10 +20,8 @@ UNFINISHED_DELIVERY_STATES = frozenset({"received", "queued", "retrying"})
 
 def _write(path: Path, data: bytes) -> None:
     path.write_bytes(data)
-    try:
+    with contextlib.suppress(OSError):  # pragma: no cover - permissions differ on some mounts
         os.chmod(path, _FILE_MODE)
-    except OSError:  # pragma: no cover - permissions differ on some mounts
-        pass
 
 
 class DiskStore:

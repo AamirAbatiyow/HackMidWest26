@@ -46,9 +46,10 @@ class Settings:
     smtp_hostname: str = ""  # banner / HELO identity; defaults to mail.<mail_domain>
 
     # --- listeners ---
-    smtp_host: str = "0.0.0.0"
+    # Container listeners: all interfaces on purpose; the VPC firewall / docker port mapping scopes them.
+    smtp_host: str = "0.0.0.0"  # noqa: S104
     smtp_ports: tuple[int, ...] = (25, 2525)
-    http_host: str = "0.0.0.0"
+    http_host: str = "0.0.0.0"  # noqa: S104
     http_port: int = 8025
 
     # --- limits ---
@@ -73,7 +74,7 @@ class Settings:
     backend_intake_format: str = "json"
     backend_submitted_by: str = "ap-inbox"  # the backend's "who submitted this" label
     intake_shared_secret: str = ""
-    intake_secret_header: str = "X-Vouch-Intake-Secret"
+    intake_secret_header: str = "X-Vouch-Intake-Secret"  # noqa: S105 - header *name*, not a secret
     delivery_max_attempts: int = 10  # ≈4 min of backoff before dead-lettering (backend restarts survive)
     delivery_backoff_base_s: float = 1.0
     delivery_backoff_max_s: float = 60.0

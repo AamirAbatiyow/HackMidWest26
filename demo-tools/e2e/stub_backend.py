@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import re
+import tempfile
 from datetime import UTC, datetime
 from email import message_from_bytes, policy
 from pathlib import Path
@@ -25,7 +26,7 @@ from aiohttp import web
 
 def _eml_to_intake(raw: bytes) -> dict:
     msg = message_from_bytes(raw, policy=policy.default)
-    headers = {k: "\n".join(str(v) for v in msg.get_all(k, [])) for k in msg.keys()}
+    headers = {k: "\n".join(str(v) for v in msg.get_all(k, [])) for k in msg}
     attachments, body_text = [], ""
     for part in msg.walk():
         if part.is_multipart():
@@ -148,7 +149,7 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8101)
-    ap.add_argument("--record", default="/tmp/stub-intake.jsonl")
+    ap.add_argument("--record", default=str(Path(tempfile.gettempdir()) / "stub-intake.jsonl"))
     ap.add_argument("--fail-first", type=int, default=int(os.environ.get("FAIL_FIRST", "0")))
     args = ap.parse_args()
     record = Path(args.record)
