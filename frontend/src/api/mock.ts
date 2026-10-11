@@ -7,6 +7,7 @@ import type {
 } from './types'
 import { DEMO_PAYMENTS } from '@/data/payments'
 import { withDemoDetail } from '@/data/highlights'
+import { withApproval, withHold, withSettlement } from '@/data/steps'
 import { DEMO_NETWORK } from '@/data/network'
 import { DEMO_LATENCY, DEMO_TOPOLOGY } from '@/data/netstats'
 import { DEMO_REDTEAM } from '@/data/redteam'
@@ -75,6 +76,7 @@ export function createMockApi(): VouchApi {
         status: 'vouched',
         lifecycle: 'approved',
         auditNotes: [note(text, 'Marked as verified by owner.'), ...p.auditNotes],
+        steps: withApproval(p.steps, 'Dana', text?.trim() || undefined),
       }))
     },
 
@@ -84,6 +86,7 @@ export function createMockApi(): VouchApi {
         ...p,
         lifecycle: 'held',
         auditNotes: [note(text, 'Held for a quick check.'), ...p.auditNotes],
+        steps: withHold(p.steps, 'Dana', text?.trim() || undefined),
       }))
     },
 
@@ -95,6 +98,7 @@ export function createMockApi(): VouchApi {
         lifecycle: 'appealed',
         trustScore: Math.max(p.trustScore, 70),
         auditNotes: [note(text, 'Owner vouched for this vendor.'), ...p.auditNotes],
+        steps: withApproval(p.steps, 'Dana', text?.trim() || 'owner vouched for this vendor'),
       }))
     },
 
@@ -109,15 +113,18 @@ export function createMockApi(): VouchApi {
           amount: p.amount,
         }
       })
-      payments = payments.map((p) => (ids.includes(p.id) ? { ...p, lifecycle: 'settled' } : p))
       const txId = randomHex(64).toUpperCase()
+      const explorerUrl = `https://testnet.xrpl.org/transactions/${txId}`
+      payments = payments.map((p) =>
+        ids.includes(p.id) ? { ...p, lifecycle: 'settled', steps: withSettlement(p.steps, `$${p.amount.toLocaleString('en-US')}`, txId, explorerUrl, funding === 'scheduled') } : p,
+      )
       const scheduled = new Date()
       scheduled.setDate(scheduled.getDate() + 1)
       scheduled.setHours(9, 0, 0, 0)
       const receipt: SettlementReceipt = {
         batchId: `batch-${randomHex(6)}`,
         txId,
-        explorerUrl: `https://testnet.xrpl.org/transactions/${txId}`,
+        explorerUrl,
         settledAt: new Date().toISOString(),
         funding,
         scheduledFor: funding === 'scheduled' ? scheduled.toISOString() : undefined,

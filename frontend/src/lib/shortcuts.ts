@@ -13,7 +13,7 @@ export const SHORTCUTS = {
   verify: { keys: ['v'], label: 'Mark verified' },
   appeal: { keys: ['p'], label: 'Vendor is fine' },
   explain: { keys: ['e'], label: 'Why flagged?' },
-  feed: { keys: ['f'], label: 'Agent feed' },
+  feed: { keys: ['f'], label: 'Orchestrator timeline' },
   theme: { keys: ['t'], label: 'Theme' },
   goPayments: { keys: ['g', 'p'], label: 'Payments' },
   goApprove: { keys: ['g', 'a'], label: 'Approval' },

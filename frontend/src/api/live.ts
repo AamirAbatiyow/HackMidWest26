@@ -10,11 +10,15 @@ import type {
   LimeFactor,
   ModelExplanation,
   NetworkStatus,
+  OrchestratorStep,
   Payment,
   RedTeamReport,
   RingGraph,
   RiskType,
   SettlementReceipt,
+  StepKind,
+  StepScope,
+  StepStatus,
   TimelineEvent,
   TopologyData,
   TrustData,
@@ -203,6 +207,75 @@ function normalizeRing(v: unknown): RingGraph | undefined {
   }
 }
 
+const STEP_KINDS: readonly StepKind[] = ['deterministic', 'llm', 'model', 'human']
+const STEP_STATUSES: readonly StepStatus[] = ['ok', 'flagged', 'hold', 'denied', 'pending', 'skipped', 'failed']
+
+function normalizeStepKind(v: unknown): StepKind {
+  const s = str(v).toLowerCase()
+  if ((STEP_KINDS as readonly string[]).includes(s)) return s as StepKind
+  if (s === 'code' || s === 'rule' || s === 'det') return 'deterministic'
+  if (s === 'owner' || s === 'person') return 'human'
+  if (s === 'agent' || s === 'chat') return 'llm'
+  return 'model'
+}
+
+function normalizeStepStatus(v: unknown): StepStatus {
+  const s = str(v).toLowerCase()
+  if ((STEP_STATUSES as readonly string[]).includes(s)) return s as StepStatus
+  if (s === 'done' || s === 'pass' || s === 'completed') return 'ok'
+  if (s === 'flag' || s === 'warn') return 'flagged'
+  if (s === 'error') return 'failed'
+  return 'pending'
+}
+
+function optionalNum(v: unknown): number | undefined {
+  return v == null ? undefined : num(v)
+}
+
+function optionalStr(v: unknown): string | undefined {
+  return v == null || v === '' ? undefined : str(v)
+}
+
+export function normalizeSteps(v: unknown): OrchestratorStep[] {
+  if (!Array.isArray(v)) return []
+  return v.map((raw, i) => {
+    const s = asRecord(raw)
+    const durationRaw = pick(s, 'duration_ms', 'durationMs', 'ms')
+    const durationMs = durationRaw == null ? null : num(durationRaw)
+    const scopeRaw = str(pick(s, 'duration_scope', 'durationScope'))
+    const durationScope: StepScope | null =
+      durationMs == null ? null : scopeRaw === 'run' || scopeRaw === 'batch' ? scopeRaw : 'card'
+    const detailRaw = pick(s, 'detail', 'details')
+    const detail = Array.isArray(detailRaw) ? detailRaw.map((d) => str(d)).filter(Boolean) : detailRaw ? [str(detailRaw)] : []
+    const confidenceRaw = pick(s, 'confidence')
+    const flagsRaw = pick(s, 'flags')
+    return {
+      id: str(pick(s, 'id', 'step'), `step-${i}`),
+      seq: num(pick(s, 'seq'), i + 1),
+      label: str(pick(s, 'label', 'name'), str(pick(s, 'id'), 'Step')),
+      tool: str(pick(s, 'tool', 'model', 'engine'), '—'),
+      kind: normalizeStepKind(pick(s, 'kind')),
+      node: optionalStr(pick(s, 'node')),
+      durationMs,
+      durationScope,
+      status: normalizeStepStatus(pick(s, 'status')),
+      summary: str(pick(s, 'summary', 'result', 'text'), ''),
+      detail,
+      at: optionalStr(pick(s, 'at', 'timestamp')),
+      engine: optionalStr(pick(s, 'engine')),
+      confidence: confidenceRaw === undefined ? undefined : confidenceRaw == null ? null : num(confidenceRaw),
+      modelCalls: optionalNum(pick(s, 'model_calls', 'modelCalls')),
+      llmCalls: optionalNum(pick(s, 'llm_calls', 'llmCalls')),
+      tokens: optionalNum(pick(s, 'tokens')),
+      lane: optionalStr(pick(s, 'lane')),
+      match: optionalStr(pick(s, 'match')),
+      flags: Array.isArray(flagsRaw) ? flagsRaw.map((f) => str(f)) : undefined,
+      txId: optionalStr(pick(s, 'tx_id', 'txId')),
+      explorerUrl: optionalStr(pick(s, 'explorer_url', 'explorerUrl')),
+    }
+  })
+}
+
 function normalizeNotes(v: unknown): AuditNote[] {
   if (!Array.isArray(v)) return []
   return v.map((raw, i) => {
@@ -254,6 +327,7 @@ export function normalizePayment(raw: unknown): Payment {
     auditNotes: normalizeNotes(pick(p, 'audit_notes', 'auditNotes', 'notes')),
     model: normalizeModel(p),
     highlights: normalizeHighlights(pick(p, 'highlights', 'invoice_highlights')),
+    steps: normalizeSteps(pick(p, 'steps', 'orchestrator_steps', 'orchestratorSteps')),
   }
 }
 

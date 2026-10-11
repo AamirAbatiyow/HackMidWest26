@@ -106,6 +106,44 @@ export interface PaymentRelation {
   paymentId: string
 }
 
+/** Who did the work in an orchestrator step: plain code, an LLM call, a model call, or the owner. */
+export type StepKind = 'deterministic' | 'llm' | 'model' | 'human'
+export type StepStatus = 'ok' | 'flagged' | 'hold' | 'denied' | 'pending' | 'skipped' | 'failed'
+/** card: measured on this invoice · run: the graph node's time for the whole run · batch: one settlement tx. */
+export type StepScope = 'card' | 'run' | 'batch'
+
+/** One step the orchestrator actually ran for an invoice (backend `steps[]`). */
+export interface OrchestratorStep {
+  id: string
+  seq: number
+  /** Short step name: Intake, Format, Read, Screen, Check, Score, Policy, Writer, Owner approval, Settlement. */
+  label: string
+  /** Tool or model that did the work, e.g. "Strands Decider 2B", "Excel parser (openpyxl)", "Cedar default-deny". */
+  tool: string
+  kind: StepKind
+  /** Graph node id that owns the step (intake, resolve, kernel, score, policy, explain, settle). */
+  node?: string
+  durationMs: number | null
+  durationScope: StepScope | null
+  status: StepStatus
+  /** One-line, high-level result. */
+  summary: string
+  /** Expanded detail lines. */
+  detail: string[]
+  at?: string
+  /** Format step: which classifier engine decided (deterministic | decider | hackathon-chat) and its confidence. */
+  engine?: string
+  confidence?: number | null
+  modelCalls?: number
+  llmCalls?: number
+  tokens?: number
+  lane?: string
+  match?: string
+  flags?: string[]
+  txId?: string
+  explorerUrl?: string
+}
+
 export interface Payment {
   id: string
   vendor: Vendor
@@ -135,6 +173,8 @@ export interface Payment {
   model?: ModelExplanation
   /** The invoice as document fields with suspicious ones flagged; absent in older payloads. */
   highlights?: InvoiceHighlight[]
+  /** Orchestrator timeline: the steps that ran for this invoice, in order. */
+  steps: OrchestratorStep[]
 }
 
 export type FundingChoice = 'now' | 'scheduled'
