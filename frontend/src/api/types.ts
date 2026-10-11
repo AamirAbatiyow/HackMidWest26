@@ -27,6 +27,42 @@ export interface EvidenceFactor {
   direction: 'concern' | 'reassuring'
 }
 
+/** One LIME contribution from the VouchNet risk model, as returned on the payment's `lime` list. */
+export interface LimeFactor {
+  id: string
+  /** Raw feature name, e.g. "shared_bank". */
+  feature: string
+  /** Plain-English label derived from the feature and its value. */
+  label: string
+  /** Backend label, kept to de-duplicate against `evidence`. */
+  rawLabel: string
+  /** Signed LIME weight toward the explained class (the sign is kept for display). */
+  weight: number
+  /** Feature value for this invoice, when known. */
+  value: number | null
+  direction: 'concern' | 'reassuring'
+}
+
+/** Which model head LIME explained and which scorer produced it. */
+export interface ModelExplanation {
+  factors: LimeFactor[]
+  /** "ato_bec" | "insider" | "fake_vendor" | "legitimacy" | null */
+  targetClass: string | null
+  scorer: string | null
+  modelVersion: string | null
+}
+
+export type HighlightSeverity = 'ok' | 'warn' | 'high'
+
+/** One field of the invoice document with a severity and short reason tags. */
+export interface InvoiceHighlight {
+  field: string
+  label: string
+  value: string
+  severity: HighlightSeverity
+  reasons: string[]
+}
+
 export interface TimelineEvent {
   id: string
   date: string
@@ -95,6 +131,10 @@ export interface Payment {
   checklist: ChecklistItem[]
   ring?: RingGraph
   auditNotes: AuditNote[]
+  /** LIME factors from the risk model; absent when the backend did not score the card. */
+  model?: ModelExplanation
+  /** The invoice as document fields with suspicious ones flagged; absent in older payloads. */
+  highlights?: InvoiceHighlight[]
 }
 
 export type FundingChoice = 'now' | 'scheduled'

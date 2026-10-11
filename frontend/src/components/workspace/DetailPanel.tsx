@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import type { Payment } from '@/api/types'
 import { Checkbox } from '@/components/ui/checkbox'
 import { EvidenceBar } from '@/components/vouch/EvidenceBar'
+import { HighlightedInvoice } from '@/components/vouch/HighlightedInvoice'
+import { LimeExplanation } from '@/components/vouch/LimeExplanation'
+import { countFlagged } from '@/lib/highlights'
 import { RelationTag, relatedTo } from '@/components/vouch/RelationTag'
 import { APPROVAL_LIMIT } from '@/data/payments'
 import { StatusChip } from '@/components/vouch/StatusChip'
@@ -16,7 +19,6 @@ import { RingGraph } from './RingGraph'
 import { Shortcut } from './Shortcut'
 import { usePaymentActions, type PaymentAction } from './usePaymentActions'
 
-const TOP_FACTORS = 3
 const BTN = 'flex h-7 items-center justify-between gap-2 rounded-xs border px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50'
 
 function Section({ title, meta, children, className }: { title: string; meta?: string; children: React.ReactNode; className?: string }) {
@@ -42,9 +44,12 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
   const flagged = p.status !== 'vouched'
   const settled = p.lifecycle === 'settled'
   const inBatch = batchReady.some((x) => x.id === p.id)
+  // LIME rows render in their own section; evidence that duplicates them stays out of "Other factors".
+  const limeLabels = new Set((p.model?.factors ?? []).map((f) => f.rawLabel))
   const ordered = [...p.evidence].sort((a, b) => (a.direction === b.direction ? b.weight - a.weight : a.direction === 'concern' ? -1 : 1))
-  const top = ordered.slice(0, TOP_FACTORS)
-  const rest = ordered.slice(TOP_FACTORS)
+  const rest = limeLabels.size > 0 ? ordered.filter((f) => !limeLabels.has(f.label)) : []
+  const highlights = p.highlights ?? []
+  const flaggedFields = countFlagged(highlights)
   const checklistDone = p.checklist.filter((c) => c.done).length
   const checklistComplete = p.checklist.length === 0 || checklistDone === p.checklist.length
 
@@ -99,11 +104,13 @@ export function DetailPanel({ payment: p, className }: { payment: Payment; class
           {flagged && !settled && <p className="pt-1 text-xs text-muted-foreground">Not denied. Waiting for you; the vendor has not been told.</p>}
         </section>
 
-        <Section title={flagged ? 'Why it is held' : 'Why it is clear to pay'} meta={`${top.length} of ${ordered.length}`}>
-          {top.map((f) => (
-            <EvidenceBar key={f.id} factor={f} />
-          ))}
-        </Section>
+        <LimeExplanation payment={p} />
+
+        {highlights.length > 0 && (
+          <Section title="Highlighted invoice" meta={flaggedFields.high > 0 ? `${flaggedFields.high} field${flaggedFields.high === 1 ? '' : 's'} in red` : flaggedFields.warn > 0 ? `${flaggedFields.warn} to glance at` : 'nothing flagged'}>
+            <HighlightedInvoice payment={p} />
+          </Section>
+        )}
 
         {p.ring && (
           <Section title="Shared details" meta={`${p.ring.nodes.filter((n) => n.kind === 'vendor').length} vendors`}>
