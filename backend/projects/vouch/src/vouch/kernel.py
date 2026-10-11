@@ -221,6 +221,16 @@ def _norm_invoice_number(num: str) -> str:
     return re.sub(r"(?<=\d)[A-Z]{1,2}$", "", core)  # INV-2291A == INV2291
 
 
+# Owner-facing names for the vendor attributes the ring graph compares (VendorGraph.ATTRIBUTES).
+_SHARED_LABELS = {
+    "bank": "bank account",
+    "tax_id": "tax ID",
+    "phone": "phone number",
+    "address": "address",
+    "email_domain": "email domain",
+}
+
+
 @dataclass
 class InvoiceChecks:
     vendor_found: bool
@@ -254,31 +264,33 @@ class InvoiceChecks:
     def flags(self) -> list[str]:
         out = []
         if not self.vendor_found:
-            out.append("vendor not on master file")
+            out.append("vendor is not in your vendor list")
         if self.bank_mismatch:
-            out.append("bank details on invoice differ from vendor master")
+            out.append("bank account on the invoice differs from the one on file")
         if self.bank_change_recent and not self.bank_change_confirmed:
-            out.append("vendor bank details changed recently without out-of-band confirmation")
+            out.append("bank account changed recently and was not confirmed by phone")
         if self.contact_change_recent:
             out.append("vendor contact details changed recently")
         if self.remit_email_mismatch:
-            out.append("remittance email domain differs from vendor email on file")
+            out.append("payment email differs from the vendor email on file")
         if self.duplicate_of:
             out.append(f"possible duplicate of {self.duplicate_of}")
         if self.split_group:
-            out.append("possible split invoices under the approval limit")
+            out.append("looks like one bill split into invoices just under the approval limit")
         if self.over_single_limit:
-            out.append("amount exceeds single-payment limit")
+            out.append("amount is over the single-payment limit")
         if self.no_po and self.no_delivery:
             out.append("no purchase order and no delivery confirmation")
         if not self.line_items_match:
             out.append("line items do not add up to the invoice total")
         if self.injection:
-            out.append("invoice text contains instructions aimed at the payment system")
+            out.append("invoice text tries to give orders to the payment system")
         if not self.amount_origin_ok:
-            out.append("amount was not produced by the deterministic kernel")
+            out.append("amount could not be read from the invoice")
         for kind, others in self.shared_attributes.items():
-            out.append(f"shares {kind} with {len(others)} other vendor(s)")
+            n = len(others)
+            label = _SHARED_LABELS.get(kind, kind.replace("_", " "))
+            out.append(f"shares the same {label} with {n} other vendor{'s' if n != 1 else ''}")
         return out
 
 
