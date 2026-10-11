@@ -2,7 +2,7 @@
 
 **Every payment, vouched for.**
 
-Vouch is a fintech trust layer for small businesses that pay vendors. It sits between your inbox and your payment rails, reads invoices from email or file uploads, classifies risk, explains every decision, and settles approved payments on the XRPL testnet—but only after you approve.
+Vouch is a fintech trust layer for small businesses (fewer than 100 employees) that pay vendors. It sits between your inbox and your payment rails, reads invoices from email or file uploads, classifies risk, explains every decision, and settles approved payments on the XRPL testnet—but only after you approve.
 
 ## The Problem
 
@@ -10,7 +10,7 @@ Dana runs Heartland Provisions, a 40-person food wholesaler in Kansas City. Ever
 
 The [LexisNexis True Cost of Fraud 2026 study](https://risk.lexisnexis.com/about-us/press-room/press-release/20260624-tcof-retail-and-commerce) (retail and e-commerce, North America) found that every $1 of direct fraud loss costs US merchants about $5.13 once you include chargebacks, fees, labor, and merchandise replacement. For a small business owner like Dana, the real cost of a single fraudulent wire isn't just the stolen amount—it's the weeks spent chasing it.
 
-**The full Vouch stack runs for about $186/month ($2,232/year). A single median small-business fraud case costs $141,000 ([ACFE 2024](https://www.acfe.com/-/media/files/acfe/pdfs/rttn/2024/2024-report-to-the-nations.pdf)). Stopping one case pays for more than 60 years of running Vouch ($141,000 ÷ $2,232 ≈ 63).**
+**The full Vouch stack runs for about $186/month ($2,232/year). A single median fraud case at organizations with fewer than 100 employees costs $141,000 ([ACFE 2024](https://www.acfe.com/-/media/files/acfe/pdfs/rttn/2024/2024-report-to-the-nations.pdf)). Stopping one case pays for more than 60 years of running Vouch ($141,000 ÷ $2,232 ≈ 63).** The median fraud runs 12 months before detection across all organizations studied ([ACFE 2024](https://www.acfe.com/-/media/files/acfe/pdfs/rttn/2024/2024-report-to-the-nations.pdf)), and a survey of 500+ small business owners (PPSI does not publish a headcount cutoff on its summary page) found 72% were hit by fraud, scams, or ransomware in the last year ([PPSI](https://www.ppsi.org/insights/fraud-scams-ransomware-survey)).
 
 Today Dana checks every invoice by hand, so honest vendors wait. Vouch automates the trust decision so good invoices move fast and bad ones stop before the wire. It's built for business owners who approve payments, not for the payment rails themselves—though payment platforms could offer Vouch to their business customers in the future.
 

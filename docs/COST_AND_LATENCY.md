@@ -75,8 +75,20 @@ The [ACFE 2024 Report to the Nations](https://www.acfe.com/-/media/files/acfe/pd
 - A typical organization loses **5% of revenue to fraud** each year
 - Median loss per case: **$145,000** overall
 - Median loss for organizations with **fewer than 100 employees: $141,000**
-- Median fraud duration: **12 months** before detection
-- Small businesses see disproportionately more **billing, check, and payment tampering** schemes
+- Median fraud duration: **12 months** before detection (overall median; the ACFE does not break duration out for small organizations)
+- Billing, check tampering, and payment tampering schemes typically run about **18 months**
+- Median loss grows with duration: frauds caught within 6 months had a median loss of **$30,000**; those lasting 2 to 3 years, **$250,000**; 5+ years, **$875,000**
+- Small businesses (fewer than 100 employees) see disproportionately more billing, check, and payment tampering schemes
+
+### Small Business Fraud (PPSI 2024)
+
+A [PPSI national survey](https://www.ppsi.org/insights/fraud-scams-ransomware-survey) of 500+ small business owners found:
+
+- **72%** were hit by fraud, scams, or ransomware in the last year
+- Among those hit, payment fraud averaged about **$60,000** and email compromise over **$90,000**
+- Only about **40%** felt prepared for payment fraud
+
+These figures report the share of businesses hit each year, not a per-business count of cases.
 
 ### External Payments Fraud (AFP 2025, 2026)
 
@@ -85,6 +97,7 @@ The [AFP 2025 Payments Fraud and Control Survey](https://www.financialprofession
 - **79%** of organizations experienced attempted or actual payments fraud
 - **Business email compromise (BEC)** was the top attack avenue at **63%**
 - **Vendor impersonation: 45%** (up 11 percentage points from prior year)
+- **Invoice fraud: 24%** (up from 14% the prior year)
 - **36%** of organizations lost money to BEC
 - Only **22%** of organizations recovered 75%+ of lost funds in 2024 (down from 41% in 2023)
 
