@@ -1,56 +1,88 @@
 #!/usr/bin/env bash
-# Deploy one project to Akamai Cloud. Usage: DEPLOY_TARGET=instance|lke infra/scripts/deploy_akamai.sh <project>
+# Deploy Vouch to Akamai Cloud (us-ord): terraform apply -> push human-held secrets over SSH -> verify.
 #
-# instance (default): terraform apply -> rsync repo + .env + artifacts -> docker compose on the VM.
-# lke:                terraform apply (use_lke=true in tfvars) -> build/push images -> kubectl apply -k.
+#   export LINODE_TOKEN=...                      # Akamai Cloud Manager -> API Tokens (read/write)
+#   cp infra/terraform/akamai/terraform.tfvars.example infra/terraform/akamai/terraform.tfvars  # edit
+#   make deploy-akamai                           # = infra/scripts/deploy_akamai.sh
+#   infra/scripts/deploy_akamai.sh --secrets-only   # re-push secrets + restart the API (no terraform)
+#   infra/scripts/deploy_akamai.sh --plan            # terraform plan only
 #
-# Needs: LINODE_TOKEN, terraform, infra/terraform/terraform.tfvars, .env (copied to the server, never committed).
-# TODO: run end-to-end once against a real account early; this script has not been exercised with live credentials.
+# Secrets pushed from the local environment / backend/.env (never from Terraform, never committed):
+#   AKAMAI_INFERENCE_API_KEY, XRPL_WALLET_SEED, XRPL_DESTINATION_ADDRESS, API_KEYS
+# Terraform-known settings (database URL, object storage keys, model URL, CORS) are written by cloud-init.
+#
+# NOT YET EXERCISED WITH LIVE CREDENTIALS: validated with `terraform validate` + `terraform plan` only.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-project="${1:?usage: deploy_akamai.sh <project>}"
-target="${DEPLOY_TARGET:-instance}"
-tf="terraform -chdir=infra/terraform"
+tf_dir="infra/terraform/akamai"
+tf="terraform -chdir=$tf_dir"
+mode="${1:-apply}"
 
-[[ -d "projects/$project" ]] || { echo "no such project: $project"; exit 1; }
+need() { command -v "$1" >/dev/null || { echo "missing: $1"; exit 1; }; }
+need terraform; need ssh; need curl; need jq
+
 [[ -n "${LINODE_TOKEN:-}" ]] || { echo "export LINODE_TOKEN first (Akamai Cloud Manager -> API Tokens)"; exit 1; }
-[[ -f infra/terraform/terraform.tfvars ]] || { echo "cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars and edit it"; exit 1; }
-[[ -f .env ]] || { echo "missing .env"; exit 1; }
+if [[ ! -f "$tf_dir/terraform.tfvars" ]]; then
+  echo "cp $tf_dir/terraform.tfvars.example $tf_dir/terraform.tfvars and edit it (ssh key, admin CIDR, repo ref)"; exit 1
+fi
+export TF_VAR_linode_token="$LINODE_TOKEN"
 
-$tf init -input=false >/dev/null
-$tf apply -input=false -auto-approve -var "use_lke=$([[ $target == lke ]] && echo true || echo false)"
-
-if [[ "$target" == "instance" ]]; then
-  ip=$($tf output -raw instance_public_ip)
-  ssh_opts=(-o StrictHostKeyChecking=accept-new)
-  echo "waiting for cloud-init on $ip..."
-  until ssh "${ssh_opts[@]}" "root@$ip" 'cloud-init status --wait >/dev/null 2>&1; command -v docker' >/dev/null 2>&1; do sleep 10; done
-  rsync -az --delete -e "ssh ${ssh_opts[*]}" \
-    --exclude .venv --exclude .git --exclude data --exclude '__pycache__' --exclude .env \
-    ./ "root@$ip:/opt/app/repo/"
-  scp "${ssh_opts[@]}" .env "root@$ip:/opt/app/repo/.env"
-  ssh "${ssh_opts[@]}" "root@$ip" "cd /opt/app/repo && PROJECT=$project INFERENCE_EXTRAS='${INFERENCE_EXTRAS:---extra explain}' docker compose --profile app up -d --build"
-  url=$($tf output -raw public_url 2>/dev/null || echo "http://$ip:8100")
-else
-  registry="${REGISTRY:?set REGISTRY, e.g. ghcr.io/<user>}"
-  overlay="infra/k8s/overlays/$project"
-  [[ -d "$overlay" ]] || { echo "create $overlay (copy overlays/vouch)"; exit 1; }
-  docker build -f infra/docker/python-app.Dockerfile --build-arg PROJECT="$project" \
-    --build-arg EXTRAS="--extra agents" -t "$registry/$project-api:latest" .
-  docker build -f infra/docker/python-app.Dockerfile --build-arg PROJECT="$project" \
-    --build-arg EXTRAS="${INFERENCE_EXTRAS:---extra explain}" --build-arg APP_MODULE="$project.services.inference:app" \
-    -t "$registry/$project-inference:latest" .
-  docker push "$registry/$project-api:latest"
-  docker push "$registry/$project-inference:latest"
-  export KUBECONFIG="$PWD/.kubeconfig-$project"
-  $tf output -raw kubeconfig | base64 -d > "$KUBECONFIG"
-  kubectl create namespace "$project" --dry-run=client -o yaml | kubectl apply -f -
-  kubectl -n "$project" create secret generic app-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
-  kubectl apply -k "$overlay"
-  kubectl -n "$project" rollout status deploy/api --timeout=180s
-  lb=$(kubectl -n "$project" get svc api -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-  url="http://$lb"
+# Load backend/.env (if present) for the secrets we push. Real environment variables win.
+if [[ -f .env ]]; then
+  while IFS='=' read -r k v; do
+    [[ "$k" =~ ^[A-Z_]+$ ]] || continue
+    [[ -z "${!k:-}" ]] && export "$k=$v"
+  done < <(grep -E '^(AKAMAI_INFERENCE_API_KEY|XRPL_WALLET_SEED|XRPL_DESTINATION_ADDRESS|API_KEYS)=' .env || true)
 fi
 
-echo "deployed: $url"
-infra/scripts/smoke_test.sh "$project" "$url" || echo "smoke test failed (inference /ready needs a trained model on the server)"
+$tf init -input=false >/dev/null
+
+if [[ "$mode" == "--plan" ]]; then
+  $tf plan -input=false
+  exit 0
+fi
+
+if [[ "$mode" != "--secrets-only" ]]; then
+  echo "== terraform apply (Managed PostgreSQL alone takes 10-20 minutes) =="
+  $tf apply -input=false -auto-approve
+fi
+
+public_url=$($tf output -raw public_url)
+mapfile -t app_ips < <($tf output -json app_public_ips | jq -r '.[]')
+settlement=$(grep -E '^settlement_adapter' "$tf_dir/terraform.tfvars" | sed -E 's/.*"(.*)".*/\1/' || echo xrpl)
+ssh_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
+
+if [[ "$settlement" == "xrpl" && -z "${XRPL_WALLET_SEED:-}" ]]; then
+  echo "settlement_adapter=xrpl but XRPL_WALLET_SEED is empty: run 'make xrpl-wallets' first (or set settlement_adapter=mock)"
+  exit 1
+fi
+[[ -n "${AKAMAI_INFERENCE_API_KEY:-}" ]] || echo "warning: AKAMAI_INFERENCE_API_KEY is empty; the API will run with template fallbacks"
+
+secrets=$(mktemp); trap 'rm -f "$secrets"' EXIT
+{
+  echo "# pushed by deploy_akamai.sh $(date -u +%FT%TZ)"
+  [[ -n "${AKAMAI_INFERENCE_API_KEY:-}" ]] && echo "AKAMAI_INFERENCE_API_KEY=$AKAMAI_INFERENCE_API_KEY"
+  [[ -n "${XRPL_WALLET_SEED:-}" ]] && echo "XRPL_WALLET_SEED=$XRPL_WALLET_SEED"
+  [[ -n "${XRPL_DESTINATION_ADDRESS:-}" ]] && echo "XRPL_DESTINATION_ADDRESS=$XRPL_DESTINATION_ADDRESS"
+  [[ -n "${API_KEYS:-}" ]] && echo "API_KEYS=$API_KEYS"
+} > "$secrets"
+
+for ip in "${app_ips[@]}"; do
+  echo "== app $ip: waiting for cloud-init =="
+  until ssh "${ssh_opts[@]}" "root@$ip" 'cloud-init status --wait >/dev/null 2>&1 && test -f /opt/vouch/repo/backend/.env' 2>/dev/null; do
+    sleep 10; printf '.'
+  done; echo
+  # Replace any previously pushed secrets, keep the Terraform-written base .env.
+  ssh "${ssh_opts[@]}" "root@$ip" "cd /opt/vouch/repo/backend && sed -i '/^# pushed by deploy_akamai.sh/,\$d' .env"
+  ssh "${ssh_opts[@]}" "root@$ip" "cat >> /opt/vouch/repo/backend/.env" < "$secrets"
+  ssh "${ssh_opts[@]}" "root@$ip" "cd /opt/vouch/repo/backend && git pull --ff-only >/dev/null 2>&1 || true; docker compose -f infra/compose/akamai-app.yml up -d --build"
+done
+
+echo "== waiting for $public_url/v1/health =="
+for _ in $(seq 1 60); do
+  if curl -ksf --max-time 5 "$public_url/v1/health" >/dev/null; then break; fi
+  sleep 5; printf '.'
+done; echo
+echo "deployed: $public_url"
+$tf output next_steps
+infra/scripts/verify_deploy.sh "$public_url" || echo "verification reported problems (see above)"

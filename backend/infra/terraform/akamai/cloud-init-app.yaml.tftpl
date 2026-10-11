@@ -1,0 +1,82 @@
+#cloud-config
+# App Linode: Docker + the Vouch API container on :${api_port}, behind the NodeBalancer.
+# Terraform-known settings land in /opt/vouch/env.terraform. Human-held secrets (AKAMAI_INFERENCE_API_KEY,
+# XRPL_WALLET_SEED, ...) are appended to /opt/vouch/repo/backend/.env by infra/scripts/deploy_akamai.sh
+# over SSH: they never pass through Terraform state or cloud-init.
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - make
+  - curl
+  - jq
+%{ if run_proxy ~}
+  - tinyproxy
+%{ endif ~}
+
+write_files:
+  - path: /opt/vouch/env.terraform
+    permissions: "0600"
+    content: |
+      APP_ENV=prod
+      LOG_JSON=true
+      VOUCH_PUBLIC_URL=${public_url}
+      CORS_ALLOW_ORIGINS=${cors_origins}
+      VOUCH_REGION=${region} (Chicago)
+      VOUCH_BEHIND_NODEBALANCER=true
+      VOUCH_FIREWALL_LABEL=${firewall_label}
+      VOUCH_VPC_LABEL=${vpc_label}
+      VOUCH_SCORER=http
+      VOUCH_INFERENCE_URL=${model_url}
+      VOUCH_MODEL_SERVER_URL=${model_url}
+      VOUCH_LLM_MODE=auto
+      AKAMAI_INFERENCE_BASE_URL=${akamai_base_url}
+      AKAMAI_INFERENCE_MODEL=${akamai_chat_model}
+      AKAMAI_EMBEDDING_MODEL=${akamai_embed_model}
+      LLM_PROVIDER=akamai
+      DATABASE_URL=${database_url}
+      OBJECT_STORAGE_ENDPOINT=${obj_endpoint}
+      OBJECT_STORAGE_REGION=${obj_region}
+      OBJECT_STORAGE_BUCKET=${obj_bucket}
+      OBJECT_STORAGE_ACCESS_KEY=${obj_access_key}
+      OBJECT_STORAGE_SECRET_KEY=${obj_secret_key}
+      SETTLEMENT_ADAPTER=${settlement_adapter}
+%{ if run_proxy ~}
+  # Forward proxy for the model Linode (which has no public interface): apt, git and Docker pulls only.
+  - path: /etc/tinyproxy/tinyproxy.conf
+    content: |
+      User tinyproxy
+      Group tinyproxy
+      Port ${proxy_port}
+      Listen ${proxy_ip}
+      Timeout 600
+      LogLevel Warning
+      MaxClients 50
+      Allow ${model_subnet}
+      ConnectPort 443
+      ConnectPort 80
+      DisableViaHeader Yes
+%{ endif ~}
+  - path: /opt/vouch/bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      mkdir -p /opt/vouch
+      if [ ! -d /opt/vouch/repo/.git ]; then
+        git clone --depth 1 --branch "${repo_ref}" "${repo_url}" /opt/vouch/repo
+      fi
+      cd /opt/vouch/repo/backend
+      # Base .env from Terraform; the deploy script appends secrets and restarts the stack.
+      if [ ! -f .env ]; then cp /opt/vouch/env.terraform .env; fi
+      docker compose -f infra/compose/akamai-app.yml up -d --build
+      echo "vouch api started on :${api_port}"
+
+runcmd:
+  - systemctl enable --now docker
+%{ if run_proxy ~}
+  - systemctl enable --now tinyproxy
+  - systemctl restart tinyproxy
+%{ endif ~}
+  - /opt/vouch/bootstrap.sh > /var/log/vouch-bootstrap.log 2>&1 || echo "bootstrap failed; see /var/log/vouch-bootstrap.log"

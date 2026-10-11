@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh machine -> ready to code. Usage: infra/scripts/bootstrap.sh [base|ml|agents|all]
+# Fresh machine -> ready to code. Usage: infra/scripts/bootstrap.sh [base|min|agents|all]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -11,11 +11,11 @@ fi
 
 case "${1:-base}" in
   base) make setup ;;
-  ml) make setup-ml ;;
+  min) make setup-min ;;
   agents) make setup-agents ;;
   all) make setup-all ;;
-  *) echo "usage: $0 [base|ml|agents|all]"; exit 1 ;;
+  *) echo "usage: $0 [base|min|agents|all]"; exit 1 ;;
 esac
 
 uv run --all-packages pre-commit install >/dev/null 2>&1 || true
-echo "ready: edit .env, then 'make test' and 'make run-<project>'"
+echo "ready: edit .env (AKAMAI_INFERENCE_API_KEY), then 'make test', 'make demo-vouch' and 'make run-vouch'"
