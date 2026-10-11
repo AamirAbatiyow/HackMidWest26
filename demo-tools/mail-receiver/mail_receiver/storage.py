@@ -14,6 +14,7 @@ from .parse import ParsedMail
 log = logging.getLogger(__name__)
 
 _FILE_MODE = 0o640  # never executable
+UNFINISHED_DELIVERY_STATES = frozenset({"received", "queued", "retrying"})
 
 
 def _write(path: Path, data: bytes) -> None:
@@ -81,6 +82,17 @@ class DiskStore:
                 except json.JSONDecodeError:
                     continue
         return out
+
+    def unfinished_ids(self, scan_limit: int) -> list[str]:
+        """Messages whose forwarding never reached a terminal state (the process died mid-flight).
+        Oldest first so a restart replays them in arrival order."""
+        pending = [
+            m["id"]
+            for m in self.recent_metas(scan_limit)
+            if m.get("id") and m.get("delivery", {}).get("status") in UNFINISHED_DELIVERY_STATES
+        ]
+        pending.reverse()
+        return pending
 
     # ------------------------------------------------------------ dead letters ----
     def write_dead_letter(self, msg_id: str, error: str, attempts: int) -> Path:

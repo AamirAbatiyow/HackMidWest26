@@ -75,6 +75,8 @@ class Settings:
     delivery_backoff_base_s: float = 1.0
     delivery_backoff_max_s: float = 60.0
     delivery_timeout_s: float = 20.0
+    shutdown_drain_s: float = 10.0  # how long SIGTERM waits for queued forwards before exiting
+    requeue_scan_limit: int = 500  # newest message dirs inspected for unfinished deliveries at start
 
     log_level: str = "INFO"
 
@@ -149,5 +151,7 @@ def load_settings() -> Settings:
     s.delivery_backoff_base_s = _float("DELIVERY_BACKOFF_BASE_S", s.delivery_backoff_base_s)
     s.delivery_backoff_max_s = _float("DELIVERY_BACKOFF_MAX_S", s.delivery_backoff_max_s)
     s.delivery_timeout_s = _float("DELIVERY_TIMEOUT_S", s.delivery_timeout_s)
+    s.shutdown_drain_s = _float("SHUTDOWN_DRAIN_S", s.shutdown_drain_s)
+    s.requeue_scan_limit = _int("REQUEUE_SCAN_LIMIT", s.requeue_scan_limit)
     s.log_level = _env("LOG_LEVEL", s.log_level).upper()
     return s

@@ -35,12 +35,28 @@ class Receiver:
     async def stop(self) -> None:
         await self.worker.stop()
 
+    def receiver_trace(self, msg_id: str, received_at: str, *, via: str, peer: str, helo: str) -> str:
+        """A ``Received:``-style trace line describing *our* hop. Kept in meta.json only: the
+        stored message and its existing Received/Authentication-Results headers stay untouched."""
+        origin = helo or "unknown"
+        if peer:
+            origin += f" ({peer})"
+        return f"from {origin} by {self.settings.hostname} via {via} id {msg_id}; {received_at}"
+
     def build_meta(self, msg_id: str, raw: bytes, parsed: ParsedMail, **envelope) -> dict:
+        received_at = parsed.intake["received_at"]
         return {
             "id": msg_id,
-            "received_at": parsed.intake["received_at"],
+            "received_at": received_at,
             "size": len(raw),
             **envelope,
+            "receiver_trace": self.receiver_trace(
+                msg_id,
+                received_at,
+                via=str(envelope.get("via", "")),
+                peer=str(envelope.get("peer", "")),
+                helo=str(envelope.get("helo", "")),
+            ),
             "from": parsed.from_addr,
             "from_name": parsed.from_name,
             "reply_to": parsed.reply_to,
@@ -125,14 +141,32 @@ class Receiver:
         return {
             "status": status,
             "uptime_s": self.state.uptime_s(),
+            "counters_since": self.state.started_at.isoformat().replace("+00:00", "Z"),
             "queue_depth": self.worker.depth,
             "received_total": self.state.received_total,
             "rejected_recipients_total": self.state.rejected_rcpt_total,
             "delivered_total": self.state.delivered_total,
             "dead_letter_count": dead,
+            "requeued_on_start": self.worker.requeued_on_start,
             "last_delivery": self.state.last_delivery,
             "config": self.settings.public_view(),
         }
 
     def recent(self) -> list[dict]:
         return list(self.state.recent)
+
+    def message_view(self, msg_id: str) -> dict | None:
+        """Metadata plus the forwarded IntakeRequest for one message, with attachment payloads
+        elided (bytes never leave the disk store through this API)."""
+        meta = self.store.load_meta(msg_id)
+        if meta is None:
+            return None
+        try:
+            intake = self.store.load_intake(msg_id)
+        except (OSError, ValueError):
+            intake = None
+        if intake is not None:
+            for att in intake.get("attachments", []):
+                if "data_b64" in att:
+                    att["data_b64"] = f"<{att.get('size', '?')} bytes elided>"
+        return {"meta": meta, "intake": intake}

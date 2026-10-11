@@ -26,17 +26,41 @@ class DeliveryWorker:
         self.store = store
         self.state = state
         self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.requeued_on_start = 0
+        self._inflight = 0
         self._task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
 
     # ------------------------------------------------------------ lifecycle ----
-    async def start(self) -> None:
+    async def start(self) -> int:
+        """Start the worker and re-queue deliveries left unfinished by a previous process.
+        Returns how many were re-queued."""
         timeout = aiohttp.ClientTimeout(total=self.settings.delivery_timeout_s)
         self._session = aiohttp.ClientSession(timeout=timeout)
+        requeued = 0
+        if self.settings.forwarding_enabled:
+            for msg_id in self.store.unfinished_ids(self.settings.requeue_scan_limit):
+                await self.enqueue(msg_id)
+                requeued += 1
+            if requeued:
+                log.info(
+                    "re-queued %d unfinished deliver%s from disk", requeued, "y" if requeued == 1 else "ies"
+                )
+        self.requeued_on_start = requeued
         self._task = asyncio.create_task(self._run(), name="delivery-worker")
+        return requeued
 
     async def stop(self) -> None:
+        """Give in-flight forwards a bounded chance to finish, then cancel. Whatever is still
+        queued or retrying is picked up again by :meth:`start` on the next run."""
         if self._task:
+            drain = self.settings.shutdown_drain_s
+            if drain > 0 and self.depth:
+                log.info("draining %d queued forward(s) for up to %.0fs", self.depth, drain)
+                try:
+                    await asyncio.wait_for(self.queue.join(), timeout=drain)
+                except TimeoutError:
+                    log.warning("drain timed out; unfinished deliveries will be re-queued on restart")
             self._task.cancel()
             try:
                 await self._task
@@ -47,7 +71,8 @@ class DeliveryWorker:
 
     @property
     def depth(self) -> int:
-        return self.queue.qsize()
+        """Messages waiting or currently being forwarded (what /health reports as queue_depth)."""
+        return self.queue.qsize() + self._inflight
 
     async def enqueue(self, msg_id: str) -> None:
         self.store.update_meta(msg_id, delivery={"status": "queued", "attempts": 0, "last_detail": ""})
@@ -67,11 +92,13 @@ class DeliveryWorker:
     async def _run(self) -> None:
         while True:
             msg_id = await self.queue.get()
+            self._inflight += 1
             try:
                 await self.deliver_with_retries(msg_id)
             except Exception:  # pragma: no cover - defensive: the worker must never die
                 log.exception("unexpected error delivering %s", msg_id)
             finally:
+                self._inflight -= 1
                 self.queue.task_done()
 
     def backoff(self, attempt: int) -> float:
@@ -82,6 +109,10 @@ class DeliveryWorker:
         if not self.settings.forwarding_enabled:
             detail = "BACKEND_INTAKE_URL not configured; stored only"
             self._record(msg_id, "stored", 0, detail, ok=None)
+            return False
+        if self.store.load_meta(msg_id) is None:
+            log.error("cannot forward %s: its directory is gone from disk", msg_id)
+            self.state.set_delivery(msg_id, status="missing", last_detail="message directory missing")
             return False
         attempts = 0
         while True:

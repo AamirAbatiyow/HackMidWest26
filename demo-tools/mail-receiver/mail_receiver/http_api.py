@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 
 from aiohttp import web
 
@@ -14,6 +15,16 @@ from .pipeline import Receiver
 log = logging.getLogger(__name__)
 
 MAX_INBOUND_BYTES_MARGIN = 1024 * 1024  # headroom over the SMTP limit for HTTP framing
+MSG_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{12}-[0-9a-f]{6}$")
+
+# The read-only, metadata-only endpoints are meant to be shown on a demo page served from
+# another origin (the invoice creator), so they answer cross-origin GETs.
+READ_ONLY_CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Cache-Control": "no-store",
+}
 
 
 def _authorized(request: web.Request, receiver: Receiver) -> bool:
@@ -22,6 +33,10 @@ def _authorized(request: web.Request, receiver: Receiver) -> bool:
         return True  # no secret configured: open (documented; use the firewall)
     presented = request.headers.get(receiver.settings.intake_secret_header, "")
     return hmac.compare_digest(presented, secret)
+
+
+def _json(data, status: int = 200) -> web.Response:
+    return web.json_response(data, status=status, headers=READ_ONLY_CORS)
 
 
 def build_app(receiver: Receiver) -> web.Application:
@@ -34,16 +49,28 @@ def build_app(receiver: Receiver) -> web.Application:
             f"Vouch mail receiver {__version__}\n"
             f"accepting mail for: {accepting}\n"
             f"SMTP ports: {', '.join(map(str, s.smtp_ports))}\n"
-            "endpoints: GET /health · GET /recent · POST /inbound (message/rfc822) · "
-            "POST /dead-letter/retry\n"
+            "endpoints: GET /health · GET /recent · GET /recent/{id} · "
+            "POST /inbound (message/rfc822) · POST /dead-letter/retry\n"
         )
         return web.Response(text=text)
 
     async def health(_request: web.Request) -> web.Response:
-        return web.json_response({"version": __version__, **receiver.health()})
+        return _json({"version": __version__, **receiver.health()})
 
     async def recent(_request: web.Request) -> web.Response:
-        return web.json_response({"count": len(receiver.recent()), "messages": receiver.recent()})
+        return _json({"count": len(receiver.recent()), "messages": receiver.recent()})
+
+    async def recent_one(request: web.Request) -> web.Response:
+        msg_id = request.match_info["msg_id"]
+        if not MSG_ID_RE.match(msg_id):
+            return _json({"error": "not found"}, status=404)
+        view = receiver.message_view(msg_id)
+        if view is None:
+            return _json({"error": "not found"}, status=404)
+        return _json(view)
+
+    async def cors_preflight(_request: web.Request) -> web.Response:
+        return web.Response(status=204, headers=READ_ONLY_CORS)
 
     async def inbound(request: web.Request) -> web.Response:
         if not _authorized(request, receiver):
@@ -83,6 +110,10 @@ def build_app(receiver: Receiver) -> web.Application:
             web.get("/", index),
             web.get("/health", health),
             web.get("/recent", recent),
+            web.get("/recent/{msg_id}", recent_one),
+            web.options("/health", cors_preflight),
+            web.options("/recent", cors_preflight),
+            web.options("/recent/{msg_id}", cors_preflight),
             web.post("/inbound", inbound),
             web.post("/dead-letter/retry", retry_dead_letters),
         ]
