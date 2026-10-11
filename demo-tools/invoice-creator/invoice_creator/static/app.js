@@ -6,7 +6,12 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const FORMATS = [["pdf", "PDF"], ["xlsx", "Excel"], ["csv", "CSV"], ["png", "Image"], ["body", "Email text"]];
   const FORMAT_NAMES = Object.fromEntries(FORMATS);
-  const TONES = { a: "good", f: "good", b: "bad", e: "bad", c: "warn", d: "warn" };
+  const KEY_TONES = {
+    heartland: "good", prairie: "good", "santa-rita": "good", rheinland: "good", baolin: "good",
+    midwest: "warn", "midwest-resend": "warn", "brightline-1": "warn", "brightline-2": "warn", "midwest-facility": "warn",
+    warsaw: "bad", sonora: "bad", nova: "bad", apex: "bad",
+  };
+  const GROUP_TONES = { a: "good", f: "good", b: "bad", e: "bad", c: "warn", d: "warn" };
 
   const state = {
     config: null,
@@ -157,7 +162,7 @@
     state.presets.filter((p) => !p.hidden).forEach((p) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = `preset tone-${TONES[p.group] || "warn"}`;
+      b.className = `preset tone-${KEY_TONES[p.key] || GROUP_TONES[p.group] || "warn"}`;
       b.setAttribute("aria-pressed", String(p.key === state.presetKey));
       b.dataset.key = p.key;
       b.innerHTML = `<span class="letter" aria-hidden="true">${esc(p.group)}</span><span><span class="t">${esc(p.title)}</span><br/><span class="v">${esc(p.vendor)}</span></span>`;
