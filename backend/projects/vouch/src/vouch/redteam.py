@@ -1129,7 +1129,10 @@ def make_factory(
     base = settings or get_settings()
 
     def make(llm: dict[str, list[Any]] | None = None, **overrides: Any) -> VouchEngine:
-        s = base.model_copy(update=overrides)
+        # The suite scripts the chat classifier, so a live Decider server (DECIDER_URL)
+        # must not answer instead; cases that need the Decider inject a fake client or
+        # pass decider_enabled themselves.
+        s = base.model_copy(update={"decider_enabled": False, **overrides})
         runtime = LLMRuntime.scripted(_expand(llm or {}))
         svc = VouchEngine(
             settings=s, llm=runtime, adapter=MockSettlementAdapter(), scorer=scorer, today=_today()
