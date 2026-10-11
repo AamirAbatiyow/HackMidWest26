@@ -228,7 +228,9 @@ class VouchService:
         records: list[dict[str, Any]] = []
         stored: list[tuple[ExtractedDocument, str | None, dict[str, Any]]] = []
         if body.strip():
-            doc = ExtractedDocument(filename="email-body", kind="email_body", text=body, extractor="email-body")
+            doc = ExtractedDocument(
+                filename="email-body", kind="email_body", text=body, extractor="email-body"
+            )
             docs.append(doc)
             records.append(_document_record(doc))
         for att, data in files:
