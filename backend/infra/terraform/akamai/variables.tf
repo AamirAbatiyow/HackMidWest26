@@ -63,6 +63,12 @@ variable "model_vpc_ip" {
   default = "10.0.2.10"
 }
 
+variable "decider_vpc_ip" {
+  description = "Fixed VPC address for the Strands Decider Linode in the model subnet."
+  type        = string
+  default     = "10.0.2.20"
+}
+
 variable "admin_cidrs" {
   description = "CIDRs allowed to SSH to the app Linodes (your venue / home IP, e.g. [\"203.0.113.7/32\"]). Empty = no SSH from the internet."
   type        = list(string)
@@ -97,6 +103,32 @@ variable "model_type" {
   description = "Plan for the private model-serving Linode (CPU inference, no GPU)."
   type        = string
   default     = "g6-standard-2"
+}
+
+# --- Strands Decider (routing decisions) ----------------------------------------------------------
+
+variable "enable_decider" {
+  description = "Deploy the Strands Decider 2B service for email-format and parser-tool routing decisions."
+  type        = bool
+  default     = true
+}
+
+variable "decider_type" {
+  description = "Plan for the Decider Linode. g6-dedicated-8 = 4 dedicated vCPU / 16 GB (the 2B model needs ~4.5 GB weights + headroom)."
+  type        = string
+  default     = "g6-dedicated-8"
+}
+
+variable "decider_model" {
+  description = "Hugging Face model identifier for the Strands Decider."
+  type        = string
+  default     = "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610"
+}
+
+variable "decider_port" {
+  description = "Port the Decider server listens on."
+  type        = number
+  default     = 8099
 }
 
 variable "api_port" {

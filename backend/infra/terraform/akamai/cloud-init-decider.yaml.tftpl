@@ -1,0 +1,125 @@
+#cloud-config
+# Strands Decider 2B service: a small CPU decision model for agentic workflows.
+# https://github.com/strands-labs/strands-decider (Apache-2.0)
+#
+# This Linode has only a VPC interface (no public IPv4/IPv6). apt, git and pip
+# reach the internet through the forward proxy on app Linode #1.
+# The model weights (~4.5 GB) are downloaded on first boot.
+
+apt:
+  proxy: "${proxy_url}"
+
+package_update: true
+
+packages:
+  - python3.12
+  - python3.12-venv
+  - python3-pip
+  - git
+  - curl
+  - htop
+
+write_files:
+  - path: /etc/profile.d/vouch-proxy.sh
+    content: |
+      export http_proxy=${proxy_url} https_proxy=${proxy_url}
+      export HTTP_PROXY=${proxy_url} HTTPS_PROXY=${proxy_url}
+      export no_proxy=localhost,127.0.0.1,10.0.0.0/8 NO_PROXY=localhost,127.0.0.1,10.0.0.0/8
+
+  - path: /etc/systemd/system/strands-decider.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Strands Decider 2B decision model server
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=decider
+      Group=decider
+      WorkingDirectory=/opt/strands-decider
+      Environment="HOME=/opt/strands-decider"
+      Environment="HF_HOME=/opt/strands-decider/.cache/huggingface"
+      Environment="http_proxy=${proxy_url}"
+      Environment="https_proxy=${proxy_url}"
+      Environment="HTTP_PROXY=${proxy_url}"
+      Environment="HTTPS_PROXY=${proxy_url}"
+      Environment="no_proxy=localhost,127.0.0.1,10.0.0.0/8"
+      ExecStart=/opt/strands-decider/venv/bin/strands-decider serve ${decider_model} --port ${decider_port} --device cpu
+      Restart=always
+      RestartSec=5
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /opt/strands-decider/healthcheck.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -e
+      curl -sf http://127.0.0.1:${decider_port}/health || exit 1
+
+  - path: /opt/strands-decider/warmup.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Warm-up call to ensure the model is loaded and ready.
+      set -e
+      for i in {1..60}; do
+        if curl -sf http://127.0.0.1:${decider_port}/health; then
+          echo "Health check passed, sending warm-up request..."
+          curl -sf http://127.0.0.1:${decider_port}/v1/systemone \
+            -H 'Content-Type: application/json' \
+            -d '{"state": "warmup", "questions": {"check": {"type": "noul", "instructions": "Is this a warmup?"}}}' && break
+        fi
+        echo "Waiting for service... ($i/60)"
+        sleep 5
+      done
+
+  - path: /opt/strands-decider/bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /etc/profile.d/vouch-proxy.sh
+
+      echo "Creating decider user and directories..."
+      useradd -r -s /usr/sbin/nologin -d /opt/strands-decider decider 2>/dev/null || true
+      mkdir -p /opt/strands-decider/.cache/huggingface
+      chown -R decider:decider /opt/strands-decider
+
+      echo "Cloning strands-decider from git (PyPI 0.1.0 lags the README)..."
+      git -c http.proxy="${proxy_url}" clone --depth 1 https://github.com/strands-labs/strands-decider.git /tmp/strands-decider
+
+      echo "Creating venv and installing strands-decider..."
+      python3.12 -m venv /opt/strands-decider/venv
+      /opt/strands-decider/venv/bin/pip install --upgrade pip wheel
+      /opt/strands-decider/venv/bin/pip install "/tmp/strands-decider[cpu]"
+      rm -rf /tmp/strands-decider
+
+      echo "Pre-downloading model weights (~4.5 GB)..."
+      sudo -u decider HF_HOME=/opt/strands-decider/.cache/huggingface \
+        http_proxy=${proxy_url} https_proxy=${proxy_url} \
+        /opt/strands-decider/venv/bin/python -c "
+      from huggingface_hub import snapshot_download
+      snapshot_download('${decider_model}', cache_dir='/opt/strands-decider/.cache/huggingface')
+      print('Model downloaded successfully.')
+      "
+
+      chown -R decider:decider /opt/strands-decider
+
+      echo "Enabling and starting strands-decider service..."
+      systemctl daemon-reload
+      systemctl enable strands-decider
+      systemctl start strands-decider
+
+      echo "Running warm-up in background..."
+      nohup /opt/strands-decider/warmup.sh > /var/log/decider-warmup.log 2>&1 &
+
+      echo "Decider bootstrap complete."
+
+runcmd:
+  - /opt/strands-decider/bootstrap.sh > /var/log/decider-bootstrap.log 2>&1 || echo "bootstrap failed; see /var/log/decider-bootstrap.log"

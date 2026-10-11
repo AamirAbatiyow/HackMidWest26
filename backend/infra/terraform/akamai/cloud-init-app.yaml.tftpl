@@ -42,6 +42,9 @@ write_files:
       OBJECT_STORAGE_ACCESS_KEY=${obj_access_key}
       OBJECT_STORAGE_SECRET_KEY=${obj_secret_key}
       SETTLEMENT_ADAPTER=${settlement_adapter}
+%{ if decider_url != "" ~}
+      DECIDER_URL=${decider_url}
+%{ endif ~}
 %{ if run_proxy ~}
   # Forward proxy for the model Linode (which has no public interface): apt, git and Docker pulls only.
   - path: /etc/tinyproxy/tinyproxy.conf
