@@ -17,94 +17,164 @@ from .state import get_service
 router = APIRouter(prefix="/v1", tags=["trust"])
 
 
-def _count_redteam_cases() -> int:
-    """Count red-team attack cases from the CASES list in redteam.py."""
+def _get_redteam_info() -> dict[str, Any]:
+    """Get red-team suite info, using cached results if available."""
     try:
         from ..redteam import CASES
 
-        return len(CASES)
+        svc = get_service()
+        if svc.redteam is not None:
+            # Use cached results
+            results = svc.redteam
+            return {
+                "total": results["total"],
+                "blocked": results["blocked"],
+                "all_blocked": results["all_blocked"],
+                "ran_at": results.get("ran_at"),
+            }
+        # No cached results yet, just return count from CASES
+        return {"total": len(CASES), "blocked": None, "all_blocked": None, "ran_at": None}
     except Exception:
-        return 0
+        return {"total": 0, "blocked": None, "all_blocked": None, "ran_at": None}
 
 
 def _parse_cedar_policies() -> list[dict[str, Any]]:
-    """Parse Cedar policy file and extract rule IDs, actions, and principals."""
+    """Parse Cedar policy file and extract rule IDs, actions, principals, and descriptions.
+
+    Handles rules with when/unless clauses by tracking brace depth to find rule boundaries.
+    Extracts only the immediately preceding comment block as each rule's description.
+    """
+    import re
+
     policy_file = POLICY_DIR / "vouch.cedar"
     if not policy_file.exists():
         return []
 
-    rules: list[dict[str, Any]] = []
     content = policy_file.read_text()
+    lines = content.split("\n")
+    rules: list[dict[str, Any]] = []
 
-    current_id = None
-    current_description = None
-    in_permit = False
-    in_forbid = False
-    principal = None
-    action = None
-    resource = None
+    # Find all @id annotations and their line indices
+    id_pattern = re.compile(r'@id\("([^"]+)"\)')
 
-    for line in content.split("\n"):
-        stripped = line.strip()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        id_match = id_pattern.match(stripped)
+        if not id_match:
+            i += 1
+            continue
 
-        if stripped.startswith("@id("):
-            current_id = stripped.split('"')[1] if '"' in stripped else None
-        elif stripped.startswith("//") and current_id is None:
-            if current_description is None:
-                current_description = stripped[2:].strip()
+        rule_id = id_match.group(1)
+
+        # Extract the description from the immediately preceding comment block only
+        # Walk backwards to find consecutive comment lines, stopping at blank or non-comment
+        description_lines: list[str] = []
+        j = i - 1
+        while j >= 0:
+            prev = lines[j].strip()
+            if prev.startswith("//"):
+                # Only include this comment if the line before it is also a comment or @id
+                # This prevents grabbing the file header for P-03 which follows a blank line
+                comment_text = prev[2:].strip()
+                # Check if this is part of the same block
+                if j == i - 1 or (j > 0 and lines[j + 1].strip().startswith("//")):
+                    description_lines.insert(0, comment_text)
+                    j -= 1
+                else:
+                    break
+            elif prev == "":
+                # Empty line breaks the comment block
+                break
             else:
-                current_description += " " + stripped[2:].strip()
-        elif stripped.startswith("permit("):
-            in_permit = True
-            in_forbid = False
-        elif stripped.startswith("forbid("):
-            in_forbid = True
-            in_permit = False
-        elif (in_permit or in_forbid) and "principal" in stripped:
-            if "is Owner" in stripped:
-                principal = "Owner"
-            elif "is System" in stripped:
-                principal = "System"
-            elif "is Model" in stripped:
-                principal = "Model"
-            else:
-                principal = "any"
-        elif (in_permit or in_forbid) and "action" in stripped:
-            if "==" in stripped:
-                action = stripped.split('"')[1] if '"' in stripped else None
-            elif "in [" in stripped:
-                actions = []
-                for part in stripped.split('"'):
-                    if (
-                        part
-                        and not part.startswith("action")
-                        and "::" not in part
-                        and part.strip()
-                        and part.strip() not in [",", "[", "]", "in"]
-                    ):
-                        actions.append(part)
-                action = ", ".join(actions) if actions else None
-        elif (in_permit or in_forbid) and "resource is" in stripped:
-            resource = stripped.split("is")[-1].strip().rstrip(";")
-        elif stripped.startswith(");") and (in_permit or in_forbid):
-            if current_id:
-                rules.append(
-                    {
-                        "id": current_id,
-                        "type": "permit" if in_permit else "forbid",
-                        "principal": principal or "any",
-                        "action": action,
-                        "resource": resource,
-                        "description": current_description,
-                    }
-                )
-            in_permit = False
-            in_forbid = False
-            current_id = None
-            current_description = None
-            principal = None
-            action = None
-            resource = None
+                break
+        description = " ".join(description_lines) if description_lines else None
+
+        # Move to permit/forbid line
+        i += 1
+        if i >= len(lines):
+            break
+
+        effect_line = lines[i].strip()
+        if effect_line.startswith("permit("):
+            effect = "permit"
+        elif effect_line.startswith("forbid("):
+            effect = "forbid"
+        else:
+            continue
+
+        # Now parse the rule body by tracking brace/paren depth
+        # A rule ends when we see `;` at depth 0 (after closing the main block and any when/unless)
+        rule_text_lines = []
+        brace_depth = 0
+        paren_depth = 0
+        rule_complete = False
+
+        while i < len(lines) and not rule_complete:
+            line = lines[i]
+            rule_text_lines.append(line)
+
+            for ch in line:
+                if ch == "(":
+                    paren_depth += 1
+                elif ch == ")":
+                    paren_depth -= 1
+                elif ch == "{":
+                    brace_depth += 1
+                elif ch == "}":
+                    brace_depth -= 1
+                elif ch == ";" and paren_depth == 0 and brace_depth == 0:
+                    rule_complete = True
+                    break
+            i += 1
+
+        rule_text = "\n".join(rule_text_lines)
+
+        # Extract principal from the permit/forbid clause, NOT from the when clause
+        # The principal is between "permit(" or "forbid(" and the first ")".
+        # We look for "principal is X" only in the initial clause, not in when { ... }
+        principal = "any"
+        # Find the permit/forbid clause (before any when { })
+        clause_end = rule_text.find(") when")
+        if clause_end == -1:
+            clause_end = rule_text.find(");")
+        if clause_end == -1:
+            clause_end = len(rule_text)
+        clause_text = rule_text[:clause_end]
+
+        if "principal is Owner" in clause_text:
+            principal = "Owner"
+        elif "principal is System" in clause_text:
+            principal = "System"
+        elif "principal is Model" in clause_text:
+            principal = "Model"
+
+        # Extract action(s)
+        action: str | None = None
+        action_single = re.search(r'action\s*==\s*Action::"([^"]+)"', rule_text)
+        action_list = re.search(r"action\s+in\s+\[([^\]]+)\]", rule_text)
+        if action_single:
+            action = action_single.group(1)
+        elif action_list:
+            action_items = re.findall(r'Action::"([^"]+)"', action_list.group(1))
+            action = ", ".join(action_items) if action_items else None
+
+        # Extract resource
+        resource: str | None = None
+        resource_match = re.search(r"resource\s+is\s+(\w+)", rule_text)
+        if resource_match:
+            resource = resource_match.group(1)
+
+        rules.append(
+            {
+                "id": rule_id,
+                "type": effect,
+                "principal": principal,
+                "action": action,
+                "resource": resource,
+                "description": description,
+            }
+        )
 
     return rules
 
@@ -154,6 +224,48 @@ def _get_sender_checks() -> list[dict[str, str]]:
     ]
 
 
+def _get_scorer_info(settings: Any) -> dict[str, str]:
+    """Get accurate description of the scorer configuration."""
+    svc = get_service()
+    scorer = svc.engine.scorer()
+    scorer_name = getattr(scorer, "name", settings.scorer)
+
+    if scorer_name == "inference-service":
+        return {
+            "scorer": scorer_name,
+            "description": f"Inference service at {settings.model_server_url or settings.inference_url}",
+            "model_server_claim": "Model inference server runs in VPC-private subnet (10.0.3.0/24)",
+        }
+    elif scorer_name == "local-torch":
+        return {
+            "scorer": scorer_name,
+            "description": "PyTorch fraud detection model running in-process with LIME explanations",
+            "model_server_claim": "Scorer runs in-process (local-torch); no separate model server",
+        }
+    else:
+        return {
+            "scorer": scorer_name,
+            "description": "Heuristic fallback scorer (no model loaded)",
+            "model_server_claim": "Using heuristic fallback; no model server configured",
+        }
+
+
+def _get_database_info(settings: Any) -> dict[str, str]:
+    """Get accurate database type based on actual configuration."""
+    if settings.is_postgres:
+        return {
+            "type": "PostgreSQL",
+            "description": "Audit trail and policy records for every decision",
+            "vpc_claim": "PostgreSQL accessible only from app tier (10.0.4.0/24)",
+        }
+    else:
+        return {
+            "type": "SQLite (local dev)",
+            "description": "Local SQLite database for development",
+            "vpc_claim": "SQLite local file (no network access needed)",
+        }
+
+
 @router.get("/trust")
 def get_trust() -> dict[str, Any]:
     """Return the Trust Center data: security controls, data handling, infrastructure, and limitations.
@@ -164,12 +276,29 @@ def get_trust() -> dict[str, Any]:
     get_service()  # ensure service is initialized
 
     cedar_rules = _parse_cedar_policies()
-    redteam_count = _count_redteam_cases()
+    redteam_info = _get_redteam_info()
     hold_reasons = _get_policy_hold_reasons()
     sender_checks = _get_sender_checks()
+    scorer_info = _get_scorer_info(settings)
+    db_info = _get_database_info(settings)
 
     owner_actions = [r for r in cedar_rules if r.get("principal") == "Owner" and r.get("type") == "permit"]
     model_permits = [r for r in cedar_rules if r.get("principal") == "Model"]
+
+    # Build truthful redteam description based on actual results
+    if redteam_info["blocked"] is not None:
+        blocked_count = redteam_info["blocked"]
+        total_count = redteam_info["total"]
+        if redteam_info["all_blocked"]:
+            redteam_desc = f"Adversarial test suite: {blocked_count}/{total_count} attacks blocked."
+        else:
+            redteam_desc = (
+                f"Adversarial test suite: {blocked_count}/{total_count} attacks blocked (SOME FAILURES)."
+            )
+    else:
+        redteam_desc = (
+            f"Adversarial test suite with {redteam_info['total']} cases (not yet run this session)."
+        )
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -214,8 +343,11 @@ def get_trust() -> dict[str, Any]:
                 "hold_reason": "R_INJECTION: invoice text contains instructions aimed at the payment system",
             },
             "redteam_suite": {
-                "description": "Adversarial test suite run on every deployment; all attacks must be blocked.",
-                "total_cases": redteam_count,
+                "description": redteam_desc,
+                "total_cases": redteam_info["total"],
+                "blocked_cases": redteam_info["blocked"],
+                "all_blocked": redteam_info["all_blocked"],
+                "ran_at": redteam_info["ran_at"],
                 "categories": [
                     "injection",
                     "llm_output",
@@ -248,9 +380,9 @@ def get_trust() -> dict[str, Any]:
         "data_handling": {
             "storage": {
                 "database": {
-                    "type": "PostgreSQL" if settings.is_postgres else "SQLite (local dev)",
+                    "type": db_info["type"],
                     "location": settings.region,
-                    "description": "Audit trail and policy records for every decision",
+                    "description": db_info["description"],
                 },
                 "object_storage": {
                     "configured": settings.has_bucket,
@@ -260,9 +392,11 @@ def get_trust() -> dict[str, Any]:
             },
             "network_isolation": {
                 "vpc_private": {
-                    "model_server": "Model inference server runs in VPC-private subnet (10.0.3.0/24)",
-                    "decider_server": "Strands Decider server runs in VPC-private subnet",
-                    "database": "PostgreSQL accessible only from app tier (10.0.4.0/24)",
+                    "model_server": scorer_info["model_server_claim"],
+                    "decider_server": "Strands Decider server runs in VPC-private subnet"
+                    if settings.decider_active
+                    else "Decider not active; deterministic routing only",
+                    "database": db_info["vpc_claim"],
                 },
                 "firewall": {
                     "default_deny_inbound": True,
@@ -292,15 +426,7 @@ def get_trust() -> dict[str, Any]:
             "deployment": {
                 "provider": "Akamai Cloud Computing (Linode)",
                 "region": settings.region,
-                "products": [
-                    "Dedicated-CPU Linode",
-                    "Akamai VPC",
-                    "Akamai Cloud Firewall",
-                    "Akamai NodeBalancer",
-                    "Akamai Managed Database (PostgreSQL)",
-                    "Akamai Object Storage",
-                    "Akamai Cloud Inference",
-                ],
+                "products": _get_actual_products(settings, db_info),
             },
             "settlement": {
                 "adapter": settings.settlement_adapter,
@@ -309,8 +435,8 @@ def get_trust() -> dict[str, Any]:
             },
             "model": {
                 "name": settings.model_name,
-                "scorer": settings.scorer,
-                "description": "PyTorch fraud detection model with LIME explanations",
+                "scorer": scorer_info["scorer"],
+                "description": scorer_info["description"],
             },
         },
         "not_yet_implemented": {
@@ -349,3 +475,15 @@ def get_trust() -> dict[str, Any]:
             ],
         },
     }
+
+
+def _get_actual_products(settings: Any, db_info: dict[str, str]) -> list[str]:
+    """Return the list of Akamai products actually in use based on config."""
+    products = ["Dedicated-CPU Linode", "Akamai VPC", "Akamai Cloud Firewall", "Akamai NodeBalancer"]
+    if db_info["type"] == "PostgreSQL":
+        products.append("Akamai Managed Database (PostgreSQL)")
+    if settings.has_bucket:
+        products.append("Akamai Object Storage")
+    if settings.has_llm_key:
+        products.append("Akamai Cloud Inference")
+    return products

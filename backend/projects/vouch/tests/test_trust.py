@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vouch import main
+from vouch.api.trust import _parse_cedar_policies
 from vouch.audit import AuditStore
 from vouch.service import VouchService
 
@@ -20,6 +21,92 @@ def client(settings, tmp_path):
         yield TestClient(main.app)
     finally:
         main.set_service(None)
+
+
+class TestCedarPolicyParser:
+    """Tests for the Cedar policy parser."""
+
+    def test_parse_cedar_policies_returns_9_rules(self):
+        """Parser must find all 9 rules (P-01 through P-09) in vouch.cedar."""
+        rules = _parse_cedar_policies()
+        assert len(rules) == 9, f"Expected 9 rules, got {len(rules)}: {[r['id'] for r in rules]}"
+
+    def test_parse_cedar_policies_all_ids_present(self):
+        """All rule IDs P-01 through P-09 must be present."""
+        rules = _parse_cedar_policies()
+        ids = {r["id"] for r in rules}
+        expected_ids = {f"P-{i:02d}" for i in range(1, 10)}
+        assert ids == expected_ids, f"Missing IDs: {expected_ids - ids}, unexpected: {ids - expected_ids}"
+
+    def test_parse_cedar_policies_id_order(self):
+        """Rules should be returned in order P-01 through P-09."""
+        rules = _parse_cedar_policies()
+        ids = [r["id"] for r in rules]
+        assert ids == [f"P-{i:02d}" for i in range(1, 10)]
+
+    def test_parse_cedar_policies_descriptions_no_bleed(self):
+        """Each rule's description must be its own comment, not the file header or another rule's."""
+        rules = _parse_cedar_policies()
+        rules_by_id = {r["id"]: r for r in rules}
+
+        # P-03 should NOT have the file header (which mentions default deny, no permit for deny_vendor)
+        p03 = rules_by_id["P-03"]
+        assert p03["description"] is not None
+        # The P-03 description should only be about automated system placing holds
+        assert "hold" in p03["description"].lower() or "system" in p03["description"].lower()
+        assert "default deny" not in p03["description"].lower(), "P-03 has file header as description"
+
+        # P-04 description should NOT contain P-07's text about read/explain
+        p04 = rules_by_id["P-04"]
+        if p04["description"]:
+            assert "read and explain" not in p04["description"].lower(), "P-04 has P-07's description"
+
+        # P-07 should have its own description about read/explain
+        p07 = rules_by_id["P-07"]
+        assert p07["description"] is not None
+        assert "read" in p07["description"].lower() or "explain" in p07["description"].lower()
+
+    def test_parse_cedar_policies_effect_types(self):
+        """All rules in vouch.cedar should be permit rules (no forbid)."""
+        rules = _parse_cedar_policies()
+        for rule in rules:
+            assert rule["type"] == "permit", f"Rule {rule['id']} has unexpected type {rule['type']}"
+
+    def test_parse_cedar_policies_principals(self):
+        """Check that principals are correctly extracted."""
+        rules = _parse_cedar_policies()
+        rules_by_id = {r["id"]: r for r in rules}
+
+        # Owner rules
+        for pid in ["P-01", "P-02", "P-06", "P-08", "P-09"]:
+            assert rules_by_id[pid]["principal"] == "Owner", f"{pid} should have Owner principal"
+
+        # System rules
+        for pid in ["P-03", "P-04", "P-07"]:
+            assert rules_by_id[pid]["principal"] == "System", f"{pid} should have System principal"
+
+        # P-05 has mixed principal (Owner or System)
+        assert rules_by_id["P-05"]["principal"] == "any", "P-05 should have 'any' principal (mixed)"
+
+    def test_parse_cedar_policies_actions(self):
+        """Check that actions are correctly extracted."""
+        rules = _parse_cedar_policies()
+        rules_by_id = {r["id"]: r for r in rules}
+
+        assert rules_by_id["P-01"]["action"] == "approve"
+        assert rules_by_id["P-03"]["action"] == "hold"
+        assert rules_by_id["P-04"]["action"] == "fast_pay"
+        assert rules_by_id["P-05"]["action"] == "settle"
+        assert rules_by_id["P-06"]["action"] == "change_bank_details"
+        # P-02 and P-07 have action lists
+        assert "hold" in rules_by_id["P-02"]["action"]
+        assert "read" in rules_by_id["P-07"]["action"]
+
+    def test_parse_cedar_policies_resources(self):
+        """All rules should have Payment as resource."""
+        rules = _parse_cedar_policies()
+        for rule in rules:
+            assert rule["resource"] == "Payment", f"Rule {rule['id']} has resource {rule['resource']}"
 
 
 class TestTrustAPI:
@@ -254,5 +341,7 @@ class TestTrustAPI:
         data = response.json()
 
         items = data["not_yet_implemented"]["items"]
-        testnet_items = [i for i in items if "settlement" in i["item"].lower() or "testnet" in i["description"].lower()]
+        testnet_items = [
+            i for i in items if "settlement" in i["item"].lower() or "testnet" in i["description"].lower()
+        ]
         assert len(testnet_items) >= 1
