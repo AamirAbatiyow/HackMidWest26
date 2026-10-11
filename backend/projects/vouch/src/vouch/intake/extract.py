@@ -12,12 +12,23 @@ import hashlib
 import io
 import logging
 import shutil
-from functools import lru_cache
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 from ..contracts import ExtractedDocument, ExtractedTable
 
 log = logging.getLogger(__name__)
+
+NO_OCR_WARNING = (
+    "no OCR engine installed on this server: install tesseract-ocr + tesseract-ocr-eng "
+    "(or the 'ocr-rapid' extra); image invoices cannot be read until then"
+)
+# How long a "no OCR engine" answer is trusted before the binary is looked for again. A positive answer is
+# kept for the life of the process; a negative one must not be sticky, so `apt-get install tesseract-ocr`
+# inside the running container flips /health and intake without a restart.
+OCR_RECHECK_S = 15.0
 
 PDF_TYPES = {"application/pdf"}
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff", "image/bmp"}
@@ -124,7 +135,7 @@ def extract_pdf_ocr(data: bytes, filename: str, max_pages: int = 5) -> Extracted
     backend = ocr_backend()
     if doc.text or backend == "none":
         if not doc.text:
-            doc.warnings.append("no OCR engine installed; scanned PDF left unread")
+            doc.warnings.append(f"scanned PDF left unread: {NO_OCR_WARNING}")
         return doc
     texts: list[str] = []
     warnings = [w for w in doc.warnings if not w.startswith("no text layer")]
@@ -157,22 +168,69 @@ def extract_pdf_ocr(data: bytes, filename: str, max_pages: int = 5) -> Extracted
 # ---------------------------------------------------------------- image ----
 
 
-@lru_cache(maxsize=1)
-def ocr_backend() -> str:
-    """Which OCR engine is available: 'tesseract', 'rapidocr' or 'none'."""
+def _probe_ocr() -> dict[str, Any]:
+    """Look for an OCR engine: Tesseract (binary + pytesseract) first, RapidOCR (pure Python) second."""
+    info: dict[str, Any] = {"backend": "none", "version": None, "languages": [], "binary": None}
     try:
-        import pytesseract  # noqa: F401
+        import pytesseract
 
-        if shutil.which("tesseract"):
-            return "tesseract"
+        binary = shutil.which("tesseract")
+        if binary:
+            info.update(backend="tesseract", binary=binary)
+            try:
+                info["version"] = str(pytesseract.get_tesseract_version())
+            except Exception as exc:  # pragma: no cover - depends on the local binary
+                log.warning("tesseract found at %s but did not report a version: %s", binary, exc)
+            try:
+                info["languages"] = sorted(lang for lang in pytesseract.get_languages() if lang != "osd")
+            except Exception as exc:  # pragma: no cover - depends on the local tessdata
+                log.warning("tesseract found at %s but did not list languages: %s", binary, exc)
+            return info
     except Exception as exc:  # pragma: no cover
         log.debug("pytesseract unavailable: %s", exc)
     try:
-        import rapidocr_onnxruntime  # noqa: F401
+        import rapidocr_onnxruntime
 
-        return "rapidocr"
+        info.update(backend="rapidocr", version=getattr(rapidocr_onnxruntime, "__version__", None))
     except Exception:
-        return "none"
+        pass
+    return info
+
+
+_ocr_lock = threading.Lock()
+_ocr_cache: dict[str, Any] | None = None
+_ocr_probed_at = 0.0
+
+
+def ocr_info(*, refresh: bool = False) -> dict[str, Any]:
+    """The OCR engine this process can use: ``backend`` (tesseract | rapidocr | none), ``version``,
+    ``languages`` (tessdata packs, e.g. ['eng']) and ``binary``. A found engine is remembered for the life
+    of the process; "none" is re-checked every ``OCR_RECHECK_S`` so installing the binary into a running
+    container is picked up without a restart."""
+    global _ocr_cache, _ocr_probed_at
+    with _ocr_lock:
+        now = time.monotonic()
+        stale = _ocr_cache is None or (
+            _ocr_cache["backend"] == "none" and now - _ocr_probed_at >= OCR_RECHECK_S
+        )
+        if refresh or stale:
+            _ocr_cache = _probe_ocr()
+            _ocr_probed_at = now
+            if _ocr_cache["backend"] == "none":
+                log.warning("intake: %s", NO_OCR_WARNING)
+            else:
+                log.info(
+                    "intake: OCR backend %s %s (languages %s)",
+                    _ocr_cache["backend"],
+                    _ocr_cache["version"] or "",
+                    ",".join(_ocr_cache["languages"]) or "-",
+                )
+        return dict(_ocr_cache)
+
+
+def ocr_backend() -> str:
+    """Which OCR engine is available: 'tesseract', 'rapidocr' or 'none'."""
+    return str(ocr_info()["backend"])
 
 
 def _prep_image(data: bytes):
@@ -190,20 +248,24 @@ def extract_image(data: bytes, filename: str) -> ExtractedDocument:
     backend = ocr_backend()
     warnings: list[str] = []
     text = ""
-    if backend == "tesseract":
-        import pytesseract
+    try:
+        if backend == "tesseract":
+            import pytesseract
 
-        text = pytesseract.image_to_string(_prep_image(data), config="--psm 6")
-    elif backend == "rapidocr":
-        import numpy as np
-        from rapidocr_onnxruntime import RapidOCR
+            text = pytesseract.image_to_string(_prep_image(data), config="--psm 6")
+        elif backend == "rapidocr":
+            import numpy as np
+            from rapidocr_onnxruntime import RapidOCR
 
-        img = _prep_image(data).convert("RGB")
-        result, _ = RapidOCR()(np.array(img))
-        lines = [r[1] for r in (result or [])]
-        text = "\n".join(lines)
-    else:
-        warnings.append("no OCR engine installed (install tesseract-ocr or the 'ocr-rapid' extra)")
+            img = _prep_image(data).convert("RGB")
+            result, _ = RapidOCR()(np.array(img))
+            lines = [r[1] for r in (result or [])]
+            text = "\n".join(lines)
+        else:
+            warnings.append(NO_OCR_WARNING)
+    except Exception as exc:  # a broken engine (e.g. tesseract without tessdata) must not lose the document
+        log.warning("OCR (%s) failed on %s: %s", backend, filename, exc)
+        warnings.append(f"OCR ({backend}) failed: {type(exc).__name__}: {str(exc).splitlines()[0][:160]}")
     return ExtractedDocument(
         filename=filename,
         kind="image",

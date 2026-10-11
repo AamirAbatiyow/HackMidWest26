@@ -15,13 +15,44 @@ from dataclasses import dataclass, field
 import httpx
 
 from .. import __version__
-from ..intake.extract import ocr_backend
+from ..intake.extract import ocr_info
 from ..policy import cedar_available
 from ..service import VouchService
 
 PROBE_TTL_S = 30.0
 
-State = str  # live | fallback | off | error
+State = str  # live | fallback | off | error | down (a local dependency the host lacks)
+
+
+def ocr_health() -> dict:
+    """The ``ocr`` entry shared by /health and /v1/health: ``state`` live|down plus the engine details.
+
+    ``down`` means image invoices (PNG/JPG, scanned PDFs) cannot be read on this host: the container has
+    no Tesseract binary (``apt-get install tesseract-ocr tesseract-ocr-eng``) and no RapidOCR extra."""
+    info = ocr_info()
+    backend = info["backend"]
+    usable = backend == "rapidocr" or (backend == "tesseract" and bool(info["languages"]))
+    if backend == "none":
+        detail = (
+            "no OCR engine: tesseract binary not found and the 'ocr-rapid' extra is not installed; "
+            "image invoices are held with a clear reason until tesseract-ocr + tesseract-ocr-eng are installed"
+        )
+    elif not usable:
+        detail = (
+            f"tesseract {info['version'] or '?'} at {info['binary']} but no language data "
+            "(install tesseract-ocr-eng)"
+        )
+    elif backend == "tesseract":
+        detail = f"tesseract {info['version'] or '?'} at {info['binary']} · languages {','.join(info['languages'])}"
+    else:
+        detail = f"rapidocr {info['version'] or '?'} (pure-Python fallback, no tesseract binary)"
+    return {
+        "state": "live" if usable else "down",
+        "backend": backend,
+        "tesseract_version": info["version"] if backend == "tesseract" else None,
+        "languages": list(info["languages"]),
+        "detail": detail,
+    }
 
 
 @dataclass
@@ -285,14 +316,14 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
             "cedarpy evaluating vouch.cedar" if cedar_available() else "python mirror of the Cedar rules",
         )
     )
-    ocr = ocr_backend()
+    ocr = ocr_health()
     roles.append(
         Role(
             "ocr",
-            "Image OCR",
-            "local (pytesseract / rapidocr)",
-            "live" if ocr != "none" else "off",
-            ocr if ocr != "none" else "no OCR backend installed; image invoices need the LLM structurer",
+            "Image OCR (PNG / JPG / scanned PDF invoices)",
+            "local in the API container: tesseract-ocr + tesseract-ocr-eng (pytesseract), rapidocr fallback",
+            ocr["state"],
+            ocr["detail"],
         )
     )
 
@@ -337,7 +368,7 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
 
 def health_json(service: VouchService, probes: HealthProbes) -> dict:
     roles = build_roles(service, probes)
-    errors = [r.name for r in roles if r.state == "error"]
+    errors = [r.name for r in roles if r.state in ("error", "down")]
     s = service.settings
     llm = service.engine.llm
     out: dict = {
@@ -356,10 +387,17 @@ def health_json(service: VouchService, probes: HealthProbes) -> dict:
     }
     for r in roles:
         out[r.name] = r.as_dict()
+    out["ocr"].update({k: v for k, v in ocr_health().items() if k not in ("state", "detail")})
     return out
 
 
-_COLORS = {"live": "#1b7f3b", "fallback": "#9a6700", "off": "#6b7280", "error": "#b91c1c"}
+_COLORS = {
+    "live": "#1b7f3b",
+    "fallback": "#9a6700",
+    "off": "#6b7280",
+    "error": "#b91c1c",
+    "down": "#b91c1c",
+}
 
 
 def health_html(service: VouchService, probes: HealthProbes) -> str:
@@ -390,6 +428,7 @@ small{{color:#6b7280}} a{{color:#1d4ed8}}
 <a href="/health?format=json">JSON</a> · <a href="/docs">API docs</a> · <a href="/v1/netz">/netz</a></div>
 <table>{rows}</table>
 <p><small>States: <b>live</b> = the Akamai service answered · <b>fallback</b> = local stand-in in use ·
-<b>off</b> = not configured in this environment · <b>error</b> = configured but unreachable.
+<b>off</b> = not configured in this environment · <b>error</b> = configured but unreachable ·
+<b>down</b> = a local dependency this host lacks (e.g. the tesseract binary for image invoices).
 No secrets are shown. Refreshes every 15 s.</small></p>
 </body></html>"""

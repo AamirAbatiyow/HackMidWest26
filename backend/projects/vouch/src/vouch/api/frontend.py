@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from vouch.api.health import HealthProbes, health_html, health_json
+from vouch.api.health import HealthProbes, health_html, health_json, ocr_health
 from vouch.api.schemas import ActionBody, SettleBody
 from vouch.api.state import get_service
 
@@ -203,6 +203,7 @@ def health_v1() -> dict[str, Any]:
     svc = get_service()
     from vouch import __version__
 
+    ocr = ocr_health()
     return {
         "status": "ok",
         "service": "vouch-api",
@@ -212,6 +213,14 @@ def health_v1() -> dict[str, Any]:
         "settlement_adapter": svc.engine.adapter.name,
         "database": svc.store.backend,
         "uptime_s": svc.uptime_s(),
+        # Additive: image invoices (PNG/JPG) depend on a system binary the image must ship. `down` here
+        # is the reason an emailed PNG came out as amount 0 on a host without tesseract.
+        "ocr": {
+            "state": ocr["state"],
+            "backend": ocr["backend"],
+            "tesseract_version": ocr["tesseract_version"],
+            "languages": ocr["languages"],
+        },
     }
 
 

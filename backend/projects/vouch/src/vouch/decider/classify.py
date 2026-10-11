@@ -409,6 +409,9 @@ class IntakeClassification(BaseModel):
     kickback_code: KickbackCode | None = None
     kickback_reason: str | None = None
     kickback_draft: KickbackDraft | None = None
+    # The image / scanned PDF was not read because this host has no OCR engine (a deployment gap, not the
+    # sender's scan): the release policy holds the card under R_OCR_MISSING, naming the fix.
+    ocr_unavailable: bool = False
     missing_fields: list[str] = Field(default_factory=list)
     # Safe default: the deterministic route was ambiguous, a model was consulted and no answer passed
     # validation / admissibility -> the card waits for the owner (R_INTAKE_REVIEW), it is never paid on a guess.
@@ -575,6 +578,12 @@ def _probe_pdf(probe: DocumentProbe, data: bytes) -> None:
 
 _KIND_PRIORITY = {"pdf": 0, "xlsx": 1, "csv": 2, "image": 3, "text": 4, "unknown": 5, "email_body": 9}
 
+# The sender did nothing wrong in this case: the API host lacks the OCR engine. Kept verbatim in the
+# kickback reason so the card (R_OCR_MISSING) and the timeline say so instead of "could not be read".
+NO_OCR_DETAIL = (
+    "no OCR engine installed on this server (tesseract-ocr + tesseract-ocr-eng missing; see /v1/health → ocr)"
+)
+
 
 def _has_invoice_markers(text: str) -> bool:
     return bool(_INVOICE_MARKERS.search(text or "") or _MONEY.search(text or ""))
@@ -618,7 +627,7 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
                 if chars:
                     ambiguous.append("thin_text_layer")
             else:
-                why = "OCR found no text" if ocr_available else "no OCR engine"
+                why = "OCR found no text" if ocr_available else NO_OCR_DETAIL
                 unreadable.append(
                     ("unreadable_scan", f"{p.filename}: scanned PDF without a text layer and {why}")
                 )
@@ -626,7 +635,7 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
             if ocr_available and (chars is None or chars > 20):
                 candidates.append(("image_attachment", "image_ocr", f"{p.filename}: image, OCR available"))
             else:
-                why = "no OCR engine installed" if not ocr_available else "OCR found no text"
+                why = NO_OCR_DETAIL if not ocr_available else "OCR found no text"
                 unreadable.append(("unreadable_scan", f"{p.filename}: {why}"))
         elif kind == "xlsx":
             candidates.append(("excel_attachment", "excel_reader", f"{p.filename}: Excel workbook"))
@@ -904,10 +913,12 @@ class IntakeClassifier:
         return self.client is not None or bool(self.llm is not None and getattr(self.llm, "enabled", False))
 
     def ocr_available(self) -> bool:
+        """Pinned by the constructor (tests), otherwise asked of the extractor each time: a missing engine
+        must not be remembered here, so installing tesseract into the running container takes effect."""
         if self._ocr is None:
             from vouch.intake.extract import ocr_backend
 
-            self._ocr = ocr_backend() != "none"
+            return ocr_backend() != "none"
         return self._ocr
 
     # -- the one entry point ---------------------------------------------------------------------------
@@ -1295,6 +1306,9 @@ class IntakeClassifier:
             )
         cls.kickback_code = code  # type: ignore[assignment]
         cls.kickback_reason = detail
+        # code's own verdict only: deterministic_route reports unreadable_scan without OCR available exactly
+        # when the engine is missing (with OCR it means "OCR found no text")
+        cls.ocr_unavailable = route.code == "unreadable_scan" and not self.ocr_available()
         cls.kickback_draft = render_kickback(
             code,
             envelope,

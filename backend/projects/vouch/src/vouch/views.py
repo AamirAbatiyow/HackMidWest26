@@ -24,6 +24,7 @@ from vouch.policy import (
     R_LIMIT,
     R_LINES,
     R_LLM_AMOUNT,
+    R_OCR_MISSING,
     R_OWNER_HOLD,
     R_RING,
     R_SENDER,
@@ -33,7 +34,7 @@ from vouch.policy import (
 )
 from vouch.vendors import ring_graph
 
-QUICK_CHECK_REASONS = {R_DUPLICATE, R_SPLIT, R_LINES, R_LLM_AMOUNT, R_LIMIT, R_KICKBACK}
+QUICK_CHECK_REASONS = {R_DUPLICATE, R_SPLIT, R_LINES, R_LLM_AMOUNT, R_LIMIT, R_KICKBACK, R_OCR_MISSING}
 BANK_REASONS = {R_BANK}
 VENDOR_REASONS = {R_UNKNOWN_VENDOR, R_VENDOR_AMBIGUOUS, R_RING, R_SENDER, R_INJECTION}
 IDENTITY_REASONS = BANK_REASONS | VENDOR_REASONS  # "verify before release": identity, not paperwork

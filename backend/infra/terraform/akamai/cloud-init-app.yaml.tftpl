@@ -11,6 +11,10 @@ packages:
   - make
   - curl
   - jq
+  # OCR for image invoices. The API container carries its own copy (python-app.Dockerfile); the host copy
+  # makes `tesseract` available for debugging and for running the API outside Docker.
+  - tesseract-ocr
+  - tesseract-ocr-eng
 %{ if run_proxy ~}
   - tinyproxy
 %{ endif ~}

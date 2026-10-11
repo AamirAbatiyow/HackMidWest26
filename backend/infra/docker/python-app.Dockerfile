@@ -8,7 +8,8 @@
 #     --build-arg APP_MODULE=vouch.services.inference:app -t vouch-inference .
 #
 # EXTRAS: "--extra ml" (torch CPU for the trained model), "--extra cedar" (real Cedar engine; the Python
-# mirror is used otherwise), "--extra ocr-rapid" (OCR without the tesseract binary).
+# mirror is used otherwise), "--extra ocr-rapid" (pure-Python OCR fallback; the image already ships the
+# Tesseract binary + English data, which pytesseract needs to read PNG/JPG invoices).
 
 ARG PYTHON_VERSION=3.12
 
@@ -33,6 +34,11 @@ ARG APP_MODULE=""
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 LOG_JSON=true PORT=8000 \
     APP_MODULE=${APP_MODULE:-${PROJECT}.main:app} MODEL_REGISTRY_DIR=/app/artifacts/models \
     VOUCH_DATA_DIR=/app/data
+# Tesseract is a system binary, not a wheel: without it pytesseract has nothing to call and every image
+# invoice (PNG/JPG scan) comes out empty (amount 0, "submission could not be read"). /health -> ocr shows it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=build --chown=app:app /app/.venv /app/.venv

@@ -41,6 +41,10 @@ R_SENDER = "invoice email failed sender checks (authentication, lookalike domain
 R_OWNER_HOLD = "owner placed a hold"
 R_NOTHING = "nothing payable after credit notes"
 R_KICKBACK = "submission could not be read; a kickback email to the sender awaits the owner's approval"
+R_OCR_MISSING = (
+    "image invoice not read: this server has no OCR engine (tesseract-ocr is not installed), "
+    "so the amount, vendor and bank details could not be extracted"
+)
 R_INTAKE_REVIEW = (
     "intake routing was ambiguous and no classifier answer passed validation; owner confirms the document"
 )
@@ -61,6 +65,7 @@ REQUIRED_ACTIONS = {
     R_NOTHING: "no payment needed; credit carried forward",
     R_LINES: "owner checks the line items; the vendor re-issues a corrected invoice",
     R_KICKBACK: "owner approves the kickback email asking the sender for a readable invoice (or re-keys it from the original)",
+    R_OCR_MISSING: "install tesseract-ocr + tesseract-ocr-eng on the API host (check /v1/health → ocr is live) and re-submit the image, or re-key the invoice from the original; the sender's file may be fine",
     R_INTAKE_REVIEW: "owner confirms which document is the invoice and resolves with a note (or asks the sender for one invoice per email)",
 }
 
@@ -74,6 +79,13 @@ def build_policy(limits: Limits) -> PolicySet:
     return PolicySet(
         [
             # -- release ---------------------------------------------------------------------------
+            # First so it leads the card's explanation: an image nobody could read because the host lacks
+            # the OCR engine is a deployment gap, not "unknown vendor for $0.00".
+            forbid(
+                action="payment:release",
+                when=lambda r: _c(r, "ocr_missing") and not resolved(r),
+                description=R_OCR_MISSING,
+            ),
             permit(
                 action="payment:release",
                 when=lambda r: bool(_c(r, "vendor_found")),
@@ -225,6 +237,7 @@ def card_context(card: PaymentCard) -> dict[str, Any]:
         "limit_override": card.has_resolution("limit_override"),
         "owner_hold": _owner_hold_active(card),
         "intake_kickback": bool(card.intake and card.intake.kickback),
+        "ocr_missing": bool(card.intake and card.intake.ocr_unavailable),
         "intake_review": bool(card.intake and card.intake.review_required),
         "verified_vendor": bool(vendor and (vendor.oob_verified or len(vendor.history) >= 3)),
         "flags": card.flags,
