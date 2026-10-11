@@ -132,7 +132,7 @@ export function CommandPalette() {
 
             <CommandGroup heading="View" className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
               <CommandItem className={ITEM} onSelect={() => { ui.setFeedOpen(!ui.feedOpen); close() }}>
-                {ui.feedOpen ? 'Hide' : 'Show'} agent feed <Hint keys={SHORTCUTS.feed.keys} />
+                {ui.feedOpen ? 'Hide' : 'Show'} orchestrator timeline <Hint keys={SHORTCUTS.feed.keys} />
               </CommandItem>
               <CommandItem className={ITEM} onSelect={() => { toggle(); close() }}>
                 Toggle theme <Hint keys={SHORTCUTS.theme.keys} />

@@ -1,13 +1,13 @@
 import { Outlet } from 'react-router-dom'
 import { useGlobalShortcuts } from '@/lib/useGlobalShortcuts'
-import { AgentFeed } from './AgentFeed'
 import { CommandPalette } from './CommandPalette'
 import { ExplainDialog } from './ExplainDialog'
+import { OrchestratorTimeline } from './OrchestratorTimeline'
 import { ShortcutsDialog } from './ShortcutsDialog'
 import { StatusBar } from './StatusBar'
 import { TopBar } from './TopBar'
 
-/** 36px top bar · agent rail · routed main · 24px status strip. */
+/** 36px top bar · orchestrator timeline rail · routed main · 24px status strip. */
 export function Shell() {
   useGlobalShortcuts()
   return (
@@ -17,7 +17,7 @@ export function Shell() {
       </a>
       <TopBar />
       <div className="flex min-h-0 flex-1">
-        <AgentFeed />
+        <OrchestratorTimeline />
         <main id="main" className="flex min-h-0 min-w-0 flex-1">
           <Outlet />
         </main>
