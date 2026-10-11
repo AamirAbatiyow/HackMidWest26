@@ -254,7 +254,7 @@ def check_provenance(text: str, fact_values: Iterable[str]) -> ProvenanceReport:
 
 | Limitation | Detail |
 |------------|--------|
-| Synthetic training data | VouchNet is trained on `synth.py` output; metrics measure model fit to our assumptions, not real-world fraud. |
+| Synthetic training data | VouchNet is trained on `synth.py` output; metrics measure model fit to the generator's assumptions, not real-world fraud. |
 | Testnet settlement | XRPL testnet with faucet wallets; production needs funded accounts and an IOU issuer. |
 | Stub identity checks | Tax-id checksum, VOIP lookup, virtual-address detection are placeholders. |
 | Single-process rate limiter | 60 rpm shared across all calls; move to Valkey for multi-replica scaling. |
