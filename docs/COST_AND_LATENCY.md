@@ -111,7 +111,3 @@ This does not account for:
 - Time spent investigating and recovering (median 12-month fraud duration per ACFE)
 
 The comparison is directional: fraud prevention infrastructure is cheap relative to a single successful attack.
-
-## One Sentence for Narration
-
-> The full stack runs for about $186/month—preventing one median $141,000 small-business fraud case (ACFE 2024) would pay for over 60 years of infrastructure.

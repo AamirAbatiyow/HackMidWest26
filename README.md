@@ -10,7 +10,9 @@ Dana runs Heartland Provisions, a 40-person food wholesaler in Kansas City. Ever
 
 The [LexisNexis True Cost of Fraud 2026 study](https://risk.lexisnexis.com/about-us/press-room/press-release/20260624-tcof-retail-and-commerce) (retail and e-commerce, North America) found that every $1 of direct fraud loss costs US merchants about $5.13 once you include chargebacks, fees, labor, and merchandise replacement. For a small business owner like Dana, the real cost of a single fraudulent wire isn't just the stolen amount—it's the weeks spent chasing it.
 
-Today she checks every invoice by hand, so honest vendors wait. Vouch automates the trust decision so good invoices move fast and bad ones stop before the wire. It's built for business owners who approve payments, not for the payment rails themselves—though payment platforms could offer Vouch to their business customers in the future.
+**The full Vouch stack runs for about $186/month ($2,232/year). A single median small-business fraud case costs $141,000 ([ACFE 2024](https://www.acfe.com/-/media/files/acfe/pdfs/rttn/2024/2024-report-to-the-nations.pdf)). Stopping one case pays for more than 60 years of running Vouch ($141,000 ÷ $2,232 ≈ 63).**
+
+Today Dana checks every invoice by hand, so honest vendors wait. Vouch automates the trust decision so good invoices move fast and bad ones stop before the wire. It's built for business owners who approve payments, not for the payment rails themselves—though payment platforms could offer Vouch to their business customers in the future.
 
 ### Three Threat Types
 
@@ -21,6 +23,56 @@ Today she checks every invoice by hand, so honest vendors wait. Vouch automates 
 | **Fake / Synthetic Vendors** | Shell vendors created to siphon money; often share an account, phone, or PO box | Three "vendors" with different names all remit to the same Kansas City account |
 
 Vouch detects all three. A hold is never a denial: every hold has a resolution path (call-back to the number on file, owner review, or vendor appeal).
+
+## How It Works
+
+Vouch combines deterministic safeguards with ML scoring and LLM-powered explanations:
+
+- **The LLM never writes a number.** Intake may only quote the source verbatim; any amount the explainer mentions must exist in the kernel's fact sheet (provenance check).
+- **The deterministic kernel owns every dollar and date in integer cents.** No model can invent or modify amounts.
+- **Cedar policy is default-deny.** The model principal can never approve, settle, or touch money.
+- **Owner approval required.** The graph stops at an interrupt before settlement; money moves only after owner approval.
+
+The pipeline uses **VouchNet** (a PyTorch fraud-risk model) with **LIME explanations** for every score, **Cedar** for authorization policy, and **XRPL testnet** for settlement. The AWS **Strands Agents SDK** orchestrates a 9-node graph mixing deterministic nodes with LLM agents.
+
+## Sponsor Integration
+
+### AWS Strands Agents SDK
+
+Vouch uses the Strands Agents SDK to orchestrate a 9-node `Graph` mixing deterministic `MultiAgentBase` nodes with LLM agents:
+
+| Feature | How Vouch Uses It |
+|---------|-------------------|
+| **Graph** | Deterministic nodes (kernel, score, policy, funding) interleaved with LLM nodes (intake, investigators, explainer) |
+| **Structured Output** | Pydantic models (`IntakeExtraction`, `InvestigationReport`, `Explanations`) constrain what the LLM may return |
+| **Interrupts** | `BeforeNodeCallEvent` hook pauses the graph at `settle`; the run status is `INTERRUPTED` until the owner answers |
+| **Policy** | Cedar default-deny `PolicySet` blocks unauthorized actions at every step |
+| **Hooks** | `RateLimitHook` (60 rpm), `ApprovalHook`, latency/token stats, OpenTelemetry tracing |
+| **Strands Decider 2B** | A fast 2B-parameter decision model classifies email format and picks the extraction tool—CPU-only, ~100 ms vs 300–1400 ms for a chat model |
+| **Red-Team Suite** | 24 adversarial cases run against `ScriptedModel` fixtures: prompt injection, LLM-invented amounts, forged approvals, replayed invoices, Cedar boundary probes |
+
+### Akamai Cloud
+
+| Resource | Purpose |
+|----------|---------|
+| **Hosted Inference** | `hackathon-chat` (Llama 3.3 70B) and `hackathon-embedding` power the LLM nodes; Bedrock is the fallback via `ModelRouter` |
+| **VPC** | Three subnets: ingress/app (`10.0.1.0/24`), model (`10.0.2.0/24`), data (`10.0.3.0/24`) |
+| **Cloud Firewalls** | App Linodes accept API traffic only from the NodeBalancer; the model Linode has no public interface |
+| **NodeBalancer** | TLS termination with `/v1/health` checks, round-robin to app Linodes |
+| **Linodes** | App server (API + Strands graph), private model server (VouchNet + LIME, Decider 2B), forward proxy for outbound fetches |
+| **Managed Postgres** | pgvector-enabled, private network only, for vendor embeddings and audit records |
+| **Object Storage** | Invoice attachments, model bundles, agent session state |
+
+**Latency and tokens** are tracked per-run at `/v1/netz`; the demo makes ~6 LLM calls total.
+
+### Flex-Aligned Values
+
+Vouch is built around the belief that finance tooling should benefit both sides of a transaction:
+
+- **Both sides win**: Honest vendors get paid faster (fast-pay lane); fraud is stopped before it becomes a legal fight.
+- **Owner approval**: No money moves without the owner's explicit yes. The system may hold, never deny.
+- **No extractive finance**: No embedded lending, no float games. Settlement is pass-through to the vendor.
+- **Explanations for every decision**: LIME factors, kernel flags, and policy rules surface on every card so the owner knows *why*, not just *what*.
 
 ## Architecture
 
@@ -63,50 +115,30 @@ flowchart TB
     SETTLE --> XRPL
 ```
 
-**Key properties:**
-- The LLM never writes a number. Intake may only quote the source verbatim; any amount the explainer mentions must exist in the kernel's fact sheet (provenance check).
-- The deterministic kernel owns every dollar and date in integer cents.
-- Cedar policy is default-deny: the model principal can never approve, settle, or touch money.
-- The graph stops at an interrupt before settlement; money moves only after owner approval.
+## Trust Center
 
-## Sponsor Integration
+Vouch provides transparent, verifiable information about security controls and data handling. Key controls include:
 
-### AWS Strands Agents SDK
+- **Cedar default-deny policy**: All actions denied unless explicitly permitted; the model principal cannot approve, settle, or touch money
+- **Sender verification**: SPF/DKIM/DMARC checks, lookalike domain detection, reply-to mismatch flagging
+- **Prompt injection defenses**: Deterministic kernel checks invoice text for instructions aimed at the payment system
+- **Red-team suite**: 31+ adversarial test cases covering injection, approval manipulation, and policy violations
 
-Vouch uses the Strands Agents SDK to orchestrate a 9-node `Graph` mixing deterministic `MultiAgentBase` nodes with LLM agents:
+See [docs/TRUST_CENTER.md](docs/TRUST_CENTER.md) for the full security architecture, data handling practices, and honest disclosure of what is not yet implemented.
 
-| Feature | How Vouch Uses It |
-|---------|-------------------|
-| **Graph** | Deterministic nodes (kernel, score, policy, funding) interleaved with LLM nodes (intake, investigators, explainer) |
-| **Structured Output** | Pydantic models (`IntakeExtraction`, `InvestigationReport`, `Explanations`) constrain what the LLM may return |
-| **Interrupts** | `BeforeNodeCallEvent` hook pauses the graph at `settle`; the run status is `INTERRUPTED` until the owner answers |
-| **Policy** | Cedar default-deny `PolicySet` blocks unauthorized actions at every step |
-| **Hooks** | `RateLimitHook` (60 rpm), `ApprovalHook`, latency/token stats, OpenTelemetry tracing |
-| **Strands Decider 2B** | A fast 2B-parameter decision model classifies email format and picks the extraction tool—CPU-only, ~100 ms vs 300–1400 ms for a chat model |
-| **Red-Team Suite** | 24 adversarial cases run against `ScriptedModel` fixtures: prompt injection, LLM-invented amounts, forged approvals, replayed invoices, Cedar boundary probes |
+## Latency and Cost
 
-### Akamai Cloud
+The full Vouch stack on Akamai Cloud costs about **$0.255/hour (~$186/month)**. Latency is instrumented per-node at `/v1/latency` and visualized on the Network page.
 
-| Resource | Purpose |
-|----------|---------|
-| **Hosted Inference** | `hackathon-chat` (Llama 3.3 70B) and `hackathon-embedding` power the LLM nodes; Bedrock is the fallback via `ModelRouter` |
-| **VPC** | Three subnets: ingress/app (`10.0.1.0/24`), model (`10.0.2.0/24`), data (`10.0.3.0/24`) |
-| **Cloud Firewalls** | App Linodes accept API traffic only from the NodeBalancer; the model Linode has no public interface |
-| **NodeBalancer** | TLS termination with `/v1/health` checks, round-robin to app Linodes |
-| **Linodes** | App server (API + Strands graph), private model server (VouchNet + LIME, Decider 2B), forward proxy for outbound fetches |
-| **Managed Postgres** | pgvector-enabled, private network only, for vendor embeddings and audit records |
-| **Object Storage** | Invoice attachments, model bundles, agent session state |
+| Resource | Type | Hourly | Purpose |
+|----------|------|--------|---------|
+| App Linode | g6-standard-2 | $0.036 | API + Strands graph |
+| Model Linode | g6-standard-2 | $0.036 | VouchNet + LIME |
+| Decider Linode | g6-standard-6 | $0.144 | Strands Decider 2B |
+| Managed Postgres | g6-nanode-1 | $0.024 | pgvector, audit |
+| NodeBalancer | — | $0.015 | TLS termination |
 
-**Latency and tokens** are tracked per-run at `/v1/netz`; the demo makes ~6 LLM calls total.
-
-### Flex-Aligned Values
-
-Vouch is built around the belief that finance tooling should benefit both sides of a transaction:
-
-- **Both sides win**: Honest vendors get paid faster (fast-pay lane); fraud is stopped before it becomes a legal fight.
-- **Owner approval**: No money moves without the owner's explicit yes. The system may hold, never deny.
-- **No extractive finance**: No embedded lending, no float games. Settlement is pass-through to the vendor.
-- **Explanations for every decision**: LIME factors, kernel flags, and policy rules surface on every card so the owner knows *why*, not just *what*.
+For per-invoice marginal cost and fraud-loss context, see [docs/COST_AND_LATENCY.md](docs/COST_AND_LATENCY.md).
 
 ## Quick Start
 
@@ -164,25 +196,9 @@ The demo seeds six invoices from Dana's Friday vendor run:
 
 The owner reviews holds, approves the clean invoices, and settlement happens as one atomic XRPL `Batch` transaction.
 
-## Latency and Cost
-
-The full Vouch stack on Akamai Cloud costs about **$0.255/hour (~$186/month)**. Latency is instrumented per-node at `/v1/latency` and visualized on the Network page.
-
-| Resource | Type | Hourly | Purpose |
-|----------|------|--------|---------|
-| App Linode | g6-standard-2 | $0.036 | API + Strands graph |
-| Model Linode | g6-standard-2 | $0.036 | VouchNet + LIME |
-| Decider Linode | g6-standard-6 | $0.144 | Strands Decider 2B |
-| Managed Postgres | g6-nanode-1 | $0.024 | pgvector, audit |
-| NodeBalancer | — | $0.015 | TLS termination |
-
-**One sentence for the pitch:** *The full stack runs for about $186/month—preventing one median $141,000 small-business fraud case (ACFE 2024) would pay for decades of infrastructure.*
-
-For per-invoice marginal cost and fraud-loss context, see [docs/COST_AND_LATENCY.md](docs/COST_AND_LATENCY.md).
-
 ## Limitations
 
-- **Synthetic training data**: VouchNet is trained on data generated by `vouch/synth.py`. The held-out test metrics (95% of bad actors held, 1.1% false-positive rate) measure how well the model learns *our assumptions* about fraud patterns, not real-world performance.
+- **Synthetic training data**: VouchNet is trained on data generated by `vouch/synth.py`. The held-out test metrics (95% of bad actors held, 1.1% false-positive rate) measure how well the model learns the generator's assumptions about fraud patterns, not real-world performance.
 - **Testnet settlement**: Payments settle on the XRPL testnet with faucet-funded wallets. Production would require funded accounts and, for USD stablecoins, an IOU issuer.
 - **No real vendor integrations**: Tax id checksums, VOIP lookup, and virtual-address detection are stubs. A production system would integrate TIN validation, carrier lookup, and address-verification APIs.
 - **Clerk embedding governance**: The model includes a clerk embedding (who submitted the invoice); in production that needs governance—it's a signal for review, never an automatic action against an employee.
@@ -195,13 +211,13 @@ For per-invoice marginal cost and fraud-loss context, see [docs/COST_AND_LATENCY
 
 3. **Trust Center hardening.** Move from design documentation toward real attestations: penetration testing, SOC 2 Type II readiness, and third-party audit. This is future work; see [docs/TRUST_CENTER.md](docs/TRUST_CENTER.md) for the current security architecture and controls.
 
-## What We Learned
+## What I Learned
 
-- **System-one models.** AWS Strands Decider 2B introduced us to a new pattern: small, fast, specialized decision models that answer single-choice questions with calibrated confidence (~100 ms on CPU). We use it as an advisory layer ahead of heavier reasoning—the model routes ambiguous intake, and code validates every answer before acting on it.
+- **System-one models.** AWS Strands Decider 2B introduced a new pattern: small, fast, specialized decision models that answer single-choice questions with calibrated confidence (~100 ms on CPU). Vouch uses it as an advisory layer ahead of heavier reasoning—the model routes ambiguous intake, and code validates every answer before acting on it.
 
 - **Design tools and information density.** Claude Design and prompting with domain-specific vocabulary ("information density," "progressive disclosure," "quiet confidence") made the UI work come together faster than expected. Naming the aesthetic constraints explicitly produced more coherent results than vague requests.
 
-- **Cloud deployment and infrastructure.** Building this taught us far more about production infrastructure than any of us knew going in: Akamai Cloud VPCs and subnet isolation, Cloud Firewalls with default-deny inbound, NodeBalancer TLS termination, Managed Postgres with pgvector, Object Storage for attachments, and Terraform for repeatable deploys.
+- **Cloud deployment and infrastructure.** Building this taught me far more about production infrastructure than I knew going in: Akamai Cloud VPCs and subnet isolation, Cloud Firewalls with default-deny inbound, NodeBalancer TLS termination, Managed Postgres with pgvector, Object Storage for attachments, and Terraform for repeatable deploys.
 
 ## Repo Layout
 
