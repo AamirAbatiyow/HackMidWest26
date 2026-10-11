@@ -54,7 +54,7 @@ export function CommandPalette() {
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">Type a command or a vendor name.</DialogDescription>
         <Command className="bg-transparent" loop>
-          <CommandInput value={query} onValueChange={setQuery} placeholder="Command, vendor or invoice" className="h-9 text-sm" />
+          <CommandInput value={query} onValueChange={setQuery} placeholder="Search vendors or commands" className="h-9 text-sm" />
           <CommandList className="max-h-[360px] p-1">
             <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">No match.</CommandEmpty>
 
@@ -62,19 +62,19 @@ export function CommandPalette() {
               <>
                 <CommandGroup heading={`${active.vendor.name} · ${active.invoiceNumber}`} className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
                   <CommandItem className={ITEM} onSelect={() => void act('approve')}>
-                    Approve · add to batch <Hint keys={SHORTCUTS.approve.keys} />
+                    Approve <Hint keys={SHORTCUTS.approve.keys} />
                   </CommandItem>
                   <CommandItem className={ITEM} onSelect={() => void act('hold')}>
-                    Hold for a quick check <Hint keys={SHORTCUTS.hold.keys} />
+                    Hold <Hint keys={SHORTCUTS.hold.keys} />
                   </CommandItem>
                   <CommandItem className={ITEM} onSelect={() => void act('verify')}>
                     Mark as verified <Hint keys={SHORTCUTS.verify.keys} />
                   </CommandItem>
                   <CommandItem className={ITEM} onSelect={() => void act('appeal')}>
-                    Appeal · vendor is fine <Hint keys={SHORTCUTS.appeal.keys} />
+                    Vendor is fine <Hint keys={SHORTCUTS.appeal.keys} />
                   </CommandItem>
                   <CommandItem className={ITEM} onSelect={() => { close(); ui.setExplainOpen(true) }}>
-                    Explain this flag <Hint keys={SHORTCUTS.explain.keys} />
+                    Why flagged? <Hint keys={SHORTCUTS.explain.keys} />
                   </CommandItem>
                 </CommandGroup>
                 <CommandSeparator />
@@ -83,16 +83,14 @@ export function CommandPalette() {
 
             <CommandGroup heading="Batch" className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
               <CommandItem className={ITEM} onSelect={() => go('/approve')} disabled={batchReady.length === 0}>
-                Approve vouched payments
-                <span className="num ml-2 text-xs text-muted-foreground">
-                  {batchReady.length} · {formatMoney(batchReady.reduce((s, p) => s + p.amount, 0))}
-                </span>
+                Pay ready invoices
+                <span className="num ml-2 text-xs text-muted-foreground">{batchReady.length}</span>
                 <Hint keys={SHORTCUTS.approve.keys} />
               </CommandItem>
             </CommandGroup>
             <CommandSeparator />
 
-            <CommandGroup heading="Payables" className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
+            <CommandGroup heading="Invoices" className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
               {payments.map((p) => (
                 <CommandItem
                   key={p.id}
@@ -104,9 +102,8 @@ export function CommandPalette() {
                   }}
                 >
                   <span className="truncate">{p.vendor.name}</span>
-                  <span className="num ml-2 shrink-0 text-xs whitespace-nowrap text-muted-foreground">{p.invoiceNumber}</span>
                   <span className="num ml-auto shrink-0 text-xs">{formatMoney(p.amount)}</span>
-                  <StatusChip status={p.status} lifecycle={p.lifecycle} variant="short" className="ml-2" />
+                  <StatusChip status={p.status} lifecycle={p.lifecycle} className="ml-2" />
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -116,8 +113,8 @@ export function CommandPalette() {
               <CommandItem className={ITEM} onSelect={() => filter('all')}>Show all</CommandItem>
               <CommandItem className={ITEM} onSelect={() => filter('vouched')}>Show vouched</CommandItem>
               <CommandItem className={ITEM} onSelect={() => filter('quick_check')}>Show quick check</CommandItem>
-              <CommandItem className={ITEM} onSelect={() => filter('verify')}>Show verify before release</CommandItem>
-              <CommandItem className={ITEM} onSelect={() => filter('held')}>Show on hold</CommandItem>
+              <CommandItem className={ITEM} onSelect={() => filter('verify')}>Show verify</CommandItem>
+              <CommandItem className={ITEM} onSelect={() => filter('held')}>Show held</CommandItem>
             </CommandGroup>
             <CommandSeparator />
 
@@ -132,7 +129,7 @@ export function CommandPalette() {
 
             <CommandGroup heading="View" className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
               <CommandItem className={ITEM} onSelect={() => { ui.setFeedOpen(!ui.feedOpen); close() }}>
-                {ui.feedOpen ? 'Hide' : 'Show'} agent feed <Hint keys={SHORTCUTS.feed.keys} />
+                {ui.feedOpen ? 'Hide' : 'Show'} activity <Hint keys={SHORTCUTS.feed.keys} />
               </CommandItem>
               <CommandItem className={ITEM} onSelect={() => { toggle(); close() }}>
                 Toggle theme <Hint keys={SHORTCUTS.theme.keys} />
@@ -143,15 +140,15 @@ export function CommandPalette() {
             </CommandGroup>
             <CommandSeparator />
 
-            <CommandGroup heading={`Data source · ${mode}${preference === 'auto' ? ' (auto)' : ''}`} className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
+            <CommandGroup heading={`Data · ${mode === 'live' ? 'live' : 'demo'}`} className="[&_[cmdk-group-heading]]:label-caps [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1">
               <CommandItem className={ITEM} onSelect={() => { setPreference('auto'); close() }} disabled={preference === 'auto'}>
-                Auto · live when reachable
+                Auto
               </CommandItem>
               <CommandItem className={ITEM} onSelect={() => { setPreference('live'); close() }} disabled={preference === 'live'}>
-                Force live API
+                Live data
               </CommandItem>
               <CommandItem className={ITEM} onSelect={() => { setPreference('mock'); close() }} disabled={preference === 'mock'}>
-                Force demo data
+                Demo data
               </CommandItem>
             </CommandGroup>
           </CommandList>

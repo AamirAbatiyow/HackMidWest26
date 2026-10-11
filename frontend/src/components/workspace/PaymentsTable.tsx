@@ -1,14 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Payment, VouchStatus } from '@/api/types'
+import type { Payment, RiskType, VouchStatus } from '@/api/types'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RelationTag, relatedTo } from '@/components/vouch/RelationTag'
-import { RISK_META, RiskTag } from '@/components/vouch/RiskTag'
 import { STATUS_META, STATUS_TONE, StatusChip } from '@/components/vouch/StatusChip'
 import { ErrorState, LoadingRows } from '@/components/vouch/States'
-import { TrustMeter } from '@/components/vouch/TrustMeter'
-import { formatDueShort } from '@/lib/age'
-import { formatDate, formatMoney } from '@/lib/format'
+import { formatMoney } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePayments } from '@/store/PaymentsProvider'
 import { useUi, type LaneFilter } from '@/store/UiProvider'
@@ -21,19 +18,24 @@ const FILTERS: { id: LaneFilter; label: string }[] = [
   { id: 'vouched', label: 'Vouched' },
   { id: 'quick_check', label: 'Quick check' },
   { id: 'verify', label: 'Verify' },
-  { id: 'held', label: 'On hold' },
+  { id: 'held', label: 'Held' },
 ]
 
 const COLS = [
   { id: 'check', label: '', width: 32 },
   { id: 'vendor', label: 'Vendor', width: undefined },
-  { id: 'invoice', label: 'Invoice', width: 100 },
-  { id: 'amount', label: 'Amount', width: 88, right: true },
-  { id: 'due', label: 'Due', width: 92 },
-  { id: 'risk', label: 'Risk', width: 124 },
-  { id: 'trust', label: 'Trust', width: 80 },
-  { id: 'status', label: 'Status', width: 132 },
+  { id: 'invoice', label: 'Invoice', width: 104 },
+  { id: 'amount', label: 'Amount', width: 96, right: true },
+  { id: 'status', label: 'Status', width: 112 },
+  { id: 'reason', label: 'Why', width: 168 },
 ] as const
+
+const REASON: Record<RiskType, string> = {
+  changed_bank: 'Bank details changed',
+  duplicate_or_split: 'Possible duplicate',
+  unrecognized_vendor: 'New vendor',
+  none: 'All checks match',
+}
 
 const TH = 'h-7 px-2 text-left align-middle label-caps font-medium whitespace-nowrap'
 const TD = 'h-row px-2 py-0 align-middle whitespace-nowrap'
@@ -78,7 +80,7 @@ export function PaymentsTable({ className }: { className?: string }) {
     <section className={cn('flex min-h-0 min-w-0 flex-1 flex-col', className)} aria-label="Payment queue">
       <div className="flex h-8 shrink-0 items-center justify-between gap-4 border-b px-3">
         <p className="num truncate text-xs text-foreground/85">
-          {open.length} payments · {formatMoney(totalAll)} · <span className="text-green">{count('vouched')} vouched</span> · {count('quick_check')} quick check · {count('verify')} verify
+          {open.length} to pay · {formatMoney(totalAll)} · <span className="text-green">{count('vouched')} ready</span>
         </p>
         {checkedRows.length > 0 ? (
           <div className="flex shrink-0 items-center gap-1" role="toolbar" aria-label="Bulk actions">
@@ -174,9 +176,7 @@ function LaneGroup({ lane, onToggleChecked }: { lane: Lane; onToggleChecked: () 
             </span>
             <span className={cn('h-3 w-0.5 shrink-0', LANE_MARK[lane.status])} aria-hidden="true" />
             <span className="text-xs font-medium">{meta.label}</span>
-            <span className="num text-2xs text-muted-foreground">
-              {lane.rows.length} · {formatMoney(lane.total)}
-            </span>
+            <span className="num text-2xs text-muted-foreground">{lane.rows.length}</span>
           </button>
         </td>
       </tr>
@@ -211,29 +211,22 @@ function Row({ payment: p }: { payment: Payment }) {
       <td className={cn(TD, 'border-b')}>
         <span className="flex items-center gap-2">
           <span className="truncate font-medium text-foreground">{p.vendor.name}</span>
-          {duplicates.length > 0 && <RelationTag label={`${duplicates.length} duplicate${duplicates.length === 1 ? '' : 's'}`} onJump={() => jump(duplicates[0]!.id)} muted />}
+          {duplicates.length > 0 && <RelationTag label={duplicates.length === 1 ? 'Has copy' : `${duplicates.length} copies`} onJump={() => jump(duplicates[0]!.id)} muted />}
         </span>
       </td>
       <td className={cn(TD, 'num border-b text-xs text-foreground/85')}>{p.invoiceNumber}</td>
       <td className={cn(TD, 'num border-b text-right text-foreground')}>{formatMoney(p.amount)}</td>
-      <td className={cn(TD, 'num border-b text-xs')}>
-        <span className="text-foreground/85">{formatDate(p.dueDate)}</span>
-        <span className="ml-1.5 text-muted-foreground">{formatDueShort(p.dueDate)}</span>
-      </td>
-      <td className={cn(TD, 'border-b')} title={p.relation ? RISK_META[p.risk].label : undefined}>
-        {p.relation?.kind === 'duplicate_of' && partner ? (
-          <RelationTag label={`dup of ${partner.invoiceNumber}`} onJump={() => jump(partner.id)} />
-        ) : p.relation?.kind === 'split_with' && partner ? (
-          <RelationTag label={`split with ${partner.invoiceNumber}`} onJump={() => jump(partner.id)} />
-        ) : (
-          <RiskTag risk={p.risk} />
-        )}
-      </td>
-      <td className={cn(TD, 'border-b')}>
-        <TrustMeter score={p.trustScore} />
-      </td>
       <td className={cn(TD, 'border-b')}>
         <StatusChip status={p.status} lifecycle={p.lifecycle} />
+      </td>
+      <td className={cn(TD, 'border-b text-xs text-muted-foreground')} title={p.reason || undefined}>
+        {p.relation?.kind === 'duplicate_of' && partner ? (
+          <RelationTag label={`Copy of ${partner.invoiceNumber}`} onJump={() => jump(partner.id)} />
+        ) : p.relation?.kind === 'split_with' && partner ? (
+          <RelationTag label={`Split with ${partner.invoiceNumber}`} onJump={() => jump(partner.id)} />
+        ) : (
+          <span className="block truncate">{REASON[p.risk]}</span>
+        )}
       </td>
     </tr>
   )
