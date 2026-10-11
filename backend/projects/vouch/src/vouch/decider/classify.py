@@ -33,6 +33,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model, model_validator
@@ -145,6 +146,17 @@ EXTRACTOR_TOOLS: dict[str, tuple[str, ...]] = {
     "csv": ("csv_reader",),
     "email-body": ("body_parser",),
     "text": ("body_parser",),
+}
+# Which sniffed kinds a tool decision reads: the service applies ``extractor_for(tool)`` to attachments of
+# these kinds and the default extractor to every other attachment (the chain picks the tool for the invoice,
+# a terms-and-conditions PDF next to an Excel invoice is still read the ordinary way).
+KINDS_FOR_TOOL: dict[str, tuple[str, ...]] = {
+    "pdf_text": ("pdf",),
+    "image_ocr": ("image", "pdf"),
+    "excel_reader": ("xlsx",),
+    "csv_reader": ("csv",),
+    "body_parser": ("text", "unknown"),
+    "request_resubmission": (),
 }
 REQUIRED_FIELDS = ("vendor_name", "invoice_number", "amount")
 FIELD_LABELS = {
@@ -410,6 +422,9 @@ class IntakeClassification(BaseModel):
     agrees_with_deterministic: bool | None = None
     extractor_used: str | None = None
     agrees_with_extractor: bool | None = None
+    # True when the chain was decided from pre-extraction probes and chose the extractor (the live intake
+    # service); ``IntakeClassifier.complete`` then adds what extraction revealed.
+    before_extraction: bool = False
     notes: list[str] = Field(default_factory=list)
     at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
@@ -560,6 +575,12 @@ def _has_invoice_markers(text: str) -> bool:
     return bool(_INVOICE_MARKERS.search(text or "") or _MONEY.search(text or ""))
 
 
+def _ocr_ran(probe: DocumentProbe) -> bool:
+    """After extraction: OCR was already tried on this file (so "no text" means unreadable, not "try OCR")."""
+    extractor = probe.extractor or ""
+    return extractor.endswith("+ocr") or extractor.startswith("ocr:")
+
+
 def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Route:
     """The sniffing route: what intake decides from MIME type, extension, magic bytes and text probes.
 
@@ -587,13 +608,14 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
             if chars is None or chars > THIN_TEXT_CHARS:
                 layer = "text layer present" if chars is None else f"text layer {chars} chars"
                 candidates.append(("pdf_attachment", "pdf_text", f"{p.filename}: PDF, {layer}"))
-            elif ocr_available:
+            elif ocr_available and not _ocr_ran(p):
                 candidates.append(("pdf_attachment", "image_ocr", f"{p.filename}: PDF without a text layer"))
                 if chars:
                     ambiguous.append("thin_text_layer")
             else:
+                why = "OCR found no text" if ocr_available else "no OCR engine"
                 unreadable.append(
-                    ("unreadable_scan", f"{p.filename}: scanned PDF without a text layer and no OCR engine")
+                    ("unreadable_scan", f"{p.filename}: scanned PDF without a text layer and {why}")
                 )
         elif kind == "image":
             if ocr_available and (chars is None or chars > 20):
@@ -957,6 +979,61 @@ class IntakeClassifier:
         self.stats["reviews"] += cls.review_required
         return cls
 
+    def complete(
+        self,
+        prior: IntakeClassification,
+        probes: list[DocumentProbe],
+        envelope: EmailEnvelope | None = None,
+        *,
+        source: str = "email",
+        extractor_used: str | None = None,
+        missing_fields: Iterable[str] = (),
+    ) -> IntakeClassification:
+        """Finish a chain that ``classify`` settled *before* extraction (the live intake service).
+
+        The format and tool decisions stand and no model is consulted again; this adds what extraction
+        revealed: the extractor that actually ran, and - readability being code's call - a deterministic
+        kickback when the chosen tool found nothing usable (``unreadable_scan`` after OCR of a blank scan)
+        or the kernel could not find a required field (``missing_fields``). As in ``classify``, a kickback
+        hold supersedes the routing review (one owner action, never a payment); the adopted chain is
+        re-validated as one unit.
+        """
+        cls = prior.model_copy(deep=True)
+        cls.missing_fields = [f for f in missing_fields if f in REQUIRED_FIELDS]
+        cls.extractor_used = extractor_used
+        cls.agrees_with_extractor = None
+        if extractor_used:
+            tools = EXTRACTOR_TOOLS.get(extractor_used, ())
+            cls.agrees_with_extractor = cls.tool in tools if tools else None
+        with self._lock:
+            after = deterministic_route(probes, self.ocr_available())
+            if not cls.kickback and (after.code is not None or cls.missing_fields):
+                route = (
+                    after
+                    if after.code is not None
+                    else Route(
+                        format=cls.deterministic_format,
+                        tool=cls.deterministic_tool,
+                        ambiguous=list(cls.ambiguous),
+                    )
+                )
+                state = render_state(probes, envelope, source, cls.missing_fields)
+                cls.kickback = True
+                self._kickback(cls, route, probes, envelope, state, model_kick=False)
+                cls.notes.append(f"after extraction: {cls.kickback_reason}")
+                self.stats["kickbacks"] += 1
+                if cls.review_required:
+                    self._lift_review(cls)
+            self._check_chain(cls)
+        return cls
+
+    def _lift_review(self, cls: IntakeClassification) -> None:
+        """Same rule as ``classify``: a kickback hold already keeps the card from paying, so the routing
+        review (owner confirms the guessed route) is not asked on top of it."""
+        cls.review_required, cls.review_reason = False, None
+        cls.notes = [n for n in cls.notes if not n.startswith("owner review required")]
+        self.stats["reviews"] -= 1
+
     def _require_review(self, cls: IntakeClassification, route: Route) -> None:
         why = cls.fallback_reason or "no classifier available"
         cls.review_required = True
@@ -1271,11 +1348,17 @@ def scripted_answer(
 
 
 def extractor_for(tool: str, kind: str = "") -> Callable[[bytes, str], ExtractedDocument] | None:
-    """The deterministic extractor a tool decision maps to (``None`` for ``request_resubmission``)."""
+    """The deterministic extractor a tool decision maps to (``None`` for ``request_resubmission``).
+
+    ``kind`` is the sniffed kind of the file the tool is applied to: ``image_ocr`` on a PDF means OCR of a
+    scanned PDF, and the plain-text reader keeps an ``unknown`` kind on the record.
+    """
     from vouch.intake import extract as ex
 
     if tool == "image_ocr":
         return ex.extract_pdf_ocr if kind == "pdf" else ex.extract_image
+    if tool == "body_parser" and kind == "unknown":
+        return partial(ex.extract_text, kind="unknown")
     table: dict[str, Callable[[bytes, str], ExtractedDocument]] = {
         "pdf_text": ex.extract_pdf,
         "excel_reader": ex.extract_xlsx,
@@ -1296,6 +1379,7 @@ __all__ = [
     "FORMAT_CRITERIA",
     "FORMAT_QUESTION",
     "KICKBACK_REASONS",
+    "KINDS_FOR_TOOL",
     "REASON_CRITERIA",
     "REASON_QUESTION",
     "REQUIRED_FIELDS",

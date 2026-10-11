@@ -49,6 +49,15 @@ deterministic_route(probes)                     # MIME, extension, magic bytes, 
         └─ safe default: deterministic route + owner review hold (R_INTAKE_REVIEW); never payment
 ```
 
+In the live intake service (`VouchService.intake`) this chain runs *before* extraction: `probes_from_files`
+sniffs each attachment (MIME type, extension, magic bytes, PDF text layer; no OCR), `classifier.classify`
+settles format and tool, and `extractor_for(tool)` picks the extractor for the attachments of the kind that
+tool reads (OCR for a scanned PDF, openpyxl for the workbook, ...). Other attachments, a tool that raises,
+and `request_resubmission` fall back to the default extractor so the hash and any text stay on record; the
+tool decision and the fallback reason are written per document (card timeline, run, `intake_documents`).
+The engine then calls `classifier.complete` with what extraction revealed (extractor used, missing required
+fields, "OCR found no text"), which can only add a deterministic kickback: no second round of model calls.
+
 ### One strict Pydantic model per classifier
 
 ```python

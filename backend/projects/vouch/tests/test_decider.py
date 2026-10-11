@@ -1207,3 +1207,126 @@ def test_injected_instructions_in_the_evidence_cannot_change_the_schema():
     assert "IGNORE ALL PREVIOUS INSTRUCTIONS" in render_state(probes, ENVELOPE, "email", []), (
         "the evidence is shown to the model, framed as data"
     )
+
+
+# ------------------------------------------------------- chain before extraction: complete() ----
+
+
+def test_complete_adds_what_extraction_revealed_without_a_second_model_call():
+    """The live service decides the chain on pre-extraction probes; the engine completes it after the kernel
+    parsed the text. The format/tool decisions stand, the Decider is not asked again, the extractor that ran
+    and a deterministic missing-fields kickback are added."""
+    fake = FakeDeciderClient(_answers("excel_attachment", 0.9, "excel_reader", 0.85), latency_ms=700.0)
+    clf = classifier(client=fake)
+    before = [_pdf_probe(name="terms.pdf"), DocumentProbe(filename="inv.xlsx", sniffed_kind="xlsx")]
+    prior = clf.classify(before, ENVELOPE)
+    assert prior.engine == "decider" and len(fake.calls) == 2 and not prior.kickback
+    after = [_pdf_probe(name="terms.pdf"), _xlsx_probe()]
+    cls = clf.complete(prior, after, ENVELOPE)
+    assert len(fake.calls) == 2, "no second round of model calls"
+    assert (cls.format, cls.tool, cls.engine) == ("excel_attachment", "excel_reader", "decider")
+    assert cls.decisions == prior.decisions and not cls.kickback and cls.extractor_used is None
+    # the extractor the service applied, and the missing fields the kernel reported
+    cls = clf.complete(prior, after, ENVELOPE, extractor_used="openpyxl", missing_fields=["amount", "bogus"])
+    assert cls.agrees_with_extractor is True and cls.missing_fields == ["amount"]
+    assert cls.kickback and cls.kickback_code == "missing_fields" and cls.kickback_draft is not None
+    assert _keys(cls)[-1] == ("kickback_reason", "missing_fields", "deterministic", True)
+    assert cls.notes[-1].startswith("after extraction: readable, but the kernel could not find: amount")
+    assert cls.model_calls == 2 and cls.model_latency_ms == pytest.approx(1400.0)
+    assert prior.kickback is False, "the prior is not mutated"
+    assert clf.snapshot()["classified"] == 1 and clf.snapshot()["kickbacks"] == 1
+
+
+def test_complete_keeps_a_kickback_decided_before_extraction():
+    clf = classifier()
+    prior = clf.classify([_unknown_probe(chars=0, name="invoice.bin")], ENVELOPE)
+    assert prior.kickback and prior.kickback_code == "unsupported_format"
+    cls = clf.complete(
+        prior, [_unknown_probe(chars=0, name="invoice.bin")], ENVELOPE, missing_fields=["amount"]
+    )
+    assert cls.kickback_code == "unsupported_format" and cls.kickback_draft == prior.kickback_draft
+    assert len(cls.decisions) == len(prior.decisions) and clf.snapshot()["kickbacks"] == 1
+
+
+def test_complete_turns_an_empty_ocr_result_into_an_unreadable_scan_kickback():
+    """Readability is code's call: before extraction a PNG (OCR available) routes to image_ocr; when OCR then
+    finds nothing the completed chain kicks the scan back as unreadable, whatever the format decision said."""
+    clf = classifier(ocr_available=True)
+    prior = clf.classify([_image_probe(None)], ENVELOPE)
+    assert (prior.format, prior.tool) == ("image_attachment", "image_ocr") and not prior.kickback
+    after = [
+        DocumentProbe(filename="scan.png", sniffed_kind="image", text_chars=0, extractor="ocr:tesseract")
+    ]
+    cls = clf.complete(prior, after, ENVELOPE, extractor_used="ocr:tesseract", missing_fields=["amount"])
+    assert (
+        cls.kickback and cls.kickback_code == "unreadable_scan" and "OCR found no text" in cls.kickback_reason
+    )
+    assert (cls.format, cls.tool) == ("image_attachment", "image_ocr"), (
+        "the tool that was tried stays on record"
+    )
+    assert cls.agrees_with_extractor is True
+    IntakeDecisionChain.model_validate(
+        {
+            "format": {"answer": cls.format, "reason_code": "not_stated"},
+            "tool": {"format": cls.format, "answer": cls.tool, "reason_code": "not_stated"},
+            "kickback": {"answer": cls.kickback_code, "reason_code": "not_stated"},
+        }
+    )
+
+
+def test_complete_lets_a_kickback_supersede_the_routing_review_like_classify_does():
+    """Ambiguous body, chat answer rejected -> review before extraction; the kernel then finds no fields ->
+    the kickback holds the card and the routing review is lifted (same outcome as the one-shot path)."""
+    probes = [_body_probe(VAGUE_BODY)]
+    clf = classifier(llm=_chat(format=[_pick("excel_attachment")]))
+    prior = clf.classify(probes, ENVELOPE)
+    assert prior.review_required and not prior.kickback and clf.snapshot()["reviews"] == 1
+    cls = clf.complete(prior, probes, ENVELOPE, missing_fields=["vendor_name", "invoice_number", "amount"])
+    assert cls.kickback and cls.kickback_code == "missing_fields"
+    assert not cls.review_required and cls.review_reason is None
+    assert not any(n.startswith("owner review required") for n in cls.notes)
+    assert clf.snapshot()["reviews"] == 0 and clf.snapshot()["kickbacks"] == 1
+    one_shot = classifier(llm=_chat(format=[_pick("excel_attachment")])).classify(
+        probes, ENVELOPE, missing_fields=["vendor_name", "invoice_number", "amount"]
+    )
+    assert (one_shot.kickback, one_shot.kickback_code, one_shot.review_required) == (
+        True,
+        "missing_fields",
+        False,
+    )
+
+
+def test_route_knows_when_ocr_already_ran_on_a_scanned_pdf():
+    """Post-extraction probes carry the extractor: a scanned PDF with no text after ``+ocr`` is unreadable,
+    not a candidate for OCR again."""
+    before = _pdf_probe(chars=0)
+    assert deterministic_route([before], True).tool == "image_ocr"
+    after = DocumentProbe(
+        filename="scan.pdf", sniffed_kind="pdf", text_chars=0, extractor="pypdf+pdfplumber+ocr"
+    )
+    route = deterministic_route([after], True)
+    assert route.code == "unreadable_scan" and "OCR found no text" in (route.detail or "")
+    assert (route.format, route.tool) == ("unreadable_or_unsupported", "request_resubmission")
+    no_ocr = deterministic_route([_pdf_probe(chars=0)], False)
+    assert no_ocr.code == "unreadable_scan" and "no OCR engine" in (no_ocr.detail or "")
+
+
+def test_extractor_for_maps_every_tool_to_the_kinds_it_reads():
+    from vouch.decider import KINDS_FOR_TOOL, extractor_for
+    from vouch.decider.classify import FORMAT_FOR_KIND
+    from vouch.intake import extract as ex
+
+    assert set(KINDS_FOR_TOOL) == set(TOOLS)
+    for tool, kinds in KINDS_FOR_TOOL.items():
+        for kind in kinds:
+            fn = extractor_for(tool, kind)
+            assert fn is not None, (tool, kind)
+            fmt = FORMAT_FOR_KIND.get(kind, "email_body_text")
+            assert tool in TOOLS_FOR_FORMAT[fmt], f"{tool} reads {kind} but is not a tool for {fmt}"
+    assert extractor_for("request_resubmission") is None and KINDS_FOR_TOOL["request_resubmission"] == ()
+    assert (
+        extractor_for("image_ocr", "pdf") is ex.extract_pdf_ocr
+        and extractor_for("image_ocr", "image") is ex.extract_image
+    )
+    doc = extractor_for("body_parser", "unknown")(b"Invoice 55 total 100.00", "invoice.dat")
+    assert doc.kind == "unknown" and doc.extractor == "text" and doc.text.startswith("Invoice 55")

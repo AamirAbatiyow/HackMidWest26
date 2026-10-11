@@ -321,7 +321,25 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                         if ev.get("kickback")
                         else ""
                     )
-                    + (" · owner review required" if ev.get("review_required") else ""),
+                    + (" · owner review required" if ev.get("review_required") else "")
+                    + (
+                        " · decided before extraction; the tool decision chose the extractor"
+                        if ev.get("before_extraction")
+                        else ""
+                    ),
+                    "kind": "check",
+                }
+            )
+        elif name == "document_extracted":
+            k += 1
+            events.append(
+                {
+                    "id": f"t{k}",
+                    "date": ev["at"],
+                    "title": f"Extracted {ev.get('filename')} with {ev.get('extractor')}",
+                    "detail": f"tool decision {ev.get('tool')}"
+                    + (f" · fallback: {ev['fallback']}" if ev.get("fallback") else " · as decided")
+                    + (f" · {'; '.join(ev['warnings'])}" if ev.get("warnings") else ""),
                     "kind": "check",
                 }
             )

@@ -43,7 +43,7 @@ from vouch.agents import (
 from vouch.cards import Investigation, PaymentCard, now_iso
 from vouch.config import Settings, get_settings
 from vouch.contracts import EmailEnvelope, SenderFindings, VendorClaim, email_domain
-from vouch.decider.classify import IntakeClassifier, probes_from_submission
+from vouch.decider.classify import IntakeClassification, IntakeClassifier, probes_from_submission
 from vouch.decider.client import DeciderClient
 from vouch.decider.intervention import GroundingIntervention
 from vouch.domain import CardStatus, Invoice, Lane, LineItem, PastPayment, Resolution, Vendor
@@ -92,7 +92,15 @@ class Submission(BaseModel):
     )
     received_at: str | None = None
     documents: list[dict[str, Any]] = Field(
-        default_factory=list, description="Extracted documents: filename, kind, sha256, extractor"
+        default_factory=list,
+        description="Extracted documents: filename, kind, sha256, extractor (+ tool, fallback when the "
+        "intake service chose the extractor from the tool decision)",
+    )
+    routing: dict[str, Any] | None = Field(
+        None,
+        description="Decision chain settled before extraction by the intake service (an "
+        "IntakeClassification); the engine completes it instead of asking a model again. Never "
+        "accepted from API clients.",
     )
     vendor_id: str | None = None
     vendor_name: str | None = None
@@ -357,29 +365,52 @@ class VouchEngine:
         The decision chain (format -> extraction tool -> kickback reason) is recorded on the card, one
         timeline entry per decision, and surfaced in the payment view; a kickback only adds a hold whose
         draft email the owner must approve. Any failure leaves the card as is.
+
+        The live intake service settles the chain *before* extraction and picks the extractor from the tool
+        decision (``sub.routing``); here that chain is completed with what extraction revealed (no second
+        model call). Submissions that arrive with text or documents only are classified after the fact.
         """
         try:
             probes = probes_from_submission(sub.documents, sub.text)
-            extractor = next(
-                (
-                    str(d["extractor"])
-                    for d in sub.documents
-                    if d.get("extractor") and d.get("kind") != "email_body"
-                ),
-                None,
-            )
-            cls = self.classifier.classify(
-                probes,
-                self._envelope(sub),
-                source=sub.source or "text",
-                extractor_used=extractor,
-                missing_fields=self.missing_required_fields(card, sub),
-            )
+            attachments = [d for d in sub.documents if d.get("extractor") and d.get("kind") != "email_body"]
+            # The extractor the chain actually chose, when the service applied one; else the first attachment's.
+            routed = [d for d in attachments if d.get("tool") and not d.get("fallback")]
+            extractor = next((str(d["extractor"]) for d in routed or attachments), None)
+            missing = self.missing_required_fields(card, sub)
+            if sub.routing:
+                prior = IntakeClassification.model_validate(sub.routing)
+                cls = self.classifier.complete(
+                    prior,
+                    probes,
+                    self._envelope(sub),
+                    source=sub.source or "text",
+                    extractor_used=extractor,
+                    missing_fields=missing,
+                )
+            else:
+                cls = self.classifier.classify(
+                    probes,
+                    self._envelope(sub),
+                    source=sub.source or "text",
+                    extractor_used=extractor,
+                    missing_fields=missing,
+                )
         except Exception as exc:  # routing is advisory; it must never break intake
             log.warning("intake classification failed for %s: %s", card.id, exc)
             card.log("intake_classification_failed", error=f"{type(exc).__name__}: {exc}")
             return
         card.intake = cls
+        for d in sub.documents:
+            if "tool" in d:  # the service chose the extractor from the tool decision: one entry per file
+                card.log(
+                    "document_extracted",
+                    filename=d.get("filename"),
+                    kind=d.get("kind"),
+                    extractor=d.get("extractor"),
+                    tool=d.get("tool"),
+                    fallback=d.get("fallback"),
+                    warnings=list(d.get("warnings") or []),
+                )
         for d in cls.decisions:
             card.log(
                 "intake_decision",
@@ -415,6 +446,8 @@ class VouchEngine:
             llm_calls=cls.llm_calls,
             model_latency_ms=cls.model_latency_ms,
             tokens=cls.tokens,
+            before_extraction=cls.before_extraction,
+            extractor_used=cls.extractor_used,
         )
         if cls.review_required:
             card.log(

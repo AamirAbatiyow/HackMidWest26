@@ -102,3 +102,60 @@ def test_reset_clears_runs_but_keeps_vendors(settings, tmp_path, db_url):
     counts = svc.store.counts()
     assert counts["runs"] == 0 and counts["payment_cards"] == 0
     assert counts["vendors"] >= 36 and svc.payments() == []
+
+
+def test_opening_an_older_database_adds_the_columns_this_version_declares(db_url):
+    """``create_all`` never alters existing tables: a store created before the per-document tool decision
+    (``intake_documents.tool`` / ``fallback``) and the strict-schema audit fields (``intake_decisions.
+    reason_code`` / ``validation_errors``) gains the columns on open, and the new rows write cleanly."""
+    from sqlalchemy import create_engine, inspect, text
+
+    old = create_engine(db_url)
+    with old.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE intake_documents (id VARCHAR(64) PRIMARY KEY, run_id VARCHAR(64), "
+                "card_id VARCHAR(64), filename VARCHAR(255), kind VARCHAR(16), sha256 VARCHAR(64), "
+                "extractor VARCHAR(40), storage_key VARCHAR(255), text_excerpt TEXT, created_at DATETIME)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO intake_documents (id, filename, kind, sha256, extractor, text_excerpt) "
+                "VALUES ('doc_old', 'old.pdf', 'pdf', 'abc', 'pypdf+pdfplumber', '')"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE intake_decisions (id VARCHAR(64) PRIMARY KEY, run_id VARCHAR(64), "
+                "card_id VARCHAR(64) NOT NULL, seq INTEGER, key VARCHAR(32), question TEXT, options JSON, "
+                "answer VARCHAR(64), accepted BOOLEAN, engine VARCHAR(32), confidence FLOAT, latency_ms FLOAT, "
+                "input_tokens INTEGER, output_tokens INTEGER, attempts INTEGER, error TEXT, note TEXT, "
+                "created_at DATETIME)"
+            )
+        )
+    old.dispose()
+    store = AuditStore(db_url)
+    columns = {c["name"] for c in inspect(store.engine).get_columns("intake_documents")}
+    assert {"tool", "fallback"} <= columns
+    decision_columns = {c["name"] for c in inspect(store.engine).get_columns("intake_decisions")}
+    assert {"reason_code", "validation_errors"} <= decision_columns
+    store.record_document(
+        "run_1", "run_1.1", "inv.xlsx", "xlsx", "def", "openpyxl", "Invoice", None,
+        tool="excel_reader", fallback=None,
+    )  # fmt: skip
+    docs = store.audit_trail("run_1.1")["documents"]
+    assert docs == [
+        {
+            "filename": "inv.xlsx",
+            "kind": "xlsx",
+            "sha256": "def",
+            "extractor": "openpyxl",
+            "tool": "excel_reader",
+            "fallback": None,
+            "storage_key": None,
+        }
+    ]
+    assert store.counts()["documents"] == 2, "the pre-existing row is kept"
+    # idempotent: a second open finds nothing to add
+    AuditStore(db_url)

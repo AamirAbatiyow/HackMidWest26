@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, create_engine, select, text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
@@ -133,6 +133,9 @@ class DocumentRow(Base):
     kind: Mapped[str] = mapped_column(String(16))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     extractor: Mapped[str] = mapped_column(String(40))
+    # The chain's tool decision and, when the default extractor ran instead of that tool's, why.
+    tool: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fallback: Mapped[str | None] = mapped_column(Text, nullable=True)
     storage_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     text_excerpt: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -209,11 +212,32 @@ def _json(obj: Any) -> Any:
     return json.loads(json.dumps(obj, default=str))
 
 
+def _ensure_columns(engine: Engine) -> None:
+    """Add columns this version declares on tables an older deployment already created.
+
+    ``create_all`` only creates missing tables. Columns are added without NOT NULL so existing rows stay
+    valid; new rows always carry the Python-side defaults.
+    """
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"
+                log.info("audit store: %s", ddl)
+                conn.execute(text(ddl))
+
+
 class AuditStore:
     def __init__(self, url: str) -> None:
         self.url = url
         self.engine = make_engine(url)
         Base.metadata.create_all(self.engine)
+        _ensure_columns(self.engine)
 
     @classmethod
     def open(cls, url: str, fallback_url: str | None = None) -> AuditStore:
@@ -503,6 +527,9 @@ class AuditStore:
         extractor: str,
         text_excerpt: str,
         storage_key: str | None,
+        *,
+        tool: str | None = None,
+        fallback: str | None = None,
     ) -> None:
         with self.session() as s:
             s.add(
@@ -514,6 +541,8 @@ class AuditStore:
                     kind=kind,
                     sha256=sha256,
                     extractor=extractor,
+                    tool=tool,
+                    fallback=fallback,
                     text_excerpt=text_excerpt[:4000],
                     storage_key=storage_key,
                 )
@@ -719,6 +748,8 @@ class AuditStore:
                         "kind": d.kind,
                         "sha256": d.sha256,
                         "extractor": d.extractor,
+                        "tool": d.tool,
+                        "fallback": d.fallback,
                         "storage_key": d.storage_key,
                     }
                     for d in docs
