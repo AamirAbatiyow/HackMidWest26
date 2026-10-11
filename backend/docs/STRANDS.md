@@ -31,17 +31,22 @@ Decider responses are wrapped in Pydantic models for type safety:
 ```python
 from pydantic import BaseModel
 
+
 class DeciderChoice(BaseModel):
     choice: str
     confidence: float
     probabilities: dict[str, float]
 
+
 class EmailFormatDecision(DeciderChoice):
     """Which email format is this? forwarded_invoice | direct_vendor | payment_notification | other"""
+
     pass
+
 
 class ParserToolDecision(DeciderChoice):
     """Which parser tool? pdf | text | ocr | spreadsheet"""
+
     pass
 ```
 

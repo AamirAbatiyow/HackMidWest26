@@ -1,26 +1,21 @@
 # Shared libraries (uv workspace members)
 
-## hm_storage
+## hm_storage (packages/storage)
 
-S3-compatible object storage wrapper with local-disk fallback for invoice files,
-attachments, and audit artifacts.
+S3-compatible object storage, Postgres (SQLAlchemy + pgvector), and Valkey/Redis helpers.
 
-Reads credentials from environment variables with fallback naming:
-- `OBJ_ACCESS_KEY` or `LINODE_OBJ_ACCESS_KEY` (OBJ_* takes precedence)
-- `OBJ_SECRET_KEY` or `LINODE_OBJ_SECRET_KEY`
-- `OBJ_ENDPOINT`, `OBJ_BUCKET`, `OBJ_REGION`
+Reads credentials from environment variables with multiple naming conventions:
+- `OBJECT_STORAGE_ACCESS_KEY` (pydantic default)
+- `OBJ_ACCESS_KEY` (preferred short form)
+- `LINODE_OBJ_ACCESS_KEY` (fallback for stored credentials)
 
-When credentials are unset, files are stored locally under `data/objects/` so
-tests and CI run without cloud access.
+Same pattern applies to `*_SECRET_KEY`, `*_ENDPOINT`, `*_BUCKET`, `*_REGION`.
 
 ```python
 from hm_storage import ObjectStore
 
 store = ObjectStore()  # reads config from env
-store.put_invoice("inv-123", "invoice.pdf", pdf_bytes)
-store.put_attachment("inv-123", "receipt.png", image_bytes)
-store.put_audit_artifact("inv-123", "lime.json", json_bytes)
-
-# Health check
-ok, desc = store.ping()
+store.put_bytes("invoices/inv-123/doc.pdf", pdf_bytes)
+data = store.get_bytes("invoices/inv-123/doc.pdf")
+keys = store.list_keys("invoices/inv-123/")
 ```

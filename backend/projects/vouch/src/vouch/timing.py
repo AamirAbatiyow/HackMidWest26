@@ -21,10 +21,11 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Callable, Iterator, TypeVar
+from typing import TypeVar
 
 F = TypeVar("F", bound=Callable)
 
