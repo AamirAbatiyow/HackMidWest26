@@ -1,35 +1,79 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { buildFeedScript, type FeedAgent, type FeedEvent, type FeedLevel } from '@/data/feed'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useApi } from '@/api/ApiProvider'
+import { buildFeedScript, runEventToFeedEvent, type FeedAgent, type FeedEvent, type FeedLevel } from '@/data/feed'
 import { cn } from '@/lib/utils'
 import { usePayments } from '@/store/PaymentsProvider'
 import { useUi } from '@/store/UiProvider'
 
-const KEEP = 8
+const KEEP = 12
 const BACKLOG = 8
+const LIVE_POLL_MS = 2000
 
-type Step = 'read' | 'screen' | 'check' | 'score' | 'policy'
-const STEP_OF: Record<FeedAgent, Step> = { reader: 'read', screener: 'screen', checker: 'check', scorer: 'score', policy: 'policy', writer: 'policy' }
-const STEPS: Step[] = ['read', 'screen', 'check', 'score', 'policy']
+type Step = 'read' | 'screen' | 'check' | 'score' | 'policy' | 'intake' | 'settlement'
+const STEP_OF: Record<FeedAgent, Step> = {
+  reader: 'read',
+  screener: 'screen',
+  checker: 'check',
+  scorer: 'score',
+  policy: 'policy',
+  writer: 'policy',
+  intake: 'intake',
+  settlement: 'settlement',
+}
+const STEPS: Step[] = ['intake', 'read', 'screen', 'check', 'score', 'policy', 'settlement']
 
 const levelTone: Record<FeedLevel, string> = { info: 'text-muted-foreground', ok: 'text-foreground/85', flag: 'text-amber', hold: 'text-amber' }
 const levelGlyph: Record<FeedLevel, string> = { info: '·', ok: '✓', flag: '!', hold: '■' }
 
 /**
  * Agent log. Collapsed: a 36px rail with a live dot and the number of
- * checks completed. Expanded: the last 8 events grouped by step.
+ * checks completed. Expanded: the last 12 events grouped by step.
+ * In live mode, polls /v1/runs for real events; falls back to generated script in mock mode.
  */
 export function AgentFeed({ className }: { className?: string }) {
-  const { payments } = usePayments()
+  const { payments, reload } = usePayments()
+  const { api, mode } = useApi()
   const { activeId, open, feedOpen, setFeedOpen, feedPaused, setFeedPaused } = useUi()
   const script = useMemo(() => buildFeedScript(payments), [payments])
   const [events, setEvents] = useState<FeedEvent[]>([])
   const [checksDone, setChecksDone] = useState(0)
   const cursor = useRef(0)
   const seq = useRef(0)
+  const lastEventSeq = useRef<Record<string, number>>({})
+  const prevPaymentCount = useRef(payments.length)
+
+  const pollLiveEvents = useCallback(async () => {
+    try {
+      const runs = await api.listRuns()
+      const activeRuns = runs.filter((r) => r.status === 'running' || r.status === 'awaiting_approval')
+      let newEvents: FeedEvent[] = []
+      for (const run of activeRuns.slice(0, 3)) {
+        const afterSeq = lastEventSeq.current[run.id] ?? 0
+        const result = await api.getRunEvents(run.id, afterSeq)
+        for (const ev of result.events) {
+          const feedEv = runEventToFeedEvent(ev, payments)
+          if (feedEv) {
+            newEvents.push(feedEv)
+            lastEventSeq.current[run.id] = Math.max(lastEventSeq.current[run.id] ?? 0, ev.seq)
+          }
+        }
+      }
+      if (newEvents.length > 0) {
+        setEvents((prev) => [...prev.slice(-(KEEP - newEvents.length)), ...newEvents])
+        const checkerEvents = newEvents.filter((e) => e.agent === 'checker').length
+        if (checkerEvents > 0) setChecksDone((n) => n + checkerEvents)
+      }
+      if (payments.length !== prevPaymentCount.current) {
+        prevPaymentCount.current = payments.length
+        void reload()
+      }
+    } catch {
+      /* polling errors are silent */
+    }
+  }, [api, payments, reload])
 
   useEffect(() => {
     if (script.length === 0) return
-    // Seed one line per step across different payments so every group has context.
     const n = Math.min(BACKLOG, script.length)
     const stride = Math.max(1, Math.floor(script.length / n))
     const seed = Array.from({ length: n }, (_, i) => script[(i * stride + i) % script.length]!)
@@ -39,7 +83,13 @@ export function AgentFeed({ className }: { className?: string }) {
   }, [script])
 
   useEffect(() => {
-    if (feedPaused || script.length === 0) return
+    if (feedPaused) return
+    if (mode === 'live') {
+      void pollLiveEvents()
+      const t = setInterval(() => void pollLiveEvents(), LIVE_POLL_MS)
+      return () => clearInterval(t)
+    }
+    if (script.length === 0) return
     let timer: ReturnType<typeof setTimeout>
     const tick = () => {
       const line = script[cursor.current % script.length]!
@@ -50,7 +100,7 @@ export function AgentFeed({ className }: { className?: string }) {
     }
     timer = setTimeout(tick, 900)
     return () => clearTimeout(timer)
-  }, [feedPaused, script])
+  }, [feedPaused, script, mode, pollLiveEvents])
 
   const grouped = STEPS.map((step) => ({ step, items: events.filter((e) => STEP_OF[e.agent] === step) })).filter((g) => g.items.length > 0)
   const status = `${checksDone} checks done`
