@@ -408,6 +408,14 @@ class VouchService:
         self.store.record_policy(
             card.run_id, card.id, outcome.engine, principal.lower(), action, outcome.allowed, outcome.reasons
         )
+        card.log(
+            "authorized",
+            principal=principal,
+            action=action,
+            engine=outcome.engine,
+            allowed=outcome.allowed,
+            rules=list(outcome.reasons),
+        )
         if not outcome.allowed:
             raise ForbiddenError(
                 f"{action} denied by policy ({outcome.engine}): {', '.join(outcome.reasons)}",
