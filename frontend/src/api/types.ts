@@ -154,24 +154,6 @@ export interface RedTeamReport {
   runAt: string
 }
 
-export interface CountryParity {
-  country: CountryCode
-  label: string
-  payments: number
-  heldShare: number
-  avgDelayDays: number
-}
-
-export interface FairnessReport {
-  period: string
-  fraudCaught: { count: number; amount: number; examples: string[] }
-  honestAffected: { blocked: number; quickChecks: number; avgResolveMinutes: number }
-  heldShare: number
-  avgDelayDays: number
-  newSmallVendorsOnTime: number
-  parity: CountryParity[]
-}
-
 export interface ApiInfo {
   model: string | null
   policyMode: string | null
@@ -431,7 +413,6 @@ export interface VouchApi {
   settleBatch(paymentIds: string[], funding: FundingChoice): Promise<SettlementReceipt>
   getNetwork(): Promise<NetworkStatus>
   getRedTeam(): Promise<RedTeamReport>
-  getFairness(): Promise<FairnessReport>
   getHealth(): Promise<HealthStatus>
   getInfo(): Promise<ApiInfo>
   getLatency(): Promise<LatencyStats>

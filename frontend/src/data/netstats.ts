@@ -1,5 +1,51 @@
 import type { LatencyStats, TopologyData } from '@/api/types'
 
+/** True once at least one run has been timed; before that the page shows a prompt instead of dashes. */
+export function hasTimings(latency: LatencyStats): boolean {
+  const counts = [
+    ...Object.values(latency.pipelineSteps).map((s) => s.count),
+    ...Object.values(latency.inference).map((s) => s.count),
+    latency.decider.count,
+  ]
+  return counts.some((n) => n > 0)
+}
+
+/** The ten backend timers folded into the five steps an owner recognises. */
+export const STEP_GROUPS: { step: string; members: string[] }[] = [
+  { step: 'read', members: ['reader', 'sender_check', 'vendor_resolution'] },
+  { step: 'checks', members: ['detector_amount', 'detector_bank', 'detector_duplicate', 'detector_ring'] },
+  { step: 'score', members: ['scorer'] },
+  { step: 'policy', members: ['policy'] },
+  { step: 'write', members: ['writer'] },
+]
+
+/**
+ * Compact per-step waterfall: the latest run when the backend has one, otherwise rolling p50s.
+ * Groups with no sample are dropped rather than drawn as a dash.
+ */
+export function compactWaterfall(latency: LatencyStats): { runId: string | null; steps: { step: string; latencyMs: number }[] } {
+  const latest = new Map(latency.lastRunWaterfall?.steps.map((s) => [s.step, s.latencyMs]) ?? [])
+  const useLatest = [...latest.values()].some((v) => v != null)
+  const source = (name: string): number | null => (useLatest ? (latest.get(name) ?? null) : (latency.pipelineSteps[name]?.p50Ms ?? null))
+  const steps: { step: string; latencyMs: number }[] = []
+  for (const g of STEP_GROUPS) {
+    const samples = g.members.map(source).filter((v): v is number => v != null)
+    if (samples.length > 0) steps.push({ step: g.step, latencyMs: samples.reduce((a, b) => a + b, 0) })
+  }
+  return { runId: useLatest ? (latency.lastRunWaterfall?.runId ?? null) : null, steps }
+}
+
+export const EMPTY_TIMINGS_TITLE = 'Send an invoice to see live timings'
+export const EMPTY_TIMINGS_DESCRIPTION = 'No runs yet. Per-step, inference, Postgres, Object Storage and Decider timings appear here after the first invoice is processed.'
+
+/** Running cost of the stack, set against one median small-business fraud case. */
+export const COST_LINE = {
+  before: 'The full Vouch stack runs for about $186/month ($2,232/year). A single median fraud case at organizations with fewer than 100 employees costs $141,000 (',
+  linkText: 'ACFE 2024',
+  linkHref: 'https://www.acfe.com/-/media/files/acfe/pdfs/rttn/2024/2024-report-to-the-nations.pdf',
+  after: '). Stopping one case pays for more than 60 years of running Vouch ($141,000 ÷ $2,232 ≈ 63).',
+} as const
+
 export const DEMO_LATENCY: LatencyStats = {
   updatedAt: new Date().toISOString(),
   region: 'us-ord (Chicago)',

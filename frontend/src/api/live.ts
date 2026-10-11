@@ -3,7 +3,6 @@ import type {
   ChecklistItem,
   CountryCode,
   EvidenceFactor,
-  FairnessReport,
   LatencyStats,
   Lifecycle,
   NetworkStatus,
@@ -18,7 +17,6 @@ import type {
   VouchApi,
   VouchStatus,
 } from './types'
-import { DEMO_FAIRNESS } from '@/data/fairness'
 
 export class ApiError extends Error {
   readonly status?: number
@@ -593,17 +591,6 @@ export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): V
 
     async getRedTeam() {
       return normalizeRedTeam(await request<unknown>('/redteam'))
-    },
-
-    async getFairness() {
-      try {
-        const raw = asRecord(await request<unknown>('/fairness'))
-        if (Object.keys(raw).length === 0) return DEMO_FAIRNESS
-        return { ...DEMO_FAIRNESS, ...(raw as Partial<FairnessReport>) }
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return DEMO_FAIRNESS
-        throw err
-      }
     },
 
     async getHealth() {

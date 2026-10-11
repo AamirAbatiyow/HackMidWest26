@@ -1,10 +1,9 @@
 import { useApi } from '@/api/ApiProvider'
 import type { LatencyStats, TopologyData } from '@/api/types'
 import { useAsync } from '@/api/useAsync'
-import { Sparkline } from '@/components/vouch/Sparkline'
-import { ErrorState, LoadingRows } from '@/components/vouch/States'
-import { Block, DenseTable, PageFrame, Td, Th } from '@/components/vouch/Table'
-import { series } from '@/data/series'
+import { EmptyState, ErrorState, LoadingRows } from '@/components/vouch/States'
+import { Block, PageFrame } from '@/components/vouch/Table'
+import { COST_LINE, compactWaterfall, EMPTY_TIMINGS_DESCRIPTION, EMPTY_TIMINGS_TITLE, hasTimings } from '@/data/netstats'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -24,6 +23,11 @@ const TIER_TEXT_COLORS: Record<string, string> = {
 
 const NODE_W = 110
 const NODE_H = 32
+
+/** "12 ms", or a plain dash when nothing was measured (never "— ms"). */
+function ms(v: number | null | undefined): string {
+  return v == null ? '—' : `${v} ms`
+}
 
 function TopologyDiagram({ topology, latency }: { topology: TopologyData; latency: LatencyStats }) {
   const nodeMap = new Map(topology.nodes.map((n) => [n.id, n]))
@@ -126,7 +130,11 @@ function TopologyDiagram({ topology, latency }: { topology: TopologyData; latenc
 }
 
 function WaterfallChart({ steps }: { steps: { step: string; latencyMs: number | null }[] }) {
-  const maxMs = Math.max(...steps.map((s) => s.latencyMs ?? 0), 1)
+  // Bars are laid end to end, so the track is the run total, not the longest step.
+  const maxMs = Math.max(
+    steps.reduce((s, x) => s + (x.latencyMs ?? 0), 0),
+    1,
+  )
   let cumulative = 0
 
   return (
@@ -145,7 +153,7 @@ function WaterfallChart({ steps }: { steps: { step: string; latencyMs: number | 
                 style={{ left: `${offset}%`, width: `${Math.max(width, 1)}%` }}
               />
             </div>
-            <span className="num w-12 text-right text-foreground">{s.latencyMs ?? '—'} ms</span>
+            <span className="num w-12 text-right text-foreground">{ms(s.latencyMs)}</span>
           </div>
         )
       })}
@@ -153,17 +161,65 @@ function WaterfallChart({ steps }: { steps: { step: string; latencyMs: number | 
   )
 }
 
-function StatTile({ label, value, unit = 'ms', tone = 'neutral', sparkValues }: { label: string; value: number | null; unit?: string; tone?: 'neutral' | 'amber' | 'accent'; sparkValues?: number[] }) {
+/** One number, one line of context. No sparkline: there is nothing honest to draw from a handful of runs. */
+function StatTile({ label, value, note, tone = 'neutral' }: { label: string; value: number | null; note: string; tone?: 'neutral' | 'accent' }) {
   return (
-    <div className="flex flex-col gap-1 rounded-sm border bg-surface-1/50 p-3">
-      <span className="text-2xs uppercase tracking-wider text-muted-foreground">{label}</span>
-      <div className="flex items-end justify-between gap-2">
-        <span className={cn('num text-lg font-medium', tone === 'amber' ? 'text-amber' : tone === 'accent' ? 'text-accent-cool' : 'text-foreground')}>
-          {value != null ? `${value} ${unit}` : '—'}
-        </span>
-        {sparkValues && sparkValues.length > 0 && <Sparkline values={sparkValues} tone={tone} width={56} height={16} />}
-      </div>
+    <div className="flex min-w-0 flex-col gap-1 rounded-sm border bg-surface-1/50 p-3">
+      <span className="truncate text-2xs tracking-wider text-muted-foreground uppercase">{label}</span>
+      <span className={cn('num text-lg font-medium', tone === 'accent' ? 'text-accent-cool' : 'text-foreground')}>{ms(value)}</span>
+      <span className="num truncate text-2xs text-muted-foreground">{note}</span>
     </div>
+  )
+}
+
+/** One sentence on what the stack costs, set against one median fraud case. */
+export function CostLine() {
+  return (
+    <p className="num max-w-3xl px-3 py-4 text-xs leading-relaxed text-muted-foreground" data-testid="cost-line">
+      {COST_LINE.before}
+      <a href={COST_LINE.linkHref} target="_blank" rel="noreferrer" className="text-accent-cool underline-offset-2 hover:underline">
+        {COST_LINE.linkText}
+      </a>
+      {COST_LINE.after}
+    </p>
+  )
+}
+
+function p95Note(p95: number | null, count: number, unit = 'calls'): string {
+  return `${p95 != null ? `p95 ${p95} ms · ` : ''}${count} ${unit}`
+}
+
+function storeNote(store: { configured: boolean; ok: boolean | null; p95Ms: number | null }): string {
+  if (!store.configured) return 'not configured'
+  const health = store.ok ? 'ok' : store.ok === false ? 'error' : 'unknown'
+  return store.p95Ms != null ? `p95 ${store.p95Ms} ms · ${health}` : health
+}
+
+/** The few numbers that matter, then one compact per-step waterfall. */
+function Timings({ latency }: { latency: LatencyStats }) {
+  const chat = latency.inference['hackathon-chat']
+  const embedding = latency.inference['hackathon-embedding']
+  const waterfall = compactWaterfall(latency)
+  return (
+    <>
+      <Block title="Key Timings" meta="p50 per component">
+        <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 lg:grid-cols-5">
+          <StatTile label="hackathon-chat" value={chat?.p50Ms ?? null} tone="accent" note={chat ? p95Note(chat.p95Ms, chat.count) : 'not configured'} />
+          <StatTile label="hackathon-embedding" value={embedding?.p50Ms ?? null} note={embedding ? p95Note(embedding.p95Ms, embedding.count) : 'not configured'} />
+          <StatTile label="Postgres" value={latency.postgres.p50Ms} tone="accent" note={storeNote(latency.postgres)} />
+          <StatTile label="Object Storage" value={latency.objectStorage.p50Ms} note={storeNote(latency.objectStorage)} />
+          <StatTile label={`Decider · ${latency.decider.engine}`} value={latency.decider.p50Ms} note={p95Note(latency.decider.p95Ms, latency.decider.count)} />
+        </div>
+      </Block>
+
+      {waterfall.steps.length > 0 && (
+        <Block title="Per-step Timing" meta={waterfall.runId ? `latest run ${waterfall.runId}` : 'rolling p50'}>
+          <div className="max-w-xl px-3 py-1">
+            <WaterfallChart steps={waterfall.steps} />
+          </div>
+        </Block>
+      )}
+    </>
   )
 }
 
@@ -183,14 +239,14 @@ export function NetstatsPage() {
   if (error) return <ErrorState message={error.message} onRetry={reload} />
   if (loading || !latency || !topology) return <LoadingRows count={8} />
 
-  const totalP50 = Object.values(latency.pipelineSteps).reduce((s, v) => s + (v.p50Ms ?? 0), 0)
-  const totalP95 = Object.values(latency.pipelineSteps).reduce((s, v) => s + (v.p95Ms ?? 0), 0)
+  const live = hasTimings(latency)
+  const runs = Math.max(0, ...Object.values(latency.pipelineSteps).map((s) => s.count))
   const configuredTiers = Object.values(latency.tiers).filter((t) => t.configured).length
   const healthyTiers = Object.values(latency.tiers).filter((t) => t.healthy === true).length
 
   return (
     <PageFrame
-      summary={`${latency.region} · p50 ${totalP50}ms · p95 ${totalP95}ms · ${configuredTiers} tiers configured · ${healthyTiers} healthy`}
+      summary={`${latency.region} · ${live ? `${runs} runs timed` : 'no runs yet'} · ${configuredTiers} tiers configured · ${healthyTiers} healthy`}
       aside={<span>updated {formatDateTime(latency.updatedAt)}</span>}
     >
       <Block title="Akamai Network Topology" meta="live RTT badges · dashed = private network">
@@ -199,149 +255,15 @@ export function NetstatsPage() {
         </div>
       </Block>
 
-      <Block title="Latency Overview" meta="p50/p95 sparklines">
-        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-6">
-          <StatTile label="Pipeline p50" value={totalP50} tone="accent" sparkValues={series('pipeline-p50', 24, totalP50, totalP50 * 0.5)} />
-          <StatTile label="Pipeline p95" value={totalP95} tone={totalP95 > 300 ? 'amber' : 'neutral'} sparkValues={series('pipeline-p95', 24, totalP95, totalP95 * 0.5)} />
-          <StatTile label="Inference p50" value={latency.inference['hackathon-chat']?.p50Ms ?? null} sparkValues={series('inf-p50', 24, latency.inference['hackathon-chat']?.p50Ms ?? 100, 80)} />
-          <StatTile label="Postgres p50" value={latency.postgres.p50Ms} tone="accent" sparkValues={series('pg-p50', 24, latency.postgres.p50Ms ?? 3, 1)} />
-          <StatTile label="Object Storage" value={latency.objectStorage.p50Ms} sparkValues={series('obj-p50', 24, latency.objectStorage.p50Ms ?? 15, 5)} />
-          <StatTile label="Decider ({latency.decider.engine})" value={latency.decider.p50Ms} sparkValues={series('decider-p50', 24, latency.decider.p50Ms ?? 85, 40)} />
-        </div>
-      </Block>
-
-      {latency.lastRunWaterfall && (
-        <Block title="Latest Run Waterfall" meta={latency.lastRunWaterfall.runId}>
-          <div className="max-w-xl px-4 py-2">
-            <WaterfallChart steps={latency.lastRunWaterfall.steps} />
-          </div>
+      {live ? (
+        <Timings latency={latency} />
+      ) : (
+        <Block title="Timings" meta="hosted inference · Postgres · Object Storage · Decider · per step">
+          <EmptyState title={EMPTY_TIMINGS_TITLE} description={EMPTY_TIMINGS_DESCRIPTION} />
         </Block>
       )}
 
-      <Block title="Pipeline Steps" meta="rolling p50/p95 over last N runs">
-        <DenseTable>
-          <thead>
-            <tr>
-              <Th>Step</Th>
-              <Th width={80} right>p50</Th>
-              <Th width={80} right>p95</Th>
-              <Th width={80} right>Latest</Th>
-              <Th width={80} right>Count</Th>
-              <Th width={100}>Trend</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(latency.pipelineSteps).map(([step, stats]) => (
-              <tr key={step} className="row-interactive">
-                <Td className="text-foreground capitalize">{step.replace(/_/g, ' ')}</Td>
-                <Td num right className="text-foreground">{stats.p50Ms ?? '—'} ms</Td>
-                <Td num right className={cn(stats.p95Ms && stats.p95Ms > 100 ? 'text-amber' : undefined)}>
-                  {stats.p95Ms ?? '—'} ms
-                </Td>
-                <Td num right>{stats.latestMs ?? '—'} ms</Td>
-                <Td num right muted>{stats.count}</Td>
-                <Td>
-                  <Sparkline values={series(step, 24, stats.p50Ms ?? 10, (stats.p50Ms ?? 10) * 0.5)} label={`${step} p50 trend`} />
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </DenseTable>
-      </Block>
-
-      <Block title="Akamai Hosted Inference" meta="hackathon-chat, hackathon-embedding">
-        <DenseTable>
-          <thead>
-            <tr>
-              <Th>Endpoint</Th>
-              <Th width={180}>Model</Th>
-              <Th width={60}>Live</Th>
-              <Th width={80} right>p50</Th>
-              <Th width={80} right>p95</Th>
-              <Th width={80} right>Calls</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(latency.inference).map(([endpoint, stats]) => (
-              <tr key={endpoint} className="row-interactive">
-                <Td className="text-foreground">{endpoint}</Td>
-                <Td muted className="text-xs">{stats.model}</Td>
-                <Td>
-                  <span className={cn('inline-block h-2 w-2 rounded-full', stats.live ? 'bg-emerald-500' : 'bg-muted-foreground')} />
-                </Td>
-                <Td num right className="text-foreground">{stats.p50Ms ?? '—'} ms</Td>
-                <Td num right className={cn(stats.p95Ms && stats.p95Ms > 500 ? 'text-amber' : undefined)}>
-                  {stats.p95Ms ?? '—'} ms
-                </Td>
-                <Td num right muted>{stats.count}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </DenseTable>
-      </Block>
-
-      <Block title="Tier Map" meta="ingress / app / model / data subnets">
-        <DenseTable>
-          <thead>
-            <tr>
-              <Th>Tier</Th>
-              <Th>Subnet</Th>
-              <Th>Akamai Products</Th>
-              <Th width={100}>Status</Th>
-              <Th width={80} right>RTT</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(latency.tiers).map(([tierId, tier]) => (
-              <tr key={tierId} className="row-interactive">
-                <Td className={cn('font-medium', TIER_TEXT_COLORS[tierId])}>{tier.name}</Td>
-                <Td className="num text-xs">{tier.subnet}</Td>
-                <Td muted className="text-xs">{tier.products.join(' · ')}</Td>
-                <Td>
-                  {tier.configured ? (
-                    <span className={cn('inline-flex items-center gap-1 text-xs', tier.healthy ? 'text-emerald-500' : tier.healthy === false ? 'text-red-500' : 'text-muted-foreground')}>
-                      <span className={cn('h-1.5 w-1.5 rounded-full', tier.healthy ? 'bg-emerald-500' : tier.healthy === false ? 'bg-red-500' : 'bg-muted-foreground')} />
-                      {tier.healthy ? 'healthy' : tier.healthy === false ? 'error' : 'unknown'}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">not configured</span>
-                  )}
-                </Td>
-                <Td num right className="text-foreground">{tier.rttMs ?? '—'} ms</Td>
-              </tr>
-            ))}
-          </tbody>
-        </DenseTable>
-      </Block>
-
-      {topology.firewall.configured && topology.firewall.rules.length > 0 && (
-        <Block title="Firewall Rules" meta={topology.firewall.label}>
-          <DenseTable>
-            <thead>
-              <tr>
-                <Th width={80}>Direction</Th>
-                <Th width={80}>Protocol</Th>
-                <Th width={80}>Ports</Th>
-                <Th>Source/Dest</Th>
-                <Th width={80}>Action</Th>
-                <Th>Label</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {topology.firewall.rules.map((rule) => (
-                <tr key={rule.id} className="row-interactive">
-                  <Td className={cn('text-xs', rule.direction === 'inbound' ? 'text-accent-cool' : 'text-amber')}>{rule.direction}</Td>
-                  <Td className="num text-xs">{rule.protocol}</Td>
-                  <Td className="num text-xs">{rule.ports}</Td>
-                  <Td className="num text-xs">{rule.source ?? rule.destination ?? '—'}</Td>
-                  <Td className={cn('text-xs font-medium', rule.action === 'ACCEPT' ? 'text-emerald-500' : 'text-red-500')}>{rule.action}</Td>
-                  <Td muted className="text-xs">{rule.label}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </DenseTable>
-        </Block>
-      )}
+      <CostLine />
     </PageFrame>
   )
 }

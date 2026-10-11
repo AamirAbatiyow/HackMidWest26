@@ -4,6 +4,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { StatusChip } from '@/components/vouch/StatusChip'
 import { formatMoney } from '@/lib/format'
+import { QUEUE_PATH } from '@/lib/routes'
 import { SHORTCUTS } from '@/lib/shortcuts'
 import { usePayments } from '@/store/PaymentsProvider'
 import { useUi, type LaneFilter } from '@/store/UiProvider'
@@ -45,7 +46,7 @@ export function CommandPalette() {
   }
   const filter = (f: LaneFilter) => {
     ui.setFilter(f)
-    go('/')
+    go(QUEUE_PATH)
   }
 
   return (
@@ -98,7 +99,7 @@ export function CommandPalette() {
                   className={ITEM}
                   onSelect={() => {
                     ui.open(p.id)
-                    go('/')
+                    go(QUEUE_PATH)
                   }}
                 >
                   <span className="truncate">{p.vendor.name}</span>

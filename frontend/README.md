@@ -17,6 +17,7 @@ Other scripts:
 ```bash
 npm run build      # typecheck (tsc -b) + production build to dist/
 npm run lint       # oxlint
+npm run test       # vitest (navigation + Latency page)
 npm run preview    # serve the production build
 ```
 
@@ -115,7 +116,7 @@ The app ships with built-in demo data (the six vendors from the brief). A typed 
 
 Mode is **auto** by default: the live `/v1/health` is probed every 5 s; when it answers, the app uses the live API and the status strip shows a `live` tag. When it does not, the app falls back to demo data and shows an amber `mock` tag whose hover text carries the reason. Force a mode from the command palette (`⌘K` → Data source) or with `VITE_API_MODE=live|mock`.
 
-Endpoints used: `GET /v1/payments`, `GET /v1/payments/:id`, `POST /v1/payments/:id/{approve,hold,appeal}`, `POST /v1/batch/settle`, `GET /v1/netz` (latency p50/p95, tokens today, hops), `GET /v1/info` (active model, policy mode), `GET /v1/redteam`, `GET /v1/fairness`, `GET /v1/health`.
+Endpoints used: `GET /v1/payments`, `GET /v1/payments/:id`, `POST /v1/payments/:id/{approve,hold,appeal}`, `POST /v1/batch/settle`, `GET /v1/netz` (latency p50/p95, tokens today, hops), `GET /v1/info` (active model, policy mode), `GET /v1/redteam`, `GET /v1/health`, `GET /v1/latency`, `GET /v1/topology`.
 
 Duplicate / split links come from `duplicate_of` / `split_with` (payment id) on a payment, or a `relation: { kind, payment_id }` object.
 
@@ -123,34 +124,39 @@ Duplicate / split links come from `duplicate_of` / `split_with` (payment id) on 
 
 | Route | Screen |
 |---|---|
-| `/` | Payables queue (home). Dense, lane-grouped table with the detail panel docked at 40%; the first flagged row opens on load. `?payment=<id>` opens a specific one. `esc` shows the "Next up" summary instead of an empty panel. |
-| `/payments/:id` | Redirects to the queue with that payment's panel open. |
+| `/` | Splash: the wordmark alone on the dark canvas. Click anywhere, Enter or Space opens the live queue. |
+| `/app` | Payables queue (home). Dense, lane-grouped table with the detail panel docked at 40%; the first flagged row opens on load. `?payment=<id>` opens a specific one. `esc` shows the "Next up" summary instead of an empty panel. Deep-linking here skips the splash. |
+| `/payments/:id` | Redirects to `/app` with that payment's panel open. |
 | `/approve` | Owner approval: batch table + slide-to-approve. Reached from bulk approve, `a`, or the palette. |
 | `/receipt/:batchId` | Settlement receipt. |
-| `/fairness` | Harm ledger, parity by country, bounding rules. |
-| `/network` | Topology with p50/p95 per hop, hop table, runtime (model, tokens, policy mode, last settlement ID). |
-| `/redteam` | Red-team cases, 15 of 15 blocked, rules fired. |
-| `/tokens` | Design-token reference (not in the top nav; reachable from the palette or Network). |
+| `/netstats` | Latency: Akamai topology, key timings (hosted inference, Postgres, Object Storage, Decider), one per-step waterfall, the cost line. Shows "Send an invoice to see live timings" until the first run. |
+| `/redteam` | Red-team cases, N of N blocked, rules fired. |
+| `/trust` | Trust center: Cedar rules, red-team suite, what is not yet implemented. |
+| `/network` | Hop table and runtime (hidden from the top bar and palette; reachable by URL or `g n`). |
+| `/tokens` | Design-token reference (hidden; reachable by URL or `g t`). |
+| `/fairness` | Retired; redirects to `/app`. |
+
+Unknown routes redirect to `/app`. Serving the build needs an SPA fallback (every path → `index.html`), see the Nginx block above.
 
 Add `?theme=dark` or `?theme=light` to any URL to force a theme (also saved to `localStorage`). Dark is the design target.
 
 ## Keyboard
 
-`j` / `k` move (the panel follows) · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` agent log · `?` all shortcuts · `g` then `p a f n r t` to switch views.
+`j` / `k` move (the panel follows) · `Enter` open · `x` select · `a` approve · `h` hold · `v` verify · `p` appeal · `/` search · `⌘K` palette · `f` agent log · `?` all shortcuts · `g` then `p a l r u` to switch views (`g n` / `g t` reach the hidden Network and Tokens pages).
 
 ## Click-through demo
 
 1. On the queue, press `j` to **Warsaw Steel** and `Enter` → read the three factors → tick the call-back checklist → **Verify**.
 2. Open **Nova Trade LLC** to see the shared-detail ring (bank, phone, address) in the panel. Leave it on hold.
 3. Select the three vouched rows (`x`) → **Approve 3 ($13,200)** → pick funding → slide to approve.
-4. Copy the transaction ID from the receipt; the settlement ID also appears on the Network tab.
+4. Copy the transaction ID from the receipt.
 
 ## Project layout
 
 ```
 src/
   api/          types, mock + live clients, ApiProvider (toggle), useAsync
-  data/         demo payments, feed script, network, red-team, fairness, token reference
+  data/         demo payments, feed script, network, netstats, red-team, trust, token reference
   components/
     ui/         shadcn/ui primitives
     vouch/      StatusChip, RiskTag, TrustMeter, EvidenceBar, VendorTimelineRow,
@@ -166,7 +172,7 @@ src/
 
 ## Design tokens
 
-Defined once in `src/index.css` and reused everywhere; nothing visual is set per screen. `/tokens` renders the live reference and `src/data/tokens.ts` mirrors it.
+Defined once in `src/index.css` and reused everywhere; nothing visual is set per screen. `/tokens` renders the live reference (hidden from navigation) and `src/data/tokens.ts` mirrors it.
 
 | Token | Dark | Use |
 |---|---|---|

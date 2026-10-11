@@ -1,19 +1,20 @@
 import { useEffect, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
+import { QUEUE_PATH } from '@/lib/routes'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/store/UiProvider'
 import { Shortcut } from './Shortcut'
 
-/** Every routed view; the palette lists all of them. */
+/**
+ * Views the top bar and the palette advertise. `/network` and `/tokens`
+ * stay routable (see App.tsx and the `g` chords) but are not listed anywhere.
+ */
 export const VIEWS = [
-  { to: '/', label: 'Payables', key: 'p', nav: true },
+  { to: QUEUE_PATH, label: 'Payables', key: 'p', nav: true },
   { to: '/approve', label: 'Approval', key: 'a', nav: false },
-  { to: '/fairness', label: 'Fairness', key: 'f', nav: true },
-  { to: '/network', label: 'Network', key: 'n', nav: true },
   { to: '/netstats', label: 'Latency', key: 'l', nav: true },
   { to: '/redteam', label: 'Red team', key: 'r', nav: true },
   { to: '/trust', label: 'Trust', key: 'u', nav: true },
-  { to: '/tokens', label: 'Design tokens', key: 't', nav: false },
 ] as const
 
 export const SEARCH_INPUT_ID = 'global-search'
@@ -30,7 +31,7 @@ export function TopBar() {
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 border-b bg-background px-3">
-      <NavLink to="/" className="num text-xs font-semibold tracking-[0.14em] text-foreground uppercase outline-none focus-visible:ring-1 focus-visible:ring-ring" aria-label="Vouch payables">
+      <NavLink to={QUEUE_PATH} className="num text-xs font-semibold tracking-[0.14em] text-foreground uppercase outline-none focus-visible:ring-1 focus-visible:ring-ring" aria-label="Vouch payables">
         Vouch
       </NavLink>
       <nav aria-label="Views" className="flex items-center">
@@ -38,7 +39,7 @@ export function TopBar() {
           <NavLink
             key={v.to}
             to={v.to}
-            end={v.to === '/'}
+            end
             className={({ isActive }) =>
               cn(
                 'relative flex h-topbar items-center px-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring',

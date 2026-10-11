@@ -9,7 +9,6 @@ import { DEMO_PAYMENTS } from '@/data/payments'
 import { DEMO_NETWORK } from '@/data/network'
 import { DEMO_LATENCY, DEMO_TOPOLOGY } from '@/data/netstats'
 import { DEMO_REDTEAM } from '@/data/redteam'
-import { DEMO_FAIRNESS } from '@/data/fairness'
 import { DEMO_TRUST } from '@/data/trust'
 
 const LATENCY_MS = 350
@@ -145,11 +144,6 @@ export function createMockApi(): VouchApi {
     async getRedTeam() {
       await wait(200)
       return clone(DEMO_REDTEAM)
-    },
-
-    async getFairness() {
-      await wait(200)
-      return clone(DEMO_FAIRNESS)
     },
 
     async getInfo() {

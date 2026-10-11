@@ -17,10 +17,9 @@ export const SHORTCUTS = {
   theme: { keys: ['t'], label: 'Theme' },
   goPayments: { keys: ['g', 'p'], label: 'Payments' },
   goApprove: { keys: ['g', 'a'], label: 'Approval' },
-  goFairness: { keys: ['g', 'f'], label: 'Fairness' },
-  goNetwork: { keys: ['g', 'n'], label: 'Network' },
+  goLatency: { keys: ['g', 'l'], label: 'Latency' },
   goRedTeam: { keys: ['g', 'r'], label: 'Red team' },
-  goTokens: { keys: ['g', 't'], label: 'Tokens' },
+  goTrust: { keys: ['g', 'u'], label: 'Trust' },
 } as const
 
 export type ShortcutId = keyof typeof SHORTCUTS

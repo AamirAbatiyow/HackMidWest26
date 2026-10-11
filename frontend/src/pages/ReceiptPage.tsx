@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { MoreDetails } from '@/components/vouch/MoreDetails'
+import { QUEUE_PATH } from '@/lib/routes'
 import { EmptyState } from '@/components/vouch/States'
 import { DenseTable, PageFrame, Td, Th } from '@/components/vouch/Table'
 import { formatDateTime, formatMoney, truncateMiddle } from '@/lib/format'
@@ -131,7 +132,7 @@ export function ReceiptPage() {
             </a>
           </MoreDetails>
           <div className="mt-auto flex gap-1 border-t p-2">
-            <Link to="/" className="flex h-7 flex-1 items-center justify-center rounded-xs border text-xs hover:bg-surface-2">
+            <Link to={QUEUE_PATH} className="flex h-7 flex-1 items-center justify-center rounded-xs border text-xs hover:bg-surface-2">
               Back to payments
             </Link>
             <button type="button" className="flex h-7 flex-1 items-center justify-center rounded-xs border text-xs hover:bg-surface-2" onClick={() => window.print()}>
