@@ -35,9 +35,16 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model, model_validator
 
-from hm_agents_common.classifier import Decision, Question, decided
+from hm_agents_common.classifier import (
+    STRICT,
+    Decision,
+    Question,
+    StrictDecisionModel,
+    decided,
+    validate_decision,
+)
 from vouch.contracts import EmailEnvelope, ExtractedDocument
 from vouch.decider.client import (
     ChoiceAnswer,
@@ -153,12 +160,129 @@ AMBIGUITY: dict[str, str] = {
     "thin_text_layer": "a PDF with only a few characters of text (a stamp on a scan?)",
 }
 
+# ------------------------------------------------------------------------- strict output models ----
+# One strict Pydantic model per classifier. Strands validates every structured-output call with the model
+# class: ``extra="forbid"`` rejects extra fields, ``strict=True`` rejects coerced types (1, "1", True are
+# not an option name), the ``Literal`` answer rejects anything outside the enum, and ``reason_code`` is an
+# enum as well, so the model has no free-text channel. On a ValidationError the SDK returns the error to
+# the model, which gets exactly one retry (``limits={"turns": 2}``); then the deterministic default is
+# used and the submission goes to the owner (kickback or review), never to payment.
+
+FormatBasis = Literal[
+    "mime_type",  # the declared content type names the format
+    "file_extension",  # the file name does
+    "file_signature",  # the sniffed bytes do
+    "text_layer",  # a PDF with selectable text
+    "body_text",  # the invoice is written in the email body
+    "no_usable_content",  # nothing readable or supported
+    "unsure",
+    "not_stated",  # engines that return no basis (a Decider server, deterministic code)
+]
+ToolBasis = Literal[
+    "only_tool_for_format",
+    "text_layer_present",
+    "no_text_layer",
+    "tabular_data",
+    "plain_text",
+    "nothing_readable",
+    "unsure",
+    "not_stated",
+]
+KickbackBasis = Literal[
+    "file_type",
+    "no_legible_text",
+    "no_attachment_or_text",
+    "required_fields_missing",
+    "several_candidates",
+    "unsure",
+    "not_stated",
+]
+NOT_STATED = "not_stated"
+
+
+class FormatDecision(StrictDecisionModel):
+    """Question 1: the format of the inbound submission."""
+
+    answer: Format = Field(description="Exactly one of the listed formats, verbatim.")
+    reason_code: FormatBasis = Field(description="The evidence the choice rests on.")
+
+
+class ToolDecision(StrictDecisionModel):
+    """Question 2: the extraction tool for the format decided in question 1.
+
+    ``format`` is the question-1 answer the tool is chosen for; the validator rejects pairs the extractors
+    cannot honour (``csv_reader`` only for ``csv_attachment``, OCR only for images and PDFs, ...).
+    ``request_resubmission`` is allowed for every format: a model may add friction, never skip a step.
+    """
+
+    format: Format = Field(description="The format decided in the previous question, verbatim.")
+    answer: Tool = Field(description="Exactly one of the listed tools, verbatim.")
+    reason_code: ToolBasis = Field(description="The evidence the choice rests on.")
+
+    @model_validator(mode="after")
+    def _tool_fits_format(self) -> ToolDecision:
+        allowed = (*TOOLS_FOR_FORMAT[self.format], "request_resubmission")
+        if self.answer not in allowed:
+            raise ValueError(
+                f"tool {self.answer!r} cannot handle format {self.format!r}; "
+                f"allowed: {', '.join(dict.fromkeys(allowed))}"
+            )
+        return self
+
+    @classmethod
+    def for_format(cls, fmt: str) -> type[ToolDecision]:
+        """The schema asked once the format is known: ``format`` is pinned to that value, so a model that
+        silently switches formats mid-chain fails validation instead of being believed."""
+        if fmt not in FORMATS:
+            raise ValueError(f"unknown format {fmt!r}")
+        if fmt not in _TOOL_DECISION_FOR:
+            _TOOL_DECISION_FOR[fmt] = create_model(
+                "ToolDecision",
+                __base__=cls,
+                __doc__=cls.__doc__,
+                format=(Literal[fmt], Field(description=f"Must be {fmt!r}: the format decided before.")),  # type: ignore[valid-type]
+            )
+        return _TOOL_DECISION_FOR[fmt]
+
+
+_TOOL_DECISION_FOR: dict[str, type[ToolDecision]] = {}
+
+
+class KickbackDecision(StrictDecisionModel):
+    """Question 3: which fixed reply template (reason code) to send back. Never the email text."""
+
+    answer: KickbackCode = Field(description="Exactly one of the listed reason codes, verbatim.")
+    reason_code: KickbackBasis = Field(description="The evidence the choice rests on.")
+
+
+class IntakeDecisionChain(BaseModel):
+    """The whole chain as one validated unit (used to check any engine's pair before it is adopted)."""
+
+    model_config = STRICT
+
+    format: FormatDecision
+    tool: ToolDecision
+    kickback: KickbackDecision | None = None
+
+    @model_validator(mode="after")
+    def _consistent(self) -> IntakeDecisionChain:
+        if self.tool.format != self.format.answer:
+            raise ValueError(
+                f"tool decision was made for format {self.tool.format!r}, "
+                f"but the format decision is {self.format.answer!r}"
+            )
+        if self.format.answer == "unreadable_or_unsupported" and self.kickback is None:
+            raise ValueError("an unreadable or unsupported submission needs a kickback decision")
+        return self
+
+
 FORMAT_QUESTION = Question(
     "format",
     "What format does this inbound email contain?",
     FORMATS,
     FORMAT_CRITERIA,
     when_unsure="unreadable_or_unsupported",
+    model=FormatDecision,
 )
 TOOL_QUESTION = Question(
     "tool",
@@ -166,6 +290,7 @@ TOOL_QUESTION = Question(
     TOOLS,
     TOOL_CRITERIA,
     when_unsure="request_resubmission",
+    model=ToolDecision,
 )
 REASON_QUESTION = Question(
     "kickback_reason",
@@ -173,7 +298,14 @@ REASON_QUESTION = Question(
     KICKBACK_REASONS,
     REASON_CRITERIA,
     when_unsure="ambiguous_submission",
+    model=KickbackDecision,
 )
+
+
+def tool_question_for(fmt: str) -> Question:
+    """Question 2 with its schema pinned to the format decided in question 1."""
+    return TOOL_QUESTION.with_model(ToolDecision.for_format(fmt))
+
 
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_MAX_TOKENS = 48
@@ -261,6 +393,11 @@ class IntakeClassification(BaseModel):
     kickback_reason: str | None = None
     kickback_draft: KickbackDraft | None = None
     missing_fields: list[str] = Field(default_factory=list)
+    # Safe default: the deterministic route was ambiguous, a model was consulted and no answer passed
+    # validation / admissibility -> the card waits for the owner (R_INTAKE_REVIEW), it is never paid on a guess.
+    review_required: bool = False
+    review_reason: str | None = None
+    validation_failures: int = 0  # structured outputs the SDK rejected across the chain (audit)
     decider_model: str | None = None
     decider_calls: int = 0
     decider_latency_ms: float | None = None
@@ -288,8 +425,10 @@ class IntakeClassification(BaseModel):
             if self.model_calls
             else ", 0 model calls"
         )
-        return f"{self.engine}: {self.format} -> {self.tool}{conf}{cost}" + (
-            f" · kickback [{self.kickback_code}]" if self.kickback else ""
+        return (
+            f"{self.engine}: {self.format} -> {self.tool}{conf}{cost}"
+            + (f" · kickback [{self.kickback_code}]" if self.kickback else "")
+            + (" · owner review" if self.review_required else "")
         )
 
 
@@ -702,7 +841,9 @@ class IntakeClassifier:
             "deterministic": 0,
             "ambiguous": 0,
             "model_decisions": 0,
+            "validation_failures": 0,
             "kickbacks": 0,
+            "reviews": 0,
         }
 
     @classmethod
@@ -729,6 +870,11 @@ class IntakeClassifier:
     @property
     def cooling_down(self) -> bool:
         return time.monotonic() < self._down_until
+
+    @property
+    def has_model(self) -> bool:
+        """Some classifier (Decider server or chat model) is configured to settle ambiguous routes."""
+        return self.client is not None or bool(self.llm is not None and getattr(self.llm, "enabled", False))
 
     def ocr_available(self) -> bool:
         if self._ocr is None:
@@ -787,6 +933,13 @@ class IntakeClassifier:
             if cls.kickback:
                 self._kickback(cls, route, probes, envelope, state, model_kick=model_kick)
                 self.stats["kickbacks"] += 1
+            # Safe default: when code was unsure, a classifier was there to settle it and no answer survived
+            # validation/admissibility, the deterministic default is only a guess, so the owner confirms the
+            # routing; the card never pays on it. (With no classifier configured, deterministic routing is
+            # the product and the kernel's own checks still gate every payment.)
+            if ask and route.ambiguous and not by_model and not cls.kickback and self.has_model:
+                self._require_review(cls, route)
+            self._check_chain(cls)
         if extractor_used:
             tools = EXTRACTOR_TOOLS.get(extractor_used, ())
             cls.agrees_with_extractor = cls.tool in tools if tools else None
@@ -794,12 +947,41 @@ class IntakeClassifier:
             if d.engine != "deterministic":
                 cls.model_latency_ms += d.latency_ms
                 cls.tokens += d.tokens
+            cls.validation_failures += len(d.validation_errors)
         cls.model_latency_ms = round(cls.model_latency_ms, 1)
         self.stats["classified"] += 1
         self.stats[cls.engine] += 1
         self.stats["ambiguous"] += bool(route.ambiguous)
         self.stats["model_decisions"] += sum(d.engine != "deterministic" for d in cls.decisions)
+        self.stats["validation_failures"] += cls.validation_failures
+        self.stats["reviews"] += cls.review_required
         return cls
+
+    def _require_review(self, cls: IntakeClassification, route: Route) -> None:
+        why = cls.fallback_reason or "no classifier available"
+        cls.review_required = True
+        cls.review_reason = (
+            f"ambiguous ({', '.join(route.ambiguous)}); no classifier answer was accepted ({why}); "
+            f"deterministic default {route.format} -> {route.tool} is not trusted for payment"
+        )
+        cls.notes.append("owner review required: " + cls.review_reason)
+
+    @staticmethod
+    def _check_chain(cls: IntakeClassification) -> None:
+        """The adopted chain, whatever engine produced it, must validate as one unit (last line of defence
+        against an inconsistent format/tool pair reaching the card)."""
+        payload: dict[str, Any] = {
+            "format": {"answer": cls.format, "reason_code": NOT_STATED},
+            "tool": {"format": cls.format, "answer": cls.tool, "reason_code": NOT_STATED},
+        }
+        if cls.kickback_code:
+            payload["kickback"] = {"answer": cls.kickback_code, "reason_code": NOT_STATED}
+        try:
+            IntakeDecisionChain.model_validate(payload)
+        except Exception as exc:  # pragma: no cover - deterministic routes are consistent by construction
+            cls.review_required = True
+            cls.review_reason = f"inconsistent decision chain: {exc}"
+            cls.notes.append("owner review required: " + cls.review_reason)
 
     def _decide_by_code(self, cls: IntakeClassification, route: Route, *, asked: bool) -> None:
         cls.engine = "deterministic"
@@ -847,7 +1029,9 @@ class IntakeClassifier:
                     decided("tool", TOOL_QUESTION, tool, engine="deterministic", note="implied by the format")
                 )
             else:
-                tool = self._decider_question(state, cls, TOOL_QUESTION, admissible_tools(fmt, ocr), fmt=fmt)
+                tool = self._decider_question(
+                    state, cls, tool_question_for(fmt), admissible_tools(fmt, ocr), fmt=fmt
+                )
                 if tool is None:
                     return False
         except DeciderUnavailable as exc:
@@ -901,8 +1085,15 @@ class IntakeClassifier:
             cls.decisions.append(record)
             raise DeciderRejected(record.error)
         record.answer, record.confidence = answer.choice, round(float(answer.confidence), 4)
-        if answer.choice not in question.options:
-            record.error = f"{question.key!r} answer {answer.choice!r} is not one of the offered options"
+        # The same strict model the chat path is validated with: enum answer, and for the tool question the
+        # format/tool consistency check (a Decider answering csv_reader for a PDF is rejected here).
+        payload: dict[str, Any] = {"answer": answer.choice, "reason_code": NOT_STATED}
+        if fmt is not None and "format" in question.output_model.model_fields:
+            payload["format"] = fmt
+        validated, errors = validate_decision(question, payload)
+        if validated is None:
+            record.validation_errors.extend(errors)
+            record.error = f"{question.key!r} answer {answer.choice!r} failed validation: {'; '.join(errors)}"
             cls.decisions.append(record)
             raise DeciderRejected(record.error)
         if answer.choice not in admissible:
@@ -944,7 +1135,7 @@ class IntakeClassifier:
         else:
             tool_d = self._llm_question(
                 cls,
-                TOOL_QUESTION,
+                tool_question_for(fmt),
                 f"The submission format is {fmt}.\n{state}",
                 admissible_tools(fmt, self.ocr_available()),
             )
@@ -1047,8 +1238,36 @@ class IntakeClassifier:
             "threshold": self.threshold,
             "cooling_down": self.cooling_down,
             "last_error": self.last_error,
+            "schemas": ["FormatDecision", "ToolDecision", "KickbackDecision"],
             **self.stats,
         }
+
+
+def scripted_answer(
+    option: str, *, format: str | None = None, reason_code: str | None = None
+) -> dict[str, Any]:
+    """A ``ScriptedModel`` tool turn for one of the three classifiers (tests and the red-team suite).
+
+    The schema is inferred from the option (formats, tools and kickback codes are disjoint); an option
+    outside every enum is sent as a ``FormatDecision`` so the schema rejects it. For a tool answer the
+    echoed ``format`` defaults to the first format that tool serves; pass ``format=`` to script a model
+    that echoes the real format but picks an inconsistent tool (the model-validator path).
+    """
+    if option in TOOLS:
+        fmt = format or next(f for f, tools in TOOLS_FOR_FORMAT.items() if option in tools)
+        return {
+            "tool": "ToolDecision",
+            "input": {"format": fmt, "answer": option, "reason_code": reason_code or "only_tool_for_format"},
+        }
+    if option in KICKBACK_REASONS:
+        return {
+            "tool": "KickbackDecision",
+            "input": {"answer": option, "reason_code": reason_code or "unsure"},
+        }
+    return {
+        "tool": "FormatDecision",
+        "input": {"answer": option, "reason_code": reason_code or "file_extension"},
+    }
 
 
 def extractor_for(tool: str, kind: str = "") -> Callable[[bytes, str], ExtractedDocument] | None:
@@ -1087,10 +1306,14 @@ __all__ = [
     "TOOL_QUESTION",
     "Decision",
     "DocumentProbe",
+    "FormatDecision",
     "IntakeClassification",
     "IntakeClassifier",
+    "IntakeDecisionChain",
+    "KickbackDecision",
     "KickbackDraft",
     "Route",
+    "ToolDecision",
     "admissible_tools",
     "deterministic_route",
     "extractor_for",
@@ -1099,4 +1322,6 @@ __all__ = [
     "probes_from_submission",
     "render_kickback",
     "render_state",
+    "scripted_answer",
+    "tool_question_for",
 ]

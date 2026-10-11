@@ -151,6 +151,7 @@ class IntakeDecisionRow(Base):
     question: Mapped[str] = mapped_column(Text)
     options: Mapped[list] = mapped_column(JSON)
     answer: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted: Mapped[bool] = mapped_column(Boolean)
     engine: Mapped[str] = mapped_column(String(32))
     confidence: Mapped[float | None] = mapped_column(nullable=True)
@@ -158,6 +159,7 @@ class IntakeDecisionRow(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+    validation_errors: Mapped[list] = mapped_column(JSON, default=list)  # SDK-rejected structured outputs
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -542,6 +544,7 @@ class AuditStore:
                         question=d.question,
                         options=list(d.options),
                         answer=d.answer,
+                        reason_code=d.reason_code,
                         accepted=bool(d.accepted),
                         engine=d.engine,
                         confidence=d.confidence,
@@ -549,6 +552,7 @@ class AuditStore:
                         input_tokens=int(d.input_tokens),
                         output_tokens=int(d.output_tokens),
                         attempts=int(d.attempts),
+                        validation_errors=list(d.validation_errors),
                         error=d.error,
                         note=d.note,
                     )
@@ -736,6 +740,7 @@ def _decision_dict(r: IntakeDecisionRow) -> dict[str, Any]:
         "question": r.question,
         "options": r.options,
         "answer": r.answer,
+        "reason_code": r.reason_code,
         "accepted": r.accepted,
         "engine": r.engine,
         "confidence": r.confidence,
@@ -743,6 +748,7 @@ def _decision_dict(r: IntakeDecisionRow) -> dict[str, Any]:
         "input_tokens": r.input_tokens,
         "output_tokens": r.output_tokens,
         "attempts": r.attempts,
+        "validation_errors": list(r.validation_errors or []),
         "error": r.error,
         "note": r.note,
         "at": r.created_at.isoformat(),

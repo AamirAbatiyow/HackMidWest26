@@ -2,7 +2,9 @@
 
 - ``client``        strict wire models + ``HttpDeciderClient`` / ``FakeDeciderClient`` (tests, CI)
 - ``classify``      ``IntakeClassifier``: deterministic sniffing first; when ambiguous, the format -> tool ->
-                    kickback-reason decision chain on the Decider server or the chat ``DecisionClassifier``
+                    kickback-reason decision chain on the Decider server or the chat ``DecisionClassifier``,
+                    every answer validated by the strict ``FormatDecision`` / ``ToolDecision`` /
+                    ``KickbackDecision`` models (enum answer + enum reason code, no extras, no coercion)
 - ``intervention``  ``GroundingIntervention``: Strands ``before_tool_call`` Guide for ungrounded intake output
 
 The Decider only routes (format -> parse tool) or adds friction (a kickback hold that needs the owner's
@@ -28,10 +30,14 @@ from .classify import (
     TOOLS_FOR_FORMAT,
     Decision,
     DocumentProbe,
+    FormatDecision,
     IntakeClassification,
     IntakeClassifier,
+    IntakeDecisionChain,
+    KickbackDecision,
     KickbackDraft,
     Route,
+    ToolDecision,
     admissible_tools,
     deterministic_route,
     extractor_for,
@@ -40,6 +46,8 @@ from .classify import (
     probes_from_submission,
     render_kickback,
     render_state,
+    scripted_answer,
+    tool_question_for,
 )
 from .client import (
     DEFAULT_MODEL,
@@ -92,15 +100,19 @@ __all__ = [
     "Decision",
     "DocumentProbe",
     "FakeDeciderClient",
+    "FormatDecision",
     "GroundingIntervention",
     "HttpDeciderClient",
     "IntakeClassification",
     "IntakeClassifier",
+    "IntakeDecisionChain",
+    "KickbackDecision",
     "KickbackDraft",
     "NoulAnswer",
     "Route",
     "ScoreAnswer",
     "SystemOneResponse",
+    "ToolDecision",
     "admissible_tools",
     "choice",
     "choice_answer",
@@ -115,5 +127,7 @@ __all__ = [
     "render_kickback",
     "render_state",
     "score",
+    "scripted_answer",
+    "tool_question_for",
     "ungrounded_fields",
 ]

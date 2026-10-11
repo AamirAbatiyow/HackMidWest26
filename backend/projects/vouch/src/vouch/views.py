@@ -259,12 +259,38 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                 f"{int(ev.get('input_tokens') or 0) + int(ev.get('output_tokens') or 0)} tokens"
             )
             verdict = "" if ev.get("accepted") else f" · rejected: {ev.get('error') or ev.get('note')}"
+            reason = f" · reason {ev['reason_code']}" if ev.get("reason_code") else ""
+            failures = ev.get("validation_errors") or []
+            invalid = (
+                f" · {len(failures)} output(s) failed schema validation: {str(failures[0]).splitlines()[-1]}"
+                if failures
+                else ""
+            )
             events.append(
                 {
                     "id": f"t{k}",
                     "date": ev["at"],
                     "title": f"Decision {ev.get('key')}: {ev.get('answer') or '-'}",
-                    "detail": f"{ev.get('question')} [{', '.join(ev.get('options') or [])}] → {cost}{verdict}",
+                    "detail": (
+                        f"{ev.get('question')} [{', '.join(ev.get('options') or [])}] → {cost}"
+                        f"{reason}{invalid}{verdict}"
+                    ),
+                    "kind": "check",
+                }
+            )
+        elif name == "intake_review_required":
+            k += 1
+            events.append(
+                {
+                    "id": f"t{k}",
+                    "date": ev["at"],
+                    "title": "Intake routing needs the owner (safe default, not paid on a guess)",
+                    "detail": f"{ev.get('reason')} · default {ev.get('default')}"
+                    + (
+                        f" · {ev['validation_failures']} classifier output(s) failed validation"
+                        if ev.get("validation_failures")
+                        else ""
+                    ),
                     "kind": "check",
                 }
             )
@@ -294,7 +320,8 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                         f" · kickback [{ev.get('kickback_code')}] drafted for the owner"
                         if ev.get("kickback")
                         else ""
-                    ),
+                    )
+                    + (" · owner review required" if ev.get("review_required") else ""),
                     "kind": "check",
                 }
             )

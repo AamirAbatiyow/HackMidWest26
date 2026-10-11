@@ -16,12 +16,19 @@ from hm_core.errors import ForbiddenError
 from vouch import main
 from vouch.audit import AuditStore
 from vouch.contracts import Attachment, IntakeRequest
-from vouch.decider import FORMATS, TOOLS, DeciderUnavailable, FakeDeciderClient, choice_answer
+from vouch.decider import (
+    FORMATS,
+    TOOLS,
+    DeciderUnavailable,
+    FakeDeciderClient,
+    choice_answer,
+    scripted_answer,
+)
 from vouch.demo.samples import make_pdf
 from vouch.domain import CardStatus, Lane, Resolution
 from vouch.engine import Submission
 from vouch.llm import LLMRuntime
-from vouch.policy import R_KICKBACK, R_LLM_AMOUNT, authorize
+from vouch.policy import R_INTAKE_REVIEW, R_KICKBACK, R_LLM_AMOUNT, authorize
 from vouch.service import VouchService
 
 INVOICE_LINES = [
@@ -47,8 +54,8 @@ def _answers(fmt: str, conf: float, tool: str | None = None, tool_conf: float = 
     return out
 
 
-def _pick(option: str) -> dict:
-    return {"tool": "Answer", "input": {"answer": option}}
+def _pick(option: str, **kw) -> dict:
+    return scripted_answer(option, **kw)
 
 
 def _blank_png() -> bytes:
@@ -336,3 +343,106 @@ def test_health_shows_the_decider_role_and_api_exposes_the_engine(make):
         health = client.get("/health?format=json").json()
         assert health["decider"]["state"] == "off" and "deterministic routing" in health["decider"]["detail"]
         assert "DECIDER_URL not set" in health["decider"]["detail"]
+
+
+def test_validation_failures_hold_the_card_for_the_owner_and_are_in_the_audit_record(make):
+    """A chat model answers question 1 with an extra field, then correctly; question 2 with a tool the format
+    cannot use, twice. The SDK rejects each invalid output against the strict model and feeds the error back
+    once; after that the deterministic default is used but NOT trusted for payment: the card holds on
+    R_INTAKE_REVIEW until the owner resolves it. Every rejected output is on the card, in the API and in the
+    audit store."""
+    chat = LLMRuntime.scripted(
+        {
+            "classify:format": [
+                {
+                    "tool": "FormatDecision",
+                    "input": {
+                        "answer": "excel_attachment",
+                        "reason_code": "file_extension",
+                        "confidence": 0.99,
+                    },
+                },
+                _pick("excel_attachment"),
+            ],
+            "classify:tool": [_pick("csv_reader", format="excel_attachment")],
+        }
+    )
+    svc = make(None, llm=chat)
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for line in INVOICE_LINES:
+        ws.append(line.split(": ", 1))
+    buf = io.BytesIO()
+    wb.save(buf)
+    run = svc.intake_files(
+        [
+            (
+                "terms.pdf",
+                "application/pdf",
+                make_pdf(["General terms", "Payment is due in thirty days."], "T"),
+            ),
+            ("inv.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buf.getvalue()),
+        ]
+    )
+    card = run.card_list()[0]
+    cls = card.intake
+    assert cls.ambiguous == ["multiple_candidates"] and cls.engine == "deterministic"
+    assert cls.review_required and cls.validation_failures == 3 and not cls.kickback
+    fmt, tool = cls.decisions[0], cls.decisions[1]
+    assert fmt.accepted and fmt.reason_code == "file_extension" and len(fmt.validation_errors) == 1
+    assert not tool.accepted and tool.answer is None and len(tool.validation_errors) == 2
+    assert "tool 'csv_reader' cannot handle format 'excel_attachment'" in tool.validation_errors[0]
+    # the hold: never paid on the guess; the owner resolves it
+    assert card.status == CardStatus.HOLD and R_INTAKE_REVIEW in card.policy.reasons
+    assert any("owner confirms which document" in a for a in card.policy.required_actions)
+    for principal in ("System", "Model"):  # only the owner can move a held card forward
+        assert not authorize(principal, "approve", svc._attrs(card)).allowed
+        assert not authorize(principal, "fast_pay", svc._attrs(card)).allowed
+    # card log + run events
+    logged = [e for e in card.timeline if e["event"] == "intake_decision"]
+    assert logged[0]["reason_code"] == "file_extension" and len(logged[0]["validation_errors"]) == 1
+    assert len(logged[1]["validation_errors"]) == 2 and logged[1]["accepted"] is False
+    review = next(e for e in card.timeline if e["event"] == "intake_review_required")
+    assert review["validation_failures"] == 3 and "no classifier answer was accepted" in review["reason"]
+    assert any(e["type"] == "intake_classified" and e["review_required"] for e in run.events)
+    # API payload and timeline
+    view = svc.payment(card.id)
+    assert view["intake"]["review_required"] and view["intake"]["validation_failures"] == 3
+    assert view["intake"]["decisions"][0]["reason_code"] == "file_extension"
+    assert len(view["intake"]["decisions"][1]["validation_errors"]) == 2
+    details = " ".join(t["detail"] or "" for t in view["timeline"])
+    assert "2 output(s) failed schema validation" in details and "Extra inputs are not permitted" in details
+    assert any(t["title"].startswith("Intake routing needs the owner") for t in view["timeline"])
+    with TestClient(main.app) as client:
+        body = client.get(f"/v1/payments/{card.id}/decisions").json()
+        assert body["review_required"] and body["validation_failures"] == 3
+        assert body["schemas"] == {
+            "format": "FormatDecision",
+            "tool": "ToolDecision",
+            "kickback_reason": "KickbackDecision",
+        }
+        assert body["decisions"][1]["validation_errors"][0].startswith("Validation failed for ToolDecision")
+    # audit store rows carry the reason code and the rejected outputs
+    rows = svc.audit(card.id)["store"]["intake_decisions"]
+    assert (
+        rows[0]["reason_code"] == "file_extension" and rows[0]["validation_errors"] == fmt.validation_errors
+    )
+    assert rows[1]["validation_errors"] == tool.validation_errors and rows[1]["answer"] is None
+    assert svc.store.load_runs(), "the run (with the review flag) survives a restart"
+    restored = next(c for data in svc.store.load_runs() for c in data["cards"] if c.id == card.id)
+    assert restored.intake.review_required and restored.intake.decisions[1].validation_errors
+    # the owner reviews and resolves: the hold lifts, nothing else changes
+    svc.engine.resolve(
+        card.id, Resolution(kind="resolve_risk", actor="owner", note="inv.xlsx is the invoice")
+    )
+    assert R_INTAKE_REVIEW not in card.policy.reasons
+
+
+def test_safe_default_does_not_trigger_without_a_classifier_or_on_obvious_input(make):
+    svc = make(None, llm=None)  # no Decider, no chat model: deterministic routing is the product
+    run = svc.intake_files([("inv.pdf", "application/pdf", make_pdf(INVOICE_LINES, "Invoice"))])
+    card = run.card_list()[0]
+    assert not card.intake.review_required and R_INTAKE_REVIEW not in (card.policy.reasons or [])
+    assert card.intake.validation_failures == 0 and card.status in (CardStatus.READY, CardStatus.PAID)

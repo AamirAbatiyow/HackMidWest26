@@ -41,6 +41,9 @@ R_SENDER = "invoice email failed sender checks (authentication, lookalike domain
 R_OWNER_HOLD = "owner placed a hold"
 R_NOTHING = "nothing payable after credit notes"
 R_KICKBACK = "submission could not be read; a kickback email to the sender awaits the owner's approval"
+R_INTAKE_REVIEW = (
+    "intake routing was ambiguous and no classifier answer passed validation; owner confirms the document"
+)
 
 REQUIRED_ACTIONS = {
     R_HIGH_RISK: "owner reviews the evidence and resolves the risk with a note (or the vendor appeals)",
@@ -58,6 +61,7 @@ REQUIRED_ACTIONS = {
     R_NOTHING: "no payment needed; credit carried forward",
     R_LINES: "owner checks the line items; the vendor re-issues a corrected invoice",
     R_KICKBACK: "owner approves the kickback email asking the sender for a readable invoice (or re-keys it from the original)",
+    R_INTAKE_REVIEW: "owner confirms which document is the invoice and resolves with a note (or asks the sender for one invoice per email)",
 }
 
 
@@ -140,6 +144,13 @@ def build_policy(limits: Limits) -> PolicySet:
                 when=lambda r: _c(r, "intake_kickback") and not resolved(r),
                 description=R_KICKBACK,
             ),
+            # Safe default of the decision classifiers: an ambiguous route that no validated model answer
+            # confirmed is a guess, and a guess is never paid; the owner confirms the document first.
+            forbid(
+                action="payment:release",
+                when=lambda r: _c(r, "intake_review") and not resolved(r),
+                description=R_INTAKE_REVIEW,
+            ),
             forbid(
                 action="payment:release",
                 when=lambda r: _c(r, "high_risk") and not resolved(r),
@@ -214,6 +225,7 @@ def card_context(card: PaymentCard) -> dict[str, Any]:
         "limit_override": card.has_resolution("limit_override"),
         "owner_hold": _owner_hold_active(card),
         "intake_kickback": bool(card.intake and card.intake.kickback),
+        "intake_review": bool(card.intake and card.intake.review_required),
         "verified_vendor": bool(vendor and (vendor.oob_verified or len(vendor.history) >= 3)),
         "flags": card.flags,
     }

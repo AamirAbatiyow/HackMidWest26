@@ -387,6 +387,7 @@ class VouchEngine:
                 question=d.question,
                 options=list(d.options),
                 answer=d.answer,
+                reason_code=d.reason_code,
                 accepted=d.accepted,
                 engine=d.engine,
                 confidence=d.confidence,
@@ -394,6 +395,7 @@ class VouchEngine:
                 input_tokens=d.input_tokens,
                 output_tokens=d.output_tokens,
                 attempts=d.attempts,
+                validation_errors=list(d.validation_errors),
                 error=d.error,
                 note=d.note,
             )
@@ -406,12 +408,21 @@ class VouchEngine:
             ambiguous=list(cls.ambiguous),
             kickback=cls.kickback,
             kickback_code=cls.kickback_code,
+            review_required=cls.review_required,
+            validation_failures=cls.validation_failures,
             fallback_reason=cls.fallback_reason,
             decider_calls=cls.decider_calls,
             llm_calls=cls.llm_calls,
             model_latency_ms=cls.model_latency_ms,
             tokens=cls.tokens,
         )
+        if cls.review_required:
+            card.log(
+                "intake_review_required",
+                reason=cls.review_reason,
+                validation_failures=cls.validation_failures,
+                default=f"{cls.format} -> {cls.tool}",
+            )
         if cls.kickback and cls.kickback_draft is not None:
             card.log(
                 "kickback_drafted",
@@ -428,6 +439,8 @@ class VouchEngine:
             format=cls.format,
             tool=cls.tool,
             kickback=cls.kickback,
+            review_required=cls.review_required,
+            validation_failures=cls.validation_failures,
             decisions=[{"key": d.key, "answer": d.answer, "engine": d.engine} for d in cls.decisions],
         )
 
