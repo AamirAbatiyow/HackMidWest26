@@ -218,6 +218,7 @@ class FakeDeciderClient:
         self.model = model
         self.sleep_s = sleep_s
         self.calls: list[dict[str, Any]] = []
+        self.last_latency_ms: float | None = None  # as on HttpDeciderClient, for /v1/latency
         self._lock = threading.Lock()
         self.active = 0
         self.max_active = 0
@@ -241,7 +242,7 @@ class FakeDeciderClient:
                     answers[name] = dict(scripted)
                 else:
                     answers[name] = default_answer(q)
-            return parse_response(
+            parsed = parse_response(
                 {
                     "model": self.model,
                     "answers": answers,
@@ -249,6 +250,8 @@ class FakeDeciderClient:
                     "latency_ms": self.latency_ms,
                 }
             )
+            self.last_latency_ms = parsed.latency_ms
+            return parsed
         finally:
             with self._lock:
                 self.active -= 1

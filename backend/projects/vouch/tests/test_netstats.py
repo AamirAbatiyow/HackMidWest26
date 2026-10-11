@@ -114,6 +114,17 @@ class TestTimingRegistry:
         registry.clear()
         assert registry.all_stats() == {}
 
+    def test_reset_drops_one_ring_and_leaves_the_others(self):
+        registry = TimingRegistry()
+        registry.record("decider", 40.0)
+        registry.record("scorer", 2.0)
+        registry.reset("decider")
+        registry.reset("never-recorded")
+        assert registry.stats("decider") == {"p50": None, "p95": None, "count": 0, "latest": None}
+        assert registry.stats("scorer")["count"] == 1
+        registry.record("decider", 50.0)
+        assert registry.stats("decider")["count"] == 1 and registry.p50("decider") == pytest.approx(50.0)
+
 
 class TestTimedContextManager:
     """Tests for the timed context manager."""
@@ -244,10 +255,16 @@ class TestNetstatsAPI:
         data = response.json()
 
         decider = data["decider"]
-        assert "engine" in decider
-        assert "engines_available" in decider
-        assert "p50_ms" in decider
-        assert "p95_ms" in decider
+        # no Decider server and an offline LLM: code routes alone, and the page says so
+        assert decider["engine"] == "deterministic" and decider["client"] is None
+        assert decider["engines_available"] == ["decider", "hackathon-chat", "deterministic"]
+        assert {"p50_ms", "p95_ms", "count", "latest_ms"} <= decider.keys()
+        snapshot = decider["classifier"]
+        assert snapshot["enabled"] is False and snapshot["cooling_down"] is False
+        assert snapshot["schemas"] == ["FormatDecision", "ToolDecision", "KickbackDecision"]
+        assert {"classified", "decider", "hackathon-chat", "deterministic", "validation_failures"} <= (
+            snapshot.keys()
+        )
 
     def test_latency_tiers(self, client):
         response = client.get("/v1/latency")

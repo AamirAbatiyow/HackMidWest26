@@ -126,6 +126,7 @@ Hooks on every agent:
 | GET | `/vendors`, `/vendors/{id}`; PUT `/vendors/{id}` | Vendor master, including linked vendors (ring graph). |
 | GET | `/cash` | Cash forecast and pay-now / schedule recommendations. |
 | GET | `/netz` (alias `/stats`) | LLM calls, tokens, latency, node timings, provider, rate-limit headroom. |
+| GET | `/latency`, `/topology` | Per-step timings, hosted-inference and data-tier round trips, and the Decider block (live role `decider` / `hackathon-chat` / `deterministic`, p50/p95 and the client's last reported latency, the classifier's counters and breaker state); the Akamai tier map. |
 | GET | `/redteam`; POST `/redteam/run` | Adversarial suite results (31 attacks, including injected bodies and schema-breaking outputs aimed at the intake decision classifier). |
 | GET | `/model`, `/info` | Model metadata, held-out metrics, active scorer, LLM mode, adapter. |
 | GET | `/payments/{id}/decisions` | The intake decision chain (format → extraction tool → kickback reason): question, options, chosen answer, reason code, engine, latency, tokens, every output the strict schema rejected, and whether the safe default put the card in owner review; also embedded in `/payments/{id}` as `intake.decisions`. |

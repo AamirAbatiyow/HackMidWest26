@@ -56,6 +56,7 @@ from vouch.decider.client import (
     SystemOneResponse,
     choice,
 )
+from vouch.timing import DECIDER_STEP, TIMING
 
 log = logging.getLogger(__name__)
 
@@ -1151,12 +1152,18 @@ class IntakeClassifier:
             key=question.key, question=question.text, options=list(question.options), engine="decider"
         )
         cls.decider_calls += 1  # attempts, so a failed request still shows up in the audit record
+        t0 = time.perf_counter()
         try:
             resp = self.client.ask(state, {question.key: choice(text, criteria)})
         except (DeciderUnavailable, DeciderRejected) as exc:
             record.error, record.attempts = f"{type(exc).__name__}: {exc}", 1
             cls.decisions.append(record)
             raise
+        # the latency the Decider reports for the question (its own inference time); the round trip as
+        # this process saw it when the server reported none. Failures are not samples: they are visible
+        # as ``last_error`` / ``cooling_down`` in the snapshot instead.
+        round_trip_ms = (time.perf_counter() - t0) * 1000
+        TIMING.record(DECIDER_STEP, float(resp.latency_ms) if resp.latency_ms else round_trip_ms)
         self._fill_from_decider(record, resp)
         cls.decider_model = resp.model
         cls.decider_latency_ms = round((cls.decider_latency_ms or 0.0) + (resp.latency_ms or 0.0), 1)

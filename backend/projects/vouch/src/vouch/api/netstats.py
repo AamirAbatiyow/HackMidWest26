@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ..timing import DECIDER_ENGINES, PIPELINE_STEPS, TIMING
+from ..timing import DECIDER_ENGINES, DECIDER_STEP, PIPELINE_STEPS, TIMING
 from .state import get_service
 
 router = APIRouter(prefix="/v1", tags=["netstats"])
@@ -138,16 +138,35 @@ def _get_inference_stats(service) -> dict[str, Any]:
 
 
 def _get_decider_stats(service) -> dict[str, Any]:
-    """Get Decider call latency and which engine decided."""
-    scorer = service.engine.scorer()
-    scorer_name = getattr(scorer, "name", "unknown")
+    """Strands Decider 2B: which engine settles ambiguous intake routes, and what its calls cost in time.
+
+    ``engine`` is the classifier's live role: ``decider`` when a Decider server is configured, otherwise
+    the ``hackathon-chat`` classifier when the LLM is, otherwise ``deterministic`` (code routes alone).
+    p50/p95/count are the ``decider`` timing ring, which ``IntakeClassifier`` feeds with one sample per
+    answered Decider question; ``latest_ms`` is ``HttpDeciderClient.last_latency_ms``, the latency the
+    server reported for the most recent call. ``classifier`` is ``IntakeClassifier.snapshot()``: how many
+    submissions each engine routed, model decisions, strict-schema validation failures, kickbacks, owner
+    reviews, and whether the client is cooling down after a failure (and why).
+    """
+    classifier = service.engine.classifier
+    snapshot = classifier.snapshot()
+    if snapshot["enabled"]:
+        engine = "decider"
+    elif classifier.has_model:
+        engine = "hackathon-chat"
+    else:
+        engine = "deterministic"
+    ring = TIMING.stats(DECIDER_STEP)
+    latest = getattr(classifier.client, "last_latency_ms", None)
     return {
-        "engine": scorer_name,
+        "engine": engine,
         "engines_available": DECIDER_ENGINES,
-        "p50_ms": TIMING.p50("scorer"),
-        "p95_ms": TIMING.p95("scorer"),
-        "count": TIMING.stats("scorer").get("count", 0),
-        "latest_ms": TIMING.stats("scorer").get("latest"),
+        "client": snapshot["client"],
+        "p50_ms": ring.get("p50"),
+        "p95_ms": ring.get("p95"),
+        "count": ring.get("count", 0),
+        "latest_ms": latest if latest is not None else ring.get("latest"),
+        "classifier": snapshot,
     }
 
 

@@ -404,6 +404,49 @@ def test_health_shows_the_decider_role_and_api_exposes_the_engine(make):
         assert "DECIDER_URL not set" in health["decider"]["detail"]
 
 
+def test_latency_page_reads_the_decider_from_the_classifier_snapshot_and_the_clients_last_call(make):
+    """``/v1/latency``'s ``decider`` block is the intake classifier, not the scorer: the live role, one
+    latency sample per answered Decider question (the latency the server reports), the client's last
+    call, and the classifier's own counters. A failed call is breaker state, not a latency sample."""
+    from vouch.timing import DECIDER_STEP, TIMING
+
+    TIMING.reset(DECIDER_STEP)
+    fake = FakeDeciderClient(_answers("pdf_attachment", 0.9, "pdf_text", 0.9), latency_ms=42.5)
+    svc = make(fake, intake_classifier="always")
+    with TestClient(main.app) as client:
+        before = client.get("/v1/latency").json()["decider"]
+        assert before["engine"] == "decider" and before["client"] == "fake-decider"
+        assert (before["count"], before["p50_ms"], before["latest_ms"]) == (0, None, None)
+        svc.intake_files([("inv.pdf", "application/pdf", make_pdf(INVOICE_LINES, "Invoice"))])
+        after = client.get("/v1/latency").json()["decider"]
+    assert after["engines_available"] == ["decider", "hackathon-chat", "deterministic"]
+    assert after["count"] == len(fake.calls) == 2, "format and tool: one sample per answered question"
+    assert (after["p50_ms"], after["p95_ms"]) == (42.5, 42.5)
+    assert after["latest_ms"] == fake.last_latency_ms == 42.5
+    snapshot = after["classifier"]
+    assert snapshot == svc.engine.classifier.snapshot()
+    assert snapshot["enabled"] is True and snapshot["policy"] == "always" and snapshot["last_error"] is None
+    assert snapshot["classified"] == 1 and snapshot["decider"] == 1 and snapshot["model_decisions"] == 2
+    assert snapshot["validation_failures"] == 0 and snapshot["cooling_down"] is False
+    # a failure opens the breaker: visible in the snapshot, not counted as a latency sample
+    fake.fail = DeciderUnavailable("connect: refused")
+    svc.intake_files([("inv2.pdf", "application/pdf", make_pdf(INVOICE_LINES, "Invoice"))])
+    with TestClient(main.app) as client:
+        broken = client.get("/v1/latency").json()["decider"]
+    assert broken["count"] == 2 and broken["latest_ms"] == 42.5 and broken["engine"] == "decider"
+    assert broken["classifier"]["cooling_down"] is True and "refused" in broken["classifier"]["last_error"]
+    assert broken["classifier"]["deterministic"] == 1, "the run fell back to code"
+    # the role without a Decider server: the chat classifier when the LLM is on, else code alone
+    make(None, llm=LLMRuntime.scripted({}))
+    with TestClient(main.app) as client:
+        chat = client.get("/v1/latency").json()["decider"]
+    assert chat["engine"] == "hackathon-chat" and chat["client"] is None
+    make(None)
+    with TestClient(main.app) as client:
+        off = client.get("/v1/latency").json()["decider"]
+    assert off["engine"] == "deterministic" and off["classifier"]["enabled"] is False
+
+
 def test_validation_failures_hold_the_card_for_the_owner_and_are_in_the_audit_record(make):
     """A chat model answers question 1 with an extra field, then correctly; question 2 with a tool the format
     cannot use, twice. The SDK rejects each invalid output against the strict model and feeds the error back
