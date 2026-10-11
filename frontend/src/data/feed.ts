@@ -1,6 +1,6 @@
-import type { Payment } from '@/api/types'
+import type { Payment, RunEvent } from '@/api/types'
 
-export type FeedAgent = 'reader' | 'screener' | 'checker' | 'scorer' | 'policy' | 'writer'
+export type FeedAgent = 'reader' | 'screener' | 'checker' | 'scorer' | 'policy' | 'writer' | 'intake' | 'settlement'
 export type FeedLevel = 'info' | 'ok' | 'flag' | 'hold'
 
 export interface FeedEvent {
@@ -12,6 +12,76 @@ export interface FeedEvent {
   paymentId: string
   text: string
   level: FeedLevel
+}
+
+const EVENT_MAP: Record<string, { agent: FeedAgent; step: string; level?: FeedLevel }> = {
+  run_started: { agent: 'reader', step: 'run started' },
+  invoice_parsed: { agent: 'reader', step: 'read invoice' },
+  sender_checked: { agent: 'checker', step: 'sender check' },
+  vendor_resolved: { agent: 'screener', step: 'screen vendor' },
+  kernel_checked: { agent: 'checker', step: 'kernel checks' },
+  scored: { agent: 'scorer', step: 'score' },
+  policy: { agent: 'policy', step: 'policy' },
+  card_ready: { agent: 'writer', step: 'ready' },
+  card_held: { agent: 'writer', step: 'ready', level: 'hold' },
+  owner_approved: { agent: 'writer', step: 'approved', level: 'ok' },
+  settled: { agent: 'settlement', step: 'settled', level: 'ok' },
+  settlement_failed: { agent: 'settlement', step: 'failed', level: 'flag' },
+  intake_received: { agent: 'intake', step: 'received' },
+  run_completed: { agent: 'writer', step: 'run completed', level: 'ok' },
+  run_failed: { agent: 'writer', step: 'run failed', level: 'flag' },
+}
+
+export function runEventToFeedEvent(ev: RunEvent, payments: Payment[]): FeedEvent | null {
+  const mapping = EVENT_MAP[ev.type]
+  if (!mapping) return null
+  const payment = ev.cardId ? payments.find((p) => p.id === ev.cardId) : undefined
+  const data = ev.data ?? {}
+  let text = ev.type.replace(/_/g, ' ')
+  let level: FeedLevel = mapping.level ?? 'info'
+  if (ev.type === 'invoice_parsed') {
+    text = payment ? `${payment.vendor.name} · $${payment.amount.toLocaleString('en-US')}` : 'invoice parsed'
+  } else if (ev.type === 'sender_checked') {
+    const flags = Array.isArray(data.flags) ? data.flags : []
+    text = flags.length ? `sender: ${flags.length} flag(s)` : 'sender check passed'
+    level = flags.length ? 'flag' : 'ok'
+  } else if (ev.type === 'vendor_resolved') {
+    text = `vendor: ${String(data.status ?? 'resolved')}`
+    level = data.status === 'uncertain' || data.status === 'new' ? 'flag' : 'ok'
+  } else if (ev.type === 'kernel_checked') {
+    const flags = Array.isArray(data.flags) ? data.flags : []
+    text = flags.length ? `checks: ${flags.length} flag(s)` : 'kernel checks clean'
+    level = flags.length ? 'flag' : 'ok'
+  } else if (ev.type === 'scored') {
+    const legit = typeof data.legitimacy === 'number' ? Math.round(data.legitimacy * 100) : '?'
+    text = `trust ${legit}% · ${String(data.top_class ?? 'scored')}`
+    level = Number(legit) < 55 ? 'flag' : 'ok'
+  } else if (ev.type === 'policy') {
+    text = `lane: ${String(data.lane ?? 'policy').replace(/_/g, ' ')}`
+    level = data.lane === 'hold' ? 'hold' : 'ok'
+  } else if (ev.type === 'card_ready' || ev.type === 'card_held') {
+    text = ev.type === 'card_held' ? 'VERIFY BEFORE RELEASE' : 'VOUCHED'
+    level = ev.type === 'card_held' ? 'hold' : 'ok'
+  } else if (ev.type === 'owner_approved') {
+    text = 'approved by owner'
+    level = 'ok'
+  } else if (ev.type === 'settled') {
+    text = `settled · tx ${String(data.tx_id ?? data.txId ?? '').slice(0, 8)}…`
+    level = 'ok'
+  } else if (ev.type === 'intake_received') {
+    text = `intake: ${String(data.source ?? 'received')}`
+    level = 'info'
+  }
+  return {
+    id: `ev-${ev.seq}`,
+    at: new Date(ev.at).getTime(),
+    agent: mapping.agent,
+    step: mapping.step,
+    ref: payment?.invoiceNumber ?? String(data.invoice_number ?? data.card_id ?? ev.cardId ?? ''),
+    paymentId: ev.cardId ?? '',
+    text,
+    level,
+  }
 }
 
 const AGENT_STEPS: Array<{ agent: FeedAgent; step: string }> = [

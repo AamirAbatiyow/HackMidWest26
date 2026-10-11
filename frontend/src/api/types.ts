@@ -176,6 +176,12 @@ export interface ApiInfo {
   model: string | null
   policyMode: string | null
   version?: string
+  settlementAdapter?: string
+  settlementNetwork?: string
+  llmMode?: string
+  scorer?: string
+  runs?: number
+  vendors?: number
 }
 
 export interface HealthStatus {
@@ -186,6 +192,7 @@ export interface HealthStatus {
   reason?: string
 }
 
+// Netstats page types
 export interface PipelineStepStats {
   p50Ms: number | null
   p95Ms: number | null
@@ -297,6 +304,24 @@ export interface TopologyData {
   edges: TopologyEdge[]
 }
 
+// Run events for live feed
+export interface RunEvent {
+  seq: number
+  type: string
+  at: string
+  cardId?: string
+  data?: Record<string, unknown>
+}
+
+export interface RunInfo {
+  id: string
+  label: string
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed'
+  createdAt: string
+  pendingApproval: boolean
+  cardIds: string[]
+}
+
 export interface VouchApi {
   readonly mode: 'mock' | 'live'
   listPayments(): Promise<Payment[]>
@@ -312,4 +337,6 @@ export interface VouchApi {
   getInfo(): Promise<ApiInfo>
   getLatency(): Promise<LatencyStats>
   getTopology(): Promise<TopologyData>
+  listRuns(): Promise<RunInfo[]>
+  getRunEvents(runId: string, after?: number): Promise<{ status: string; events: RunEvent[] }>
 }

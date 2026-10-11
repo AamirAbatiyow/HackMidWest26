@@ -10,9 +10,13 @@ export type ApiPreference = 'auto' | ApiMode
 const STORAGE_KEY = 'vouch.apiMode'
 const PROBE_MS = 5000
 
-export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:8101'
+export const API_BASE_URL: string =
+  import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? 'http://localhost:8101'
+
+const FORCE_MOCK: boolean = import.meta.env.VITE_USE_MOCK === '1' || import.meta.env.VITE_USE_MOCK === 'true'
 
 function readPreference(): ApiPreference {
+  if (FORCE_MOCK) return 'mock'
   if (typeof window !== 'undefined') {
     const stored = window.localStorage.getItem(STORAGE_KEY)
     if (stored === 'mock' || stored === 'live' || stored === 'auto') return stored
