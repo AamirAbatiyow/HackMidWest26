@@ -93,6 +93,12 @@ KickbackCode = Literal[
 Engine = Literal["deterministic", "decider", "hackathon-chat"]
 Policy = Literal["auto", "always", "off"]
 
+# Route detail / kickback reason when an image goes unread because of the server, not the sender.
+NO_OCR_ROUTE_DETAIL = (
+    "no OCR engine installed on this server, tesseract-ocr + tesseract-ocr-eng are missing; "
+    "the file itself may be fine"
+)
+
 FORMAT_CRITERIA: dict[str, str] = {
     "pdf_attachment": "the invoice is a PDF attachment (digital with a text layer, or a scanned PDF)",
     "image_attachment": "the invoice is a photo or scan image attachment: PNG, JPEG, TIFF, WebP, BMP",
@@ -363,6 +369,9 @@ class Route(BaseModel):
     basis: str = ""  # the evidence the call rests on (for the audit record)
     ambiguous: list[str] = Field(default_factory=list)  # ``AMBIGUITY`` keys; empty = obvious
     admissible_formats: list[str] = Field(default_factory=list)
+    # An image / scanned PDF went unread only because this server has no OCR engine: a deployment fault,
+    # not a bad submission. Carried whatever the route (the body may still parse), so the card can say so.
+    ocr_missing: bool = False
 
     @property
     def obvious(self) -> bool:
@@ -410,6 +419,9 @@ class IntakeClassification(BaseModel):
     kickback_reason: str | None = None
     kickback_draft: KickbackDraft | None = None
     missing_fields: list[str] = Field(default_factory=list)
+    # The submission carried an image or scanned PDF that this server could not read because no OCR engine
+    # is installed (R_OCR_UNAVAILABLE on the card): fix the server, do not blame the sender.
+    ocr_unavailable: bool = False
     # Safe default: the deterministic route was ambiguous, a model was consulted and no answer passed
     # validation / admissibility -> the card waits for the owner (R_INTAKE_REVIEW), it is never paid on a guess.
     review_required: bool = False
@@ -605,6 +617,7 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
     candidates: list[tuple[str, str, str]] = []  # (format, tool, basis)
     unreadable: list[tuple[str, str]] = []  # (code, detail)
     ambiguous: list[str] = []
+    ocr_missing = False
     for p in attachments:
         kind, chars = p.sniffed_kind, p.text_chars
         if kind in FORMAT_FOR_KIND and kind != "text":
@@ -618,7 +631,8 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
                 if chars:
                     ambiguous.append("thin_text_layer")
             else:
-                why = "OCR found no text" if ocr_available else "no OCR engine"
+                why = "OCR found no text" if ocr_available else NO_OCR_ROUTE_DETAIL
+                ocr_missing = ocr_missing or not ocr_available
                 unreadable.append(
                     ("unreadable_scan", f"{p.filename}: scanned PDF without a text layer and {why}")
                 )
@@ -626,7 +640,8 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
             if ocr_available and (chars is None or chars > 20):
                 candidates.append(("image_attachment", "image_ocr", f"{p.filename}: image, OCR available"))
             else:
-                why = "no OCR engine installed" if not ocr_available else "OCR found no text"
+                why = NO_OCR_ROUTE_DETAIL if not ocr_available else "OCR found no text"
+                ocr_missing = ocr_missing or not ocr_available
                 unreadable.append(("unreadable_scan", f"{p.filename}: {why}"))
         elif kind == "xlsx":
             candidates.append(("excel_attachment", "excel_reader", f"{p.filename}: Excel workbook"))
@@ -650,7 +665,7 @@ def deterministic_route(probes: list[DocumentProbe], ocr_available: bool) -> Rou
             )
     if len({fmt for fmt, _, _ in candidates}) > 1:
         ambiguous.append("multiple_candidates")
-    common = {"ambiguous": ambiguous, "admissible_formats": sorted(admissible)}
+    common = {"ambiguous": ambiguous, "admissible_formats": sorted(admissible), "ocr_missing": ocr_missing}
     if candidates:
         fmt, tool, basis = candidates[0]
         return Route(format=fmt, tool=tool, basis=basis, **common)  # type: ignore[arg-type]
@@ -854,6 +869,7 @@ class IntakeClassifier:
         self.threshold = float(threshold)
         self.cooldown_s = cooldown_s
         self._ocr = ocr_available
+        self._ocr_pinned = ocr_available is not None  # tests pin it; live code re-probes while it is missing
         self.owner_name = owner_name
         self.business_name = business_name
         self.max_tokens = max_tokens
@@ -904,11 +920,13 @@ class IntakeClassifier:
         return self.client is not None or bool(self.llm is not None and getattr(self.llm, "enabled", False))
 
     def ocr_available(self) -> bool:
-        if self._ocr is None:
+        if not self._ocr and not self._ocr_pinned:
+            # "missing" is not memoised: installing tesseract into the running container takes effect on
+            # the next intake without a restart (ocr_backend() re-probes while the engine is absent).
             from vouch.intake.extract import ocr_backend
 
             self._ocr = ocr_backend() != "none"
-        return self._ocr
+        return bool(self._ocr)
 
     # -- the one entry point ---------------------------------------------------------------------------
 
@@ -936,7 +954,10 @@ class IntakeClassifier:
             deterministic_tool=route.tool,
             extractor_used=extractor_used,
             missing_fields=missing,
+            ocr_unavailable=route.ocr_missing,
         )
+        if route.ocr_missing:
+            cls.notes.append("server fault: " + NO_OCR_ROUTE_DETAIL)
         ask = self.policy == "always" or (self.policy == "auto" and not route.obvious)
         state = render_state(probes, envelope, source, missing)
         with self._lock:  # one invoice at a time; the questions of a chain run strictly in sequence
@@ -1012,6 +1033,9 @@ class IntakeClassifier:
             cls.agrees_with_extractor = cls.tool in tools if tools else None
         with self._lock:
             after = deterministic_route(probes, self.ocr_available())
+            if after.ocr_missing and not cls.ocr_unavailable:
+                cls.ocr_unavailable = True
+                cls.notes.append("server fault: " + NO_OCR_ROUTE_DETAIL)
             if not cls.kickback and (after.code is not None or cls.missing_fields):
                 route = (
                     after
@@ -1279,7 +1303,12 @@ class IntakeClassifier:
             code, detail = route.code, route.detail or route.basis
         elif cls.missing_fields and not model_kick:
             code = "missing_fields"
-            detail = f"readable, but the kernel could not find: {', '.join(cls.missing_fields)}"
+            missing = ", ".join(cls.missing_fields)
+            detail = (
+                f"image attachment left unread: {NO_OCR_ROUTE_DETAIL}; the kernel could not find: {missing}"
+                if cls.ocr_unavailable
+                else f"readable, but the kernel could not find: {missing}"
+            )
         else:
             code = self._model_reason(cls, state)
             if code is None:

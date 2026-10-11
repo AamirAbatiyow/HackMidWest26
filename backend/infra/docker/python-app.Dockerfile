@@ -9,6 +9,9 @@
 #
 # EXTRAS: "--extra ml" (torch CPU for the trained model), "--extra cedar" (real Cedar engine; the Python
 # mirror is used otherwise), "--extra ocr-rapid" (OCR without the tesseract binary).
+# OCR=1 (default) installs the Tesseract binary + English data in the runtime image: pytesseract is only a
+# wrapper, and without the binary every PNG/JPEG invoice is held as unreadable (amount 0). The API image
+# needs it; the inference / model-server image passes OCR=0.
 
 ARG PYTHON_VERSION=3.12
 
@@ -30,9 +33,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:${PYTHON_VERSION}-slim AS runtime
 ARG PROJECT
 ARG APP_MODULE=""
+ARG OCR=1
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 LOG_JSON=true PORT=8000 \
     APP_MODULE=${APP_MODULE:-${PROJECT}.main:app} MODEL_REGISTRY_DIR=/app/artifacts/models \
     VOUCH_DATA_DIR=/app/data
+# python:*-slim ships no OCR engine; vouch.intake.extract.ocr_backend() looks for `tesseract` on PATH.
+RUN if [ "$OCR" = "1" ]; then \
+      apt-get update && \
+      apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng && \
+      rm -rf /var/lib/apt/lists/* && \
+      tesseract --version && tesseract --list-langs 2>&1 | grep -qx eng; \
+    fi
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=build --chown=app:app /app/.venv /app/.venv

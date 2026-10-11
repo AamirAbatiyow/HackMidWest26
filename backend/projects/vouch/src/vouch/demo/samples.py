@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from email.message import EmailMessage
@@ -57,9 +58,13 @@ def make_png(lines: list[str]) -> bytes:
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
         bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 44)
+        # Slashed-zero monospace for identifiers: Tesseract reads a proportional "US021..." as "USO21...".
+        mono = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 34)
     except OSError:  # pragma: no cover - font layout differs per host
         font = ImageFont.load_default(size=34)
         bold = ImageFont.load_default(size=44)
+        mono = font
+    has_identifier = re.compile(r"\d{4,}|[A-Z]{2}\d{2}")  # account numbers, tax ids, phones, dates
     width = 1500
     height = 160 + 54 * len(lines)
     img = Image.new("RGB", (width, height), "white")
@@ -68,7 +73,7 @@ def make_png(lines: list[str]) -> bytes:
     draw.text((80, y), lines[0], fill="black", font=bold)
     y += 90
     for ln in lines[1:]:
-        draw.text((80, y), ln, fill="black", font=font)
+        draw.text((80, y), ln, fill="black", font=mono if has_identifier.search(ln) else font)
         y += 54
     buf = io.BytesIO()
     img.save(buf, format="PNG")

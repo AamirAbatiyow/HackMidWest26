@@ -6,7 +6,7 @@ Structuring of the extracted text (amounts, dates, bank details) is the kernel's
 
 from .claims import extract_claim
 from .email_parse import envelope_from_headers, intake_body_text, parse_eml
-from .extract import combine_documents, extract_file, normalize_text, ocr_backend
+from .extract import combine_documents, extract_file, normalize_text, ocr_backend, ocr_status
 
 __all__ = [
     "combine_documents",
@@ -16,5 +16,6 @@ __all__ = [
     "intake_body_text",
     "normalize_text",
     "ocr_backend",
+    "ocr_status",
     "parse_eml",
 ]

@@ -10,6 +10,7 @@ services:
         PROJECT: vouch
         EXTRAS: --extra ml
         APP_MODULE: vouch.services.inference:app
+        OCR: "0" # scoring only; OCR lives in the API image (akamai-app.yml)
     environment:
       PORT: "8000"
       LOG_JSON: "true"

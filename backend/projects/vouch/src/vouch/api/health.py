@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from .. import __version__
-from ..intake.extract import ocr_backend
+from ..intake.extract import ocr_status
 from ..policy import cedar_available
 from ..service import VouchService
 
@@ -285,14 +285,16 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
             "cedarpy evaluating vouch.cedar" if cedar_available() else "python mirror of the Cedar rules",
         )
     )
-    ocr = ocr_backend()
+    # A missing engine is an error, not "off": the API accepts image invoices either way, and without an
+    # engine every PNG/JPEG invoice is held as unreadable (R_OCR_UNAVAILABLE). Installed by the Dockerfile.
+    ocr = ocr_status()
     roles.append(
         Role(
             "ocr",
-            "Image OCR",
-            "local (pytesseract / rapidocr)",
-            "live" if ocr != "none" else "off",
-            ocr if ocr != "none" else "no OCR backend installed; image invoices need the LLM structurer",
+            "Image OCR (PNG / JPEG invoices, scanned PDFs)",
+            "local tesseract-ocr in the API container (pytesseract) · rapidocr fallback",
+            "live" if ocr["state"] == "live" else "error",
+            ocr["detail"],
         )
     )
 

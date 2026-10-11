@@ -362,7 +362,9 @@ def render_png(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
     height = 220 + 54 * len(lines) + 70
     img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, width, 22], fill=(31, 58, 95))
+    # Accent as a thin rule under a white margin rather than a solid bar at the edge: Tesseract reads a
+    # dark edge-to-edge block as a line of text and emits junk ("OEE") as the first OCR line.
+    draw.line([(90, 40), (width - 90, 40)], fill=(31, 58, 95), width=3)
     y = 70
     draw.text((90, y), lines[0], fill="black", font=bold)
     y += 100

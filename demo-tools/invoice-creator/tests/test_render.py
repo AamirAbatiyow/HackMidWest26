@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import re
+import shutil
+import subprocess
 from datetime import date
 
 import pytest
@@ -88,6 +90,29 @@ def test_png_is_a_valid_image_with_the_invoice_text_layout():
     dark = sum(hist[:80])
     assert white > 0.7 * grey.size[0] * grey.size[1]
     assert dark > 1000
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary not installed")
+@pytest.mark.parametrize("key", ["prairie", "apex"])
+def test_png_is_legible_to_tesseract(key, tmp_path):
+    """What the backend's OCR path (pytesseract, --psm 6) must get back from our PNGs: the vendor as the
+    first line (no junk from decoration), the labels it keys on, and digit-exact identifiers."""
+    inv = get_preset(key, TODAY).invoice
+    r = render(inv, "png", *OWNER)
+    png = tmp_path / r.filename
+    png.write_bytes(r.data)
+    out = subprocess.run(
+        ["tesseract", str(png), "stdout", "--psm", "6"], capture_output=True, text=True, check=True
+    ).stdout
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert lines[0] == inv.vendor_name
+    for needle in (
+        f"Invoice No: {inv.invoice_number}",
+        f"Total Due: {money(inv.amount, inv.currency, with_code=True)}",
+        f"Account Number: {inv.bank.account_number}",
+        "Payment Details",
+    ):
+        assert needle in lines, (needle, lines)
 
 
 def test_xlsx_rows():

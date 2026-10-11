@@ -124,7 +124,7 @@ def extract_pdf_ocr(data: bytes, filename: str, max_pages: int = 5) -> Extracted
     backend = ocr_backend()
     if doc.text or backend == "none":
         if not doc.text:
-            doc.warnings.append("no OCR engine installed; scanned PDF left unread")
+            doc.warnings.append(NO_OCR_WARNING.replace("image left unread", "scanned PDF left unread"))
         return doc
     texts: list[str] = []
     warnings = [w for w in doc.warnings if not w.startswith("no text layer")]
@@ -157,9 +157,14 @@ def extract_pdf_ocr(data: bytes, filename: str, max_pages: int = 5) -> Extracted
 # ---------------------------------------------------------------- image ----
 
 
-@lru_cache(maxsize=1)
-def ocr_backend() -> str:
-    """Which OCR engine is available: 'tesseract', 'rapidocr' or 'none'."""
+OCR_INSTALL_HINT = "apt-get install tesseract-ocr tesseract-ocr-eng (or the 'ocr-rapid' extra)"
+NO_OCR_WARNING = f"no OCR engine installed on this server ({OCR_INSTALL_HINT}); image left unread"
+
+
+_ocr_cache: dict[str, object] = {}  # "backend" once an engine is found; "warned" after the first miss
+
+
+def _probe_ocr_backend() -> str:
     try:
         import pytesseract  # noqa: F401
 
@@ -173,6 +178,88 @@ def ocr_backend() -> str:
         return "rapidocr"
     except Exception:
         return "none"
+
+
+def ocr_backend() -> str:
+    """Which OCR engine is available: 'tesseract', 'rapidocr' or 'none'.
+
+    A found engine is remembered for the life of the process. A *missing* engine is re-probed on every call
+    (a PATH lookup) so that `apt-get install tesseract-ocr` inside the running container takes effect on the
+    next intake without a restart; the miss is logged once at WARNING so it shows up in the boot logs
+    (``/v1/health`` and ``/health`` report the same thing to the operator).
+    """
+    found = _ocr_cache.get("backend")
+    if found:
+        return str(found)
+    backend = _probe_ocr_backend()
+    if backend != "none":
+        _ocr_cache["backend"] = backend
+        _live_ocr_status.cache_clear()
+    elif not _ocr_cache.get("warned"):
+        _ocr_cache["warned"] = True
+        log.warning(
+            "no OCR engine: image invoices (PNG/JPEG) and scanned PDFs cannot be read; %s",
+            OCR_INSTALL_HINT,
+            extra={"ocr_backend": "none"},
+        )
+    return backend
+
+
+def ocr_status() -> dict:
+    """Operator-facing OCR facts for the health endpoints.
+
+    ``state`` is ``live`` when an engine can read images and ``down`` otherwise; ``tesseract_version`` and
+    ``languages`` come from the binary when it is the engine (``eng`` must be present for invoices).
+    Only a live answer is cached (it shells out to tesseract); "down" is re-evaluated on each poll.
+    """
+    if ocr_backend() == "none":
+        return {
+            "state": "down",
+            "backend": "none",
+            "tesseract_version": None,
+            "languages": [],
+            "detail": f"no OCR engine: image invoices are held as unreadable; {OCR_INSTALL_HINT}",
+        }
+    status = _live_ocr_status()
+    if status["state"] != "live":  # e.g. English data missing: re-check once it is installed
+        _live_ocr_status.cache_clear()
+    return dict(status)
+
+
+@lru_cache(maxsize=1)
+def _live_ocr_status() -> dict:
+    backend = ocr_backend()
+    status: dict = {
+        "state": "live" if backend != "none" else "down",
+        "backend": backend,
+        "tesseract_version": None,
+        "languages": [],
+        "detail": "",
+    }
+    if backend == "tesseract":
+        import pytesseract
+
+        try:
+            status["tesseract_version"] = str(pytesseract.get_tesseract_version())
+        except Exception as exc:  # pragma: no cover - broken install
+            status["state"], status["detail"] = "down", f"tesseract present but not runnable: {exc}"
+            return status
+        try:
+            status["languages"] = sorted(lang for lang in pytesseract.get_languages() if lang != "osd")
+        except Exception as exc:  # pragma: no cover - old tesseract without --list-langs
+            log.debug("tesseract languages unavailable: %s", exc)
+        if status["languages"] and "eng" not in status["languages"]:
+            status["state"] = "down"
+            status["detail"] = (
+                f"tesseract {status['tesseract_version']} has no English data: apt-get install tesseract-ocr-eng"
+            )
+        else:
+            status["detail"] = (
+                f"tesseract {status['tesseract_version']} · languages {', '.join(status['languages']) or '?'}"
+            )
+    else:
+        status["detail"] = "rapidocr-onnxruntime (pure-Python fallback; no tesseract binary)"
+    return status
 
 
 def _prep_image(data: bytes):
@@ -203,7 +290,8 @@ def extract_image(data: bytes, filename: str) -> ExtractedDocument:
         lines = [r[1] for r in (result or [])]
         text = "\n".join(lines)
     else:
-        warnings.append("no OCR engine installed (install tesseract-ocr or the 'ocr-rapid' extra)")
+        warnings.append(NO_OCR_WARNING)
+        log.warning("image %s left unread: no OCR engine", filename, extra={"ocr_backend": backend})
     return ExtractedDocument(
         filename=filename,
         kind="image",
