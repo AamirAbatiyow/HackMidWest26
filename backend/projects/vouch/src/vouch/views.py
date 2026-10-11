@@ -253,9 +253,30 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
             )
     for ev in card.timeline:
         name = ev.get("event")
-        if name == "intake_classified":
+        if name == "intake_decision":
+            k += 1
+            cost = f"{ev.get('engine')}, {ev.get('latency_ms', 0):.0f} ms, " + (
+                f"{int(ev.get('input_tokens') or 0) + int(ev.get('output_tokens') or 0)} tokens"
+            )
+            verdict = "" if ev.get("accepted") else f" · rejected: {ev.get('error') or ev.get('note')}"
+            events.append(
+                {
+                    "id": f"t{k}",
+                    "date": ev["at"],
+                    "title": f"Decision {ev.get('key')}: {ev.get('answer') or '-'}",
+                    "detail": f"{ev.get('question')} [{', '.join(ev.get('options') or [])}] → {cost}{verdict}",
+                    "kind": "check",
+                }
+            )
+        elif name == "intake_classified":
             k += 1
             conf = ev.get("confidence")
+            calls = int(ev.get("decider_calls") or 0) + int(ev.get("llm_calls") or 0)
+            cost = (
+                f"{calls} model call(s), {ev.get('model_latency_ms', 0):.0f} ms, {ev.get('tokens', 0)} tokens"
+                if calls
+                else "0 model calls (deterministic)"
+            )
             events.append(
                 {
                     "id": f"t{k}",
@@ -266,9 +287,33 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                         if isinstance(conf, int | float)
                         else "no calibrated confidence"
                     )
+                    + f" · {cost}"
+                    + (f" · ambiguous: {', '.join(ev['ambiguous'])}" if ev.get("ambiguous") else "")
                     + (f" · fallback: {ev['fallback_reason']}" if ev.get("fallback_reason") else "")
-                    + (" · kickback drafted for the owner" if ev.get("kickback") else ""),
+                    + (
+                        f" · kickback [{ev.get('kickback_code')}] drafted for the owner"
+                        if ev.get("kickback")
+                        else ""
+                    ),
                     "kind": "check",
+                }
+            )
+        elif name in ("kickback_drafted", "kickback_approved", "kickback_declined"):
+            k += 1
+            label = {
+                "kickback_drafted": "Kickback email drafted (awaiting the owner)",
+                "kickback_approved": f"Kickback email approved by {ev.get('actor')}",
+                "kickback_declined": f"Kickback email declined by {ev.get('actor')}",
+            }[name]
+            events.append(
+                {
+                    "id": f"t{k}",
+                    "date": ev["at"],
+                    "title": label,
+                    "detail": f"to {ev.get('to')} · template {ev.get('code')}"
+                    + (f" · {ev['note']}" if ev.get("note") else "")
+                    + (f" · {ev['reason']}" if ev.get("reason") else ""),
+                    "kind": "change" if name != "kickback_drafted" else "check",
                 }
             )
         elif name == "sender_checked":
@@ -501,8 +546,13 @@ def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, 
         "model_version": card.scores.model_version if card.scores else None,
         "vendor_match": card.resolution.model_dump() if card.resolution else None,
         "sender": card.sender.model_dump() if card.sender else None,
-        # which engine routed the document (decider / hackathon-chat / deterministic) and why; advisory only
+        # which engine routed the document (decider / hackathon-chat / deterministic) and why; advisory only.
+        # intake.decisions is the decision chain (question, options, answer, engine, latency, tokens).
         "intake": card.intake.model_dump() if card.intake else None,
+        # the drafted reply to the sender, if any; status awaiting_owner | approved | declined, never auto-sent
+        "kickback": card.intake.kickback_draft.model_dump()
+        if card.intake and card.intake.kickback_draft
+        else None,
         "funding": card.funding,
         "investigation": card.investigation.model_dump() if card.investigation else None,
         "flags": card.flags,

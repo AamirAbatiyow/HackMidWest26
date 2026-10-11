@@ -103,6 +103,9 @@ class VouchService:
             if self._decision_sig.get(card.id) != sig:
                 self._decision_sig[card.id] = sig
                 self.store.record_decision(card)
+            if card.intake is not None:
+                self.store.record_intake_decisions(card)
+                self.store.save_kickback_draft(card)
         paid_vendors = {c.invoice.vendor_id for c in run.card_list() if c.status == CardStatus.PAID}
         touched = [self.engine.vendors[v] for v in paid_vendors if v in self.engine.vendors]
         if touched:
@@ -416,6 +419,60 @@ class VouchService:
             self._resolve(card, "appeal", author, text)
             self.store.record_approval(card.id, "appeal", text, author, rules[0] if rules else None)
             return payment_view(self.engine, run, card)
+
+    # -- kickback outbox (drafts to senders; the owner decides, nothing sends) ----------------------
+
+    def kickback_decide(
+        self, card_id: str, approve: bool, note: str | None = None, author: str = "Owner"
+    ) -> dict[str, Any]:
+        """The owner approves (clears for sending by a mail integration) or declines a kickback draft.
+
+        Cedar P-08: only an Owner may do this; System and Model are denied, so nothing can approve a
+        reply to a sender automatically. The payment stays on hold either way: approving the email does
+        not make the invoice payable - a readable resubmission or the owner re-keying it does.
+        """
+        with self.lock:
+            run, card = self.engine.find_card(card_id)
+            draft = card.intake.kickback_draft if card.intake else None
+            if draft is None:
+                raise NotFoundError(f"no kickback draft for {card_id}")
+            action = "approve_kickback" if approve else "decline_kickback"
+            text = (note or "").strip()
+            rules = self._authorize(card, "Owner", action)
+            if draft.status == "awaiting_owner":
+                draft.status = "approved" if approve else "declined"
+                draft.decided_by, draft.decided_at, draft.note = author, now_iso(), text
+                card.log(
+                    "kickback_approved" if approve else "kickback_declined",
+                    actor=author,
+                    note=text,
+                    to=draft.to,
+                    code=draft.code,
+                )
+                run.emit("kickback_decided", card_id=card.id, status=draft.status, actor=author)
+                self.store.record_approval(card.id, action, text, author, rules[0] if rules else None)
+                self.store.save_kickback_draft(card)
+                self.engine.changed(run)
+            return payment_view(self.engine, run, card)
+
+    def outbox(self, status: str | None = None) -> list[dict[str, Any]]:
+        """Kickback drafts, newest first (``status`` filters: awaiting_owner | approved | declined)."""
+        items = []
+        for run, card in self._pairs():
+            draft = card.intake.kickback_draft if card.intake else None
+            if draft is None or (status and draft.status != status):
+                continue
+            items.append(
+                {
+                    "payment_id": card.id,
+                    "run_id": run.id,
+                    "vendor": card.invoice.vendor_name,
+                    "received_at": run.created_at,
+                    **draft.model_dump(),
+                }
+            )
+        items.sort(key=lambda d: d["received_at"], reverse=True)
+        return items
 
     def settle(
         self, card_ids: list[str], funding: str = "now", author: str = "Owner", note: str = ""

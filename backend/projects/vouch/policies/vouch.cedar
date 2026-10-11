@@ -71,3 +71,12 @@ permit(
   action in [Action::"read", Action::"explain"],
   resource is Payment
 );
+
+// P-08: a kickback email drafted for a sender (unreadable / unsupported / incomplete invoice) is sent
+// only on the owner's say-so. No permit exists for System or Model, so nothing auto-sends a reply.
+@id("P-08")
+permit(
+  principal is Owner,
+  action in [Action::"approve_kickback", Action::"decline_kickback"],
+  resource is Payment
+) when { resource.lifecycle != "settled" };

@@ -24,10 +24,20 @@ RULES: dict[str, str] = {
     "P-05": "Settlement requires a recorded owner approval",
     "P-06": "Bank changes require owner call-back verification",
     "P-07": "Model may read and explain; explanations carry no authority",
+    "P-08": "Owner decides whether a drafted kickback email is sent; nothing auto-sends a reply",
     "DEFAULT-DENY": "No matching permit: denied by default (fees, rounding, amount edits, denials, model actions)",
 }
 
-AUTOMATED_ACTIONS = ["fast_pay", "hold", "deny_vendor", "add_fee", "round_amount", "modify_amount", "settle"]
+AUTOMATED_ACTIONS = [
+    "fast_pay",
+    "hold",
+    "deny_vendor",
+    "add_fee",
+    "round_amount",
+    "modify_amount",
+    "settle",
+    "approve_kickback",
+]
 MODEL_ACTIONS = [
     "approve",
     "settle",
@@ -36,6 +46,7 @@ MODEL_ACTIONS = [
     "modify_amount",
     "change_bank_details",
     "explain",
+    "approve_kickback",
 ]
 
 
@@ -139,6 +150,8 @@ def _mirror(principal_type: str, action: str, attrs: PaymentAttrs, ctx: dict[str
             return AuthzOutcome(True, ["P-05"])
         if action == "change_bank_details" and ctx.get("callback_verified"):
             return AuthzOutcome(True, ["P-06"])
+        if action in ("approve_kickback", "decline_kickback") and attrs.lifecycle != "settled":
+            return AuthzOutcome(True, ["P-08"])
     if principal_type == "System":
         if action == "hold":
             return AuthzOutcome(True, ["P-03"])

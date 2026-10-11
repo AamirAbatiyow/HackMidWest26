@@ -138,6 +138,53 @@ class DocumentRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class IntakeDecisionRow(Base):
+    """One row per decision-classifier question (format / tool / kickback reason), rejected attempts
+    included: what was asked, what was offered, what was chosen, who decided and what it cost."""
+
+    __tablename__ = "intake_decisions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    card_id: Mapped[str] = mapped_column(String(64), index=True)
+    seq: Mapped[int] = mapped_column(Integer, default=0)
+    key: Mapped[str] = mapped_column(String(32))
+    question: Mapped[str] = mapped_column(Text)
+    options: Mapped[list] = mapped_column(JSON)
+    answer: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    accepted: Mapped[bool] = mapped_column(Boolean)
+    engine: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[float] = mapped_column(default=0.0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class KickbackDraftRow(Base):
+    """The kickback outbox: drafted replies to senders. Nothing here is ever sent by this service; the
+    owner approves or declines, and ``sent_at`` stays NULL until a mail integration records a send."""
+
+    __tablename__ = "kickback_drafts"
+    card_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    to: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    code: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    missing_fields: Mapped[list] = mapped_column(JSON, default=list)
+    chosen_by: Mapped[str] = mapped_column(String(32), default="deterministic")
+    status: Mapped[str] = mapped_column(String(16), default="awaiting_owner", index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class EmbeddingCacheRow(Base):
     __tablename__ = "embedding_cache"
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -471,6 +518,100 @@ class AuditStore:
             )
             s.commit()
 
+    # ---- intake decision classifiers + kickback outbox ----------------------
+
+    def record_intake_decisions(self, card: PaymentCard) -> int:
+        """Persist the card's decision chain once (idempotent per card); returns the rows written."""
+        cls = card.intake
+        if cls is None or not cls.decisions:
+            return 0
+        with self.session() as s:
+            existing = s.execute(
+                select(IntakeDecisionRow.id).where(IntakeDecisionRow.card_id == card.id)
+            ).first()
+            if existing is not None:
+                return 0
+            for i, d in enumerate(cls.decisions):
+                s.add(
+                    IntakeDecisionRow(
+                        id=new_id("dec"),
+                        run_id=card.run_id,
+                        card_id=card.id,
+                        seq=i,
+                        key=d.key,
+                        question=d.question,
+                        options=list(d.options),
+                        answer=d.answer,
+                        accepted=bool(d.accepted),
+                        engine=d.engine,
+                        confidence=d.confidence,
+                        latency_ms=float(d.latency_ms),
+                        input_tokens=int(d.input_tokens),
+                        output_tokens=int(d.output_tokens),
+                        attempts=int(d.attempts),
+                        error=d.error,
+                        note=d.note,
+                    )
+                )
+            s.commit()
+            return len(cls.decisions)
+
+    def save_kickback_draft(self, card: PaymentCard) -> None:
+        """Upsert the card's kickback draft in the outbox (status, decision and note follow the card)."""
+        cls = card.intake
+        draft = cls.kickback_draft if cls else None
+        if draft is None:
+            return
+        with self.session() as s:
+            row = s.get(KickbackDraftRow, card.id)
+            decided_at = datetime.fromisoformat(draft.decided_at) if draft.decided_at else None
+            if row is None:
+                s.add(
+                    KickbackDraftRow(
+                        card_id=card.id,
+                        run_id=card.run_id,
+                        to=draft.to,
+                        subject=draft.subject,
+                        body=draft.body,
+                        code=draft.code,
+                        reason=draft.reason,
+                        missing_fields=list(draft.missing_fields),
+                        chosen_by=draft.chosen_by,
+                        status=draft.status,
+                        decided_by=draft.decided_by,
+                        decided_at=decided_at,
+                        note=draft.note,
+                    )
+                )
+            else:
+                row.status, row.decided_by, row.decided_at, row.note = (
+                    draft.status,
+                    draft.decided_by,
+                    decided_at,
+                    draft.note,
+                )
+            s.commit()
+
+    def kickback_drafts(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self.session() as s:
+            q = select(KickbackDraftRow).order_by(KickbackDraftRow.created_at.desc()).limit(limit)
+            if status:
+                q = q.where(KickbackDraftRow.status == status)
+            return [_draft_dict(r) for r in s.execute(q).scalars().all()]
+
+    def intake_decisions(self, card_id: str) -> list[dict[str, Any]]:
+        with self.session() as s:
+            rows = (
+                s.execute(
+                    select(IntakeDecisionRow)
+                    .where(IntakeDecisionRow.card_id == card_id)
+                    .order_by(IntakeDecisionRow.seq)
+                )
+                .scalars()
+                .all()
+            )
+            return [_decision_dict(r) for r in rows]
+
     def embedding_lookup(self, key: str) -> list[float] | None:
         with self.session() as s:
             row = s.get(EmbeddingCacheRow, key)
@@ -493,6 +634,8 @@ class AuditStore:
                 "approvals": s.query(ApprovalRow).count(),
                 "settlements": s.query(SettlementRow).count(),
                 "documents": s.query(DocumentRow).count(),
+                "intake_decisions": s.query(IntakeDecisionRow).count(),
+                "kickback_drafts": s.query(KickbackDraftRow).count(),
                 "embedding_cache": s.query(EmbeddingCacheRow).count(),
             }
 
@@ -505,7 +648,19 @@ class AuditStore:
             settlements = [
                 r for r in s.execute(select(SettlementRow)).scalars().all() if card_id in (r.card_ids or [])
             ]
+            decisions_rows = (
+                s.execute(
+                    select(IntakeDecisionRow)
+                    .where(IntakeDecisionRow.card_id == card_id)
+                    .order_by(IntakeDecisionRow.seq)
+                )
+                .scalars()
+                .all()
+            )
+            draft = s.get(KickbackDraftRow, card_id)
             return {
+                "intake_decisions": [_decision_dict(r) for r in decisions_rows],
+                "kickback_draft": _draft_dict(draft) if draft else None,
                 "decisions": [
                     {
                         "id": d.id,
@@ -569,6 +724,49 @@ class AuditStore:
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)
         Base.metadata.create_all(self.engine)
+
+
+def _decision_dict(r: IntakeDecisionRow) -> dict[str, Any]:
+    return {
+        "id": r.id,
+        "run_id": r.run_id,
+        "card_id": r.card_id,
+        "seq": r.seq,
+        "key": r.key,
+        "question": r.question,
+        "options": r.options,
+        "answer": r.answer,
+        "accepted": r.accepted,
+        "engine": r.engine,
+        "confidence": r.confidence,
+        "latency_ms": r.latency_ms,
+        "input_tokens": r.input_tokens,
+        "output_tokens": r.output_tokens,
+        "attempts": r.attempts,
+        "error": r.error,
+        "note": r.note,
+        "at": r.created_at.isoformat(),
+    }
+
+
+def _draft_dict(r: KickbackDraftRow) -> dict[str, Any]:
+    return {
+        "card_id": r.card_id,
+        "run_id": r.run_id,
+        "to": r.to,
+        "subject": r.subject,
+        "body": r.body,
+        "code": r.code,
+        "reason": r.reason,
+        "missing_fields": r.missing_fields,
+        "chosen_by": r.chosen_by,
+        "status": r.status,
+        "decided_by": r.decided_by,
+        "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+        "note": r.note,
+        "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+        "created_at": r.created_at.isoformat(),
+    }
 
 
 def _redact(url: str) -> str:

@@ -2,6 +2,8 @@
 
 GET  /payments, /payments/{id}            payment queue in the shape the React app renders
 POST /payments/{id}/approve|hold|appeal   owner actions ({"note": "..."}); Cedar-authorized, audited
+GET  /payments/{id}/decisions             intake decision chain (question, options, answer, engine, cost)
+GET  /outbox                              kickback drafts to senders; POST /payments/{id}/kickback/approve|decline
 POST /batch/settle                        {"payment_ids": [...], "funding": "now"|"scheduled"} -> receipt
 GET  /fairness                            held-out model metrics in the fairness report's shape
 GET  /health, /info, /netz, /redteam      (unversioned; the /v1 versions live in cards.py / main.py)
@@ -62,6 +64,55 @@ def appeal_payment(payment_id: str, body: ActionBody | None = None) -> dict[str,
 @payments.get("/payments/{payment_id}/audit", summary="Audit trail for one payment")
 def payment_audit(payment_id: str) -> dict[str, Any]:
     return get_service().audit(payment_id)
+
+
+@payments.get(
+    "/payments/{payment_id}/decisions",
+    summary="Intake decision chain (format -> extraction tool -> kickback reason) with cost and engine",
+)
+def payment_decisions(payment_id: str) -> dict[str, Any]:
+    view = get_service().payment(payment_id)
+    intake = view.get("intake") or {}
+    return {
+        "payment_id": payment_id,
+        "engine": intake.get("engine"),
+        "policy": intake.get("policy"),
+        "ambiguous": intake.get("ambiguous", []),
+        "format": intake.get("format"),
+        "tool": intake.get("tool"),
+        "kickback": intake.get("kickback", False),
+        "kickback_code": intake.get("kickback_code"),
+        "model_calls": (intake.get("decider_calls") or 0) + (intake.get("llm_calls") or 0),
+        "model_latency_ms": intake.get("model_latency_ms", 0.0),
+        "tokens": intake.get("tokens", 0),
+        "decisions": intake.get("decisions", []),
+    }
+
+
+@payments.get(
+    "/outbox",
+    summary="Kickback drafts to senders (awaiting_owner | approved | declined); nothing here is auto-sent",
+)
+def outbox(status: str | None = None) -> list[dict[str, Any]]:
+    return get_service().outbox(status)
+
+
+@payments.post(
+    "/payments/{payment_id}/kickback/approve",
+    summary="Owner clears the drafted kickback email for sending (Cedar P-08; the hold stays)",
+)
+def approve_kickback(payment_id: str, body: ActionBody | None = None) -> dict[str, Any]:
+    body = body or ActionBody()
+    return get_service().kickback_decide(payment_id, True, body.note, body.author)
+
+
+@payments.post(
+    "/payments/{payment_id}/kickback/decline",
+    summary="Owner declines the drafted kickback email (Cedar P-08)",
+)
+def decline_kickback(payment_id: str, body: ActionBody | None = None) -> dict[str, Any]:
+    body = body or ActionBody()
+    return get_service().kickback_decide(payment_id, False, body.note, body.author)
 
 
 @payments.post(
