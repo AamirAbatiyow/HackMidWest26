@@ -106,12 +106,28 @@ def test_reset_clears_runs_but_keeps_vendors(settings, tmp_path, db_url):
 
 def test_opening_an_older_database_adds_the_columns_this_version_declares(db_url):
     """``create_all`` never alters existing tables: a store created before the per-document tool decision
-    (``intake_documents.tool`` / ``fallback``) and the strict-schema audit fields (``intake_decisions.
-    reason_code`` / ``validation_errors``) gains the columns on open, and the new rows write cleanly."""
+    (``intake_documents.tool`` / ``fallback``), the strict-schema audit fields (``intake_decisions.
+    reason_code`` / ``validation_errors``) and the P-09 send record (``kickback_drafts.sent_by`` /
+    ``sent_via`` / ``message_id``) gains the columns on open, and the new rows write cleanly."""
     from sqlalchemy import create_engine, inspect, text
 
     old = create_engine(db_url)
     with old.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE kickback_drafts (card_id VARCHAR(64) PRIMARY KEY, run_id VARCHAR(64), "
+                '"to" VARCHAR(255), subject VARCHAR(255), body TEXT, code VARCHAR(32), reason TEXT, '
+                "missing_fields JSON, chosen_by VARCHAR(32), status VARCHAR(16), decided_by VARCHAR(80), "
+                "decided_at DATETIME, note TEXT, sent_at DATETIME, created_at DATETIME)"
+            )
+        )
+        conn.execute(
+            text(
+                'INSERT INTO kickback_drafts (card_id, "to", subject, body, code, status, created_at) '
+                "VALUES ('run_0.1', 'ap@old.example', 'old', 'old body', 'unreadable_scan', 'approved', "
+                "'2026-10-01 12:00:00')"
+            )
+        )
         conn.execute(
             text(
                 "CREATE TABLE intake_documents (id VARCHAR(64) PRIMARY KEY, run_id VARCHAR(64), "
@@ -140,6 +156,11 @@ def test_opening_an_older_database_adds_the_columns_this_version_declares(db_url
     assert {"tool", "fallback"} <= columns
     decision_columns = {c["name"] for c in inspect(store.engine).get_columns("intake_decisions")}
     assert {"reason_code", "validation_errors"} <= decision_columns
+    draft_columns = {c["name"] for c in inspect(store.engine).get_columns("kickback_drafts")}
+    assert {"sent_by", "sent_via", "message_id"} <= draft_columns
+    old_draft = store.kickback_drafts(status="approved")[0]
+    assert old_draft["card_id"] == "run_0.1" and old_draft["sent_at"] is None
+    assert (old_draft["sent_by"], old_draft["sent_via"], old_draft["message_id"]) == (None, None, None)
     store.record_document(
         "run_1", "run_1.1", "inv.xlsx", "xlsx", "def", "openpyxl", "Invoice", None,
         tool="excel_reader", fallback=None,

@@ -3,7 +3,7 @@
 GET  /payments, /payments/{id}            payment queue in the shape the React app renders
 POST /payments/{id}/approve|hold|appeal   owner actions ({"note": "..."}); Cedar-authorized, audited
 GET  /payments/{id}/decisions             intake decision chain (question, options, answer, engine, cost)
-GET  /outbox                              kickback drafts to senders; POST /payments/{id}/kickback/approve|decline
+GET  /outbox                              kickback drafts to senders; POST /payments/{id}/kickback/approve|decline|send
 POST /batch/settle                        {"payment_ids": [...], "funding": "now"|"scheduled"} -> receipt
 GET  /fairness                            held-out model metrics in the fairness report's shape
 GET  /health, /info, /netz, /redteam      (unversioned; the /v1 versions live in cards.py / main.py)
@@ -121,6 +121,16 @@ def approve_kickback(payment_id: str, body: ActionBody | None = None) -> dict[st
 def decline_kickback(payment_id: str, body: ActionBody | None = None) -> dict[str, Any]:
     body = body or ActionBody()
     return get_service().kickback_decide(payment_id, False, body.note, body.author)
+
+
+@payments.post(
+    "/payments/{payment_id}/kickback/send",
+    summary="Owner hands the approved kickback email to the mail integration (Cedar P-09: approved, once; "
+    "403 otherwise). The payment stays on hold.",
+)
+def send_kickback(payment_id: str, body: ActionBody | None = None) -> dict[str, Any]:
+    body = body or ActionBody()
+    return get_service().kickback_send(payment_id, body.note, body.author)
 
 
 @payments.post(

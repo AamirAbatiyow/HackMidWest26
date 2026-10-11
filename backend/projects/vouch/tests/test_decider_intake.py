@@ -2,7 +2,8 @@
 obvious documents are routed by code with zero model calls, ambiguous ones run the chain, every decision
 lands on the card, in the timeline, in the audit store and in the API payload (question, options, answer,
 engine, latency, tokens); a kickback is a hold with a template draft in the owner's outbox that nothing
-can send without the owner (Cedar P-08); a model can never change an amount, a lane or a score."""
+can send without the owner (Cedar P-08 to approve, P-09 to send it once); a model can never change an
+amount, a lane or a score."""
 
 from __future__ import annotations
 
@@ -321,6 +322,63 @@ def test_only_the_owner_can_decide_a_kickback_and_nothing_can_send_it(make):
     card.status = CardStatus.PAID
     with pytest.raises(ForbiddenError):
         svc.kickback_decide(card.id, True)
+
+
+def test_sending_the_kickback_is_a_separate_owner_step_that_happens_once_through_the_mailer(make):
+    """Approval (P-08) clears the draft; sending (P-09) is its own owner action with its own Cedar check.
+    The mailer is reached only after both, exactly once, and the payment stays on hold throughout."""
+    svc = make(None)
+    run = svc.intake(_email("", _png_attachment()))
+    card = run.card_list()[0]
+    mailer = svc.mailer
+    with TestClient(main.app) as client:
+        send = f"/v1/payments/{card.id}/kickback/send"
+        denied = client.post(send, json={"note": "go", "author": "Dana"})
+        assert denied.status_code == 403, "awaiting the owner: nothing permits a send"
+        assert denied.json()["error"]["details"]["rules"] == ["DEFAULT-DENY"]
+        assert mailer.sent == [] and card.intake.kickback_draft.sent_at is None
+        approved = client.post(f"/v1/payments/{card.id}/kickback/approve", json={"author": "Dana"}).json()
+        assert approved["kickback"]["status"] == "approved" and approved["kickback"]["sent_at"] is None
+        assert mailer.sent == [], "approval sends nothing"
+        sent = client.post(send, json={"note": "sent from the console", "author": "Dana"})
+        assert sent.status_code == 200
+        kb = sent.json()["kickback"]
+        assert kb["status"] == "sent" and kb["sent_by"] == "Dana" and kb["sent_via"] == "outbox"
+        assert len(mailer.sent) == 1 and kb["sent_at"] and kb["message_id"] == mailer.sent[0]["message_id"]
+        assert mailer.sent[0]["to"] == "ar@prairiepackaging.com" and "$" not in mailer.sent[0]["body"]
+        again = client.post(send, json={"author": "Dana"})
+        assert again.status_code == 403 and again.json()["error"]["details"]["rules"] == ["DEFAULT-DENY"]
+        assert len(mailer.sent) == 1, "a draft is sent at most once"
+        assert client.get("/v1/outbox?status=sent").json()[0]["payment_id"] == card.id
+        assert client.get("/v1/outbox?status=approved").json() == []
+        assert client.post("/v1/payments/nope/kickback/send", json={}).status_code == 404
+        audit = client.get(f"/v1/payments/{card.id}/audit").json()["store"]
+        draft = audit["kickback_draft"]
+        assert draft["status"] == "sent" and draft["sent_by"] == "Dana" and draft["sent_via"] == "outbox"
+        assert draft["sent_at"] and draft["message_id"] == mailer.sent[0]["message_id"]
+        assert any(a["action"] == "send_kickback" and a["policy_rule"] == "P-09" for a in audit["approvals"])
+        sends = [p for p in audit["policy_results"] if p["action"] == "send_kickback"]
+        assert [(p["allowed"], p["reasons"]) for p in sends] == [
+            (False, ["DEFAULT-DENY"]),
+            (True, ["P-09"]),
+            (False, ["DEFAULT-DENY"]),
+        ], "every send attempt, denied or not, is in the policy record"
+        timeline = client.get(f"/v1/payments/{card.id}").json()["timeline"]
+    assert any(
+        t["title"] == "Kickback email sent by Dana (Cedar P-09)" and "via outbox" in t["detail"]
+        for t in timeline
+    )
+    assert any(e["event"] == "kickback_sent" and e["via"] == "outbox" for e in card.timeline)
+    # sending changes nothing about the payment: still on hold for a readable invoice, nothing paid
+    assert card.status == CardStatus.HOLD and R_KICKBACK in card.policy.reasons
+    assert not [c for c in run.card_list() if c.status == CardStatus.PAID]
+    # a declined draft can never be sent; a sent draft cannot be re-decided
+    other = svc.intake(_email("", _png_attachment())).card_list()[0]
+    svc.kickback_decide(other.id, False, author="Dana")
+    with pytest.raises(ForbiddenError):
+        svc.kickback_send(other.id, author="Dana")
+    assert len(mailer.sent) == 1 and other.intake.kickback_draft.sent_at is None
+    assert svc.kickback_decide(card.id, False, author="Dana")["kickback"]["status"] == "sent"
 
 
 def test_health_shows_the_decider_role_and_api_exposes_the_engine(make):

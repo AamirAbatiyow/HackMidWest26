@@ -33,6 +33,7 @@ from vouch.engine import Run, Submission, VouchEngine
 from vouch.intake import combine_documents, envelope_from_headers, extract_file, intake_body_text, parse_eml
 from vouch.intake.extract import detect_kind
 from vouch.llm import LLMRuntime
+from vouch.mail import Mailer, OutboxMailer
 from vouch.policy import PaymentAttrs, authorize, cedar_available
 from vouch.scorer import Scorer
 from vouch.storage import AttachmentStore
@@ -56,12 +57,14 @@ class VouchService:
         today: date | None = None,
         seed_demo: bool | None = None,
         restore: bool = True,
+        mailer: Mailer | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         s = self.settings
         url = database_url or s.effective_database_url
         self.store = store or AuditStore.open(url, s.sqlite_url)
         self.attachments = AttachmentStore(s)
+        self.mailer: Mailer = mailer or OutboxMailer()
         self.lock = threading.RLock()
         self.started_at = utcnow()
         self.vendors_indexed = 0
@@ -529,8 +532,55 @@ class VouchService:
                 self.engine.changed(run)
             return payment_view(self.engine, run, card)
 
+    def kickback_send(self, card_id: str, note: str | None = None, author: str = "Owner") -> dict[str, Any]:
+        """The owner hands an approved kickback draft to the mail integration.
+
+        Cedar P-09 is the only gate between a draft and the ``Mailer``: Owner principal, the owner's P-08
+        approval on record (``kickback_approved``), not sent before (``kickback_sent``), payment not
+        settled. System and Model have no permit, so a draft that is awaiting the owner, declined or
+        already sent is a 403 and the mailer is never called. Sending changes nothing about the payment:
+        it stays on hold until a readable invoice arrives or the owner re-keys it.
+        """
+        with self.lock:
+            run, card = self.engine.find_card(card_id)
+            draft = card.intake.kickback_draft if card.intake else None
+            if draft is None:
+                raise NotFoundError(f"no kickback draft for {card_id}")
+            text = (note or "").strip()
+            rules = self._authorize(
+                card,
+                "Owner",
+                "send_kickback",
+                {
+                    "kickback_approved": draft.status in ("approved", "sent"),
+                    "kickback_sent": draft.sent_at is not None,
+                },
+            )
+            message_id = self.mailer.send(draft.to, draft.subject, draft.body)
+            draft.status = "sent"
+            draft.sent_at, draft.sent_by, draft.sent_via, draft.message_id = (
+                now_iso(),
+                author,
+                self.mailer.name,
+                message_id,
+            )
+            card.log(
+                "kickback_sent",
+                actor=author,
+                note=text,
+                to=draft.to,
+                code=draft.code,
+                via=self.mailer.name,
+                message_id=message_id,
+            )
+            run.emit("kickback_sent", card_id=card.id, actor=author, via=self.mailer.name)
+            self.store.record_approval(card.id, "send_kickback", text, author, rules[0] if rules else None)
+            self.store.save_kickback_draft(card)
+            self.engine.changed(run)
+            return payment_view(self.engine, run, card)
+
     def outbox(self, status: str | None = None) -> list[dict[str, Any]]:
-        """Kickback drafts, newest first (``status`` filters: awaiting_owner | approved | declined)."""
+        """Kickback drafts, newest first (``status`` filters: awaiting_owner | approved | declined | sent)."""
         items = []
         for run, card in self._pairs():
             draft = card.intake.kickback_draft if card.intake else None

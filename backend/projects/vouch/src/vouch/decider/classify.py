@@ -372,8 +372,9 @@ class KickbackDraft(BaseModel):
     """The email that asks the sender for a usable invoice.
 
     Rendered from a fixed template chosen by ``code``; never contains amounts or bank details; it is a
-    draft in the owner's queue (``awaiting_owner``) until the owner approves or declines it. Nothing in
-    this codebase sends it: ``sent_at`` exists so a mail integration can record a send *after* approval.
+    draft in the owner's queue (``awaiting_owner``) until the owner approves or declines it. Approval sends
+    nothing: the owner then hands the approved draft to the mail integration (``VouchService.kickback_send``,
+    Cedar P-09), which is the only path that sets ``sent_at``.
     """
 
     to: str
@@ -383,11 +384,14 @@ class KickbackDraft(BaseModel):
     reason: str
     missing_fields: list[str] = Field(default_factory=list)
     chosen_by: Engine = "deterministic"
-    status: Literal["awaiting_owner", "approved", "declined"] = "awaiting_owner"
+    status: Literal["awaiting_owner", "approved", "declined", "sent"] = "awaiting_owner"
     decided_by: str | None = None
     decided_at: str | None = None
     note: str = ""
     sent_at: str | None = None
+    sent_by: str | None = None
+    sent_via: str | None = None  # the Mailer that took the message (``outbox`` = recorded, not delivered)
+    message_id: str | None = None
 
 
 class IntakeClassification(BaseModel):

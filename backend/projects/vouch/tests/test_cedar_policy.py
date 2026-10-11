@@ -1,4 +1,4 @@
-"""Cedar authorization: default deny, the eight permits, and parity between the Cedar engine and the
+"""Cedar authorization: default deny, the nine permits, and parity between the Cedar engine and the
 Python mirror used when cedarpy is unavailable."""
 
 from __future__ import annotations
@@ -26,9 +26,11 @@ ACTIONS = (
     "round_amount",
     "approve_kickback",
     "decline_kickback",
+    "send_kickback",
     "delete",
 )
 LIFECYCLES = ("pending", "approved", "held", "appealed", "settled")
+KICKBACK_APPROVED = {"kickback_approved": True, "kickback_sent": False}
 
 
 def _attrs(lifecycle="pending", **kw) -> PaymentAttrs:
@@ -47,9 +49,9 @@ def _attrs(lifecycle="pending", **kw) -> PaymentAttrs:
     return PaymentAttrs(**base)
 
 
-def test_policy_file_declares_eight_permits():
+def test_policy_file_declares_nine_permits():
     ids = policy_ids()
-    assert ids[:8] == ["P-01", "P-02", "P-03", "P-04", "P-05", "P-06", "P-07", "P-08"]
+    assert ids[:9] == ["P-01", "P-02", "P-03", "P-04", "P-05", "P-06", "P-07", "P-08", "P-09"]
 
 
 def test_default_deny_for_unknown_actions_and_principals():
@@ -92,6 +94,26 @@ def test_only_the_owner_may_decide_a_kickback_email_and_only_before_settlement()
             assert not out.allowed and out.reasons == ["DEFAULT-DENY"], (principal, action)
 
 
+def test_sending_a_kickback_needs_the_owners_approval_on_record_and_happens_once():
+    """P-09: the approved draft leaves through the owner, once, before settlement. Approving (P-08) grants
+    nothing by itself, a sent draft cannot be sent again, and no other principal has a permit whatever
+    the context claims - so nothing in the automated system can email a vendor."""
+    for lifecycle in ("pending", "approved", "held", "appealed"):
+        assert authorize("Owner", "send_kickback", _attrs(lifecycle), KICKBACK_APPROVED).reasons == ["P-09"]
+    assert not authorize("Owner", "send_kickback", _attrs("settled"), KICKBACK_APPROVED).allowed
+    assert not authorize("Owner", "send_kickback", _attrs()).allowed, "awaiting the owner: no send"
+    assert not authorize("Owner", "send_kickback", _attrs(), {"kickback_approved": False}).allowed
+    already_sent = {"kickback_approved": True, "kickback_sent": True}
+    out = authorize("Owner", "send_kickback", _attrs(), already_sent)
+    assert not out.allowed and out.reasons == ["DEFAULT-DENY"], "a draft is sent at most once"
+    assert not authorize("Owner", "send_kickback", _attrs(), {"kickback_sent": True}).allowed
+    forged = {**KICKBACK_APPROVED, "owner_approval_recorded": True, "approval_limit_cents": 10**9}
+    for principal in ("System", "Model", "Vendor"):
+        for ctx in ({}, KICKBACK_APPROVED, forged):
+            out = authorize(principal, "send_kickback", _attrs(), ctx)
+            assert not out.allowed and out.reasons == ["DEFAULT-DENY"], (principal, ctx)
+
+
 def test_system_may_hold_and_fast_pay_but_never_deny_or_edit():
     assert authorize("System", "hold", _attrs()).reasons == ["P-03"]
     ok = authorize("System", "fast_pay", _attrs(amount_cents=200_000), {"approval_limit_cents": 250_000})
@@ -116,16 +138,21 @@ def test_system_may_hold_and_fast_pay_but_never_deny_or_edit():
 def test_model_principal_has_no_permits_at_all():
     """The model's output is advice: no policy grants `Model` anything, not even read."""
     for action in ACTIONS:
-        out = authorize("Model", action, _attrs("approved"), {"owner_approval_recorded": True})
+        ctx = {"owner_approval_recorded": True, **KICKBACK_APPROVED}
+        out = authorize("Model", action, _attrs("approved"), ctx)
         assert not out.allowed and out.reasons == ["DEFAULT-DENY"], action
     assert authorize("System", "explain", _attrs()).reasons == ["P-07"]
 
 
 @pytest.mark.skipif(not cedar_available(), reason="cedarpy not installed; parity needs both engines")
 def test_cedar_and_python_mirror_agree_on_the_full_matrix():
+    cold = {"approval_limit_cents": 0, "owner_approval_recorded": False, "callback_verified": False}
+    warm = {"approval_limit_cents": 250_000, "owner_approval_recorded": True, "callback_verified": True}
     contexts = [
-        {"approval_limit_cents": 0, "owner_approval_recorded": False, "callback_verified": False},
-        {"approval_limit_cents": 250_000, "owner_approval_recorded": True, "callback_verified": True},
+        {**cold, "kickback_approved": False, "kickback_sent": False},
+        {**warm, "kickback_approved": False, "kickback_sent": False},
+        {**warm, "kickback_approved": True, "kickback_sent": False},
+        {**warm, "kickback_approved": True, "kickback_sent": True},
     ]
     attr_variants = [
         _attrs(lc, **extra)

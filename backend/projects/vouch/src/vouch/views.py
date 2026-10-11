@@ -343,12 +343,13 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                     "kind": "check",
                 }
             )
-        elif name in ("kickback_drafted", "kickback_approved", "kickback_declined"):
+        elif name in ("kickback_drafted", "kickback_approved", "kickback_declined", "kickback_sent"):
             k += 1
             label = {
                 "kickback_drafted": "Kickback email drafted (awaiting the owner)",
                 "kickback_approved": f"Kickback email approved by {ev.get('actor')}",
                 "kickback_declined": f"Kickback email declined by {ev.get('actor')}",
+                "kickback_sent": f"Kickback email sent by {ev.get('actor')} (Cedar P-09)",
             }[name]
             events.append(
                 {
@@ -356,6 +357,7 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                     "date": ev["at"],
                     "title": label,
                     "detail": f"to {ev.get('to')} · template {ev.get('code')}"
+                    + (f" · via {ev['via']} ({ev.get('message_id')})" if ev.get("via") else "")
                     + (f" · {ev['note']}" if ev.get("note") else "")
                     + (f" · {ev['reason']}" if ev.get("reason") else ""),
                     "kind": "change" if name != "kickback_drafted" else "check",
