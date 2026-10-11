@@ -361,6 +361,9 @@ export interface TrustData {
     redteam_suite: {
       description: string
       total_cases: number
+      blocked_cases?: number | null
+      all_blocked?: boolean | null
+      ran_at?: string | null
       categories: string[]
       endpoint: string
     }
