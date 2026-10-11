@@ -34,7 +34,8 @@ from vouch.vendors import ring_graph
 
 QUICK_CHECK_REASONS = {R_DUPLICATE, R_SPLIT, R_LINES, R_LLM_AMOUNT, R_LIMIT}
 BANK_REASONS = {R_BANK}
-VENDOR_REASONS = {R_UNKNOWN_VENDOR, R_VENDOR_AMBIGUOUS, R_RING, R_SENDER, R_INJECTION, R_HIGH_RISK}
+VENDOR_REASONS = {R_UNKNOWN_VENDOR, R_VENDOR_AMBIGUOUS, R_RING, R_SENDER, R_INJECTION}
+IDENTITY_REASONS = BANK_REASONS | VENDOR_REASONS  # "verify before release": identity, not paperwork
 
 _FLAG_LABELS = {
     "no_authentication_results": "Email carried no SPF/DKIM/DMARC results",
@@ -106,11 +107,11 @@ def vouch_status(card: PaymentCard) -> str:
     if p.lane != Lane.HOLD:
         return "vouched"
     reasons = set(p.reasons)
-    if reasons & (BANK_REASONS | VENDOR_REASONS):
+    if reasons & IDENTITY_REASONS:
         return "verify"
     if reasons & QUICK_CHECK_REASONS or reasons == {R_OWNER_HOLD}:
         return "quick_check"
-    return "verify"
+    return "verify"  # model risk alone (R_HIGH_RISK)
 
 
 def risk_of(card: PaymentCard) -> str:
@@ -120,12 +121,14 @@ def risk_of(card: PaymentCard) -> str:
     reasons = set(p.reasons)
     if reasons & BANK_REASONS or (card.sender and card.sender.suspicious and card.invoice.bank_account):
         return "changed_bank"
+    if reasons & VENDOR_REASONS:
+        return "unrecognized_vendor"
     if reasons & {R_DUPLICATE, R_SPLIT} or ch.get("duplicate_of") or ch.get("split_group"):
         return "duplicate_or_split"
-    if reasons & {R_UNKNOWN_VENDOR, R_VENDOR_AMBIGUOUS, R_RING, R_SENDER, R_INJECTION, R_HIGH_RISK}:
-        return "unrecognized_vendor"
     if reasons & QUICK_CHECK_REASONS:
         return "duplicate_or_split"
+    if R_HIGH_RISK in reasons:
+        return "unrecognized_vendor"
     return "none"
 
 
@@ -143,8 +146,9 @@ def trust_score(card: PaymentCard) -> int:
     elif p and p.lane == Lane.STANDARD:
         base = max(base, 70)
     elif p and p.lane == Lane.HOLD:
-        cap = 55 if set(p.reasons) <= QUICK_CHECK_REASONS | {R_OWNER_HOLD} else 40
-        base = min(base, cap)
+        reasons = set(p.reasons)
+        cap = 55 if not (reasons & IDENTITY_REASONS) else 40
+        base = max(min(base, cap), 12 if not (reasons & IDENTITY_REASONS) else 4)
     return int(max(0, min(100, round(base))))
 
 
@@ -359,7 +363,9 @@ def audit_notes_of(card: PaymentCard) -> list[dict[str, Any]]:
     return notes
 
 
-def _relations(card: PaymentCard, run: Run) -> tuple[str | None, str | None]:
+def _relations(card: PaymentCard, run: Run) -> tuple[str | None, str | None, str | None]:
+    """(duplicate_of card id, split_with card id, duplicate note). Only real card ids become links;
+    a duplicate of an already-paid invoice is described in the note instead."""
     ch = card.checks
     dup = ch.get("duplicate_of")
     duplicate_of = None
@@ -370,14 +376,12 @@ def _relations(card: PaymentCard, run: Run) -> tuple[str | None, str | None]:
                 if other.id != card.id and other.invoice.invoice_number == m.group(1):
                     duplicate_of = other.id
                     break
-        if duplicate_of is None:
-            duplicate_of = str(dup)
     split_with = None
     group = ch.get("split_group") or []
     others = [cid for cid in group if cid != card.id]
     if others:
         split_with = others[0]
-    return duplicate_of, split_with
+    return duplicate_of, split_with, (str(dup) if dup else None)
 
 
 def _source(card: PaymentCard) -> str:
@@ -403,9 +407,11 @@ def _received_at(run: Run, card: PaymentCard) -> str:
 def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, Any]:
     inv = card.invoice
     vendor = engine.vendors.get(inv.vendor_id or "") or card.vendor
-    duplicate_of, split_with = _relations(card, run)
+    duplicate_of, split_with, duplicate_note = _relations(card, run)
     ring = ring_graph(engine.graph, engine.vendors, inv.vendor_id) if card.checks.get("shared_attributes") else None
-    receipt = card.receipt or None
+    receipt = dict(card.receipt) if card.receipt else None
+    if receipt and not receipt.get("explorer_url"):
+        receipt["explorer_url"] = f"{engine.settings.public_url.rstrip('/')}/v1/receipts/{receipt.get('tx_id')}"
     return {
         "id": card.id,
         "run_id": run.id,
@@ -428,6 +434,7 @@ def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, 
         "received_at": _received_at(run, card),
         "duplicate_of": duplicate_of,
         "split_with": split_with,
+        "duplicate_note": duplicate_note,
         "evidence": evidence_of(card),
         "timeline": timeline_of(card, engine.today),
         "checklist": checklist_of(card),
@@ -466,12 +473,21 @@ def receipt_view(
     scheduled_for: str | None,
     adapter_name: str,
     network: str,
+    public_url: str = "",
 ) -> dict[str, Any]:
     payments = [p for s in settlements for p in s.get("payments", [])]
     by_card = {p["card_id"]: p for p in payments}
     first = payments[0] if payments else {}
+
+    def link(rec: dict[str, Any]) -> str:
+        url = rec.get("batch_explorer_url") or rec.get("explorer_url")
+        if url:
+            return str(url)
+        tx = rec.get("tx_id")
+        return f"{public_url.rstrip('/')}/v1/receipts/{tx}" if tx and public_url else ""
+
     tx_id = first.get("batch_tx_id") or first.get("tx_id") or ""
-    explorer = first.get("batch_explorer_url") or first.get("explorer_url") or ""
+    explorer = link(first) if first else ""
     lines = []
     for run, card in cards:
         rec = by_card.get(card.id, card.receipt or {})
@@ -484,7 +500,7 @@ def receipt_view(
                 "amount": card.payable_cents / 100,
                 "amount_cents": card.payable_cents,
                 "tx_id": rec.get("tx_id"),
-                "explorer_url": rec.get("explorer_url"),
+                "explorer_url": link(rec) if rec else None,
                 "status": rec.get("status") or card.status.value,
             }
         )
@@ -507,7 +523,7 @@ def receipt_view(
         "transactions": [
             {
                 "tx_id": p.get("tx_id"),
-                "explorer_url": p.get("explorer_url"),
+                "explorer_url": link(p),
                 "batch_tx_id": p.get("batch_tx_id"),
                 "batch_explorer_url": p.get("batch_explorer_url"),
                 "status": p.get("status"),

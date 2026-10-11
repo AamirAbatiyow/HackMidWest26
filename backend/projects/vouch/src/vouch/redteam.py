@@ -19,7 +19,7 @@ from vouch.config import Settings, get_settings
 from vouch.demo import demo_vendors
 from vouch.domain import CardStatus, LineItem, Resolution
 from vouch.llm import LLMRuntime
-from vouch.policy import R_BANK, R_INJECTION, R_LIMIT, R_LINES, R_LLM_AMOUNT
+from vouch.policy import R_BANK, R_INJECTION, R_LIMIT, R_LINES, R_LLM_AMOUNT, R_SENDER
 from vouch.scorer import Scorer
 from vouch.engine import VouchEngine, Run, Submission
 from hm_core.errors import ValidationFailedError
@@ -469,6 +469,132 @@ def c_approval_type_confusion(make: Callable[..., VouchEngine]) -> dict[str, Any
     return {"blocked": not _paid(run), "approval": run.approval}
 
 
+def _facade(svc: VouchEngine) -> Any:
+    from vouch.audit import AuditStore
+    from vouch.service import VouchService
+
+    return VouchService(svc.settings, engine=svc, store=AuditStore("sqlite://"), seed_demo=False, restore=False)
+
+
+def c_cedar_model_cannot_act(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """Cedar (default deny): the model principal can never approve, settle, fast-pay, deny a vendor or
+    touch amounts / bank details, whatever the payment looks like."""
+    from vouch.policy import PaymentAttrs, authorize
+
+    allowed = []
+    for lifecycle in ("pending", "approved", "held", "appealed"):
+        attrs = PaymentAttrs("vouched", lifecycle, "none", 99, True, False, True, 50_000, True)
+        for action in ("approve", "settle", "fast_pay", "deny_vendor", "modify_amount", "change_bank_details"):
+            out = authorize("Model", action, attrs, {"owner_approval_recorded": True, "approval_limit_cents": 10**9})
+            if out.allowed:
+                allowed.append((lifecycle, action))
+    engine = authorize("Model", "explain", PaymentAttrs("vouched", "pending", "none", 90, True, False, True, 1, True)).engine
+    return {"blocked": not allowed, "allowed": allowed, "engine": engine}
+
+
+def c_cedar_system_cannot_deny_or_edit(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """The automated system may hold, never deny a vendor, add fees, round or edit amounts; and it may
+    not settle without a recorded owner approval."""
+    from vouch.policy import PaymentAttrs, authorize
+
+    attrs = PaymentAttrs("vouched", "approved", "none", 95, True, False, True, 80_000, True)
+    leaks = [a for a in ("deny_vendor", "add_fee", "round_amount", "modify_amount") if authorize("System", a, attrs).allowed]
+    settle_without = authorize("System", "settle", attrs, {"owner_approval_recorded": False}).allowed
+    settle_pending = authorize(
+        "System", "settle", PaymentAttrs("vouched", "pending", "none", 95, True, False, True, 80_000, True),
+        {"owner_approval_recorded": True},
+    ).allowed
+    hold_ok = authorize("System", "hold", attrs).allowed
+    return {
+        "blocked": not leaks and not settle_without and not settle_pending and hold_ok,
+        "leaks": leaks,
+        "settle_without_approval": settle_without,
+        "settle_pending": settle_pending,
+    }
+
+
+def c_frontend_settle_held_card(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """POST /batch/settle with a held card id: refused, nothing paid, the hold stands."""
+    from vouch.demo import demo_submissions
+
+    svc = make()
+    run = _execute(svc, [demo_submissions(_today())[3]])  # Sonora BEC
+    facade = _facade(svc)
+    card = run.card_list()[0]
+    refused = False
+    try:
+        facade.settle([card.id], "now")
+    except Exception as exc:
+        refused = "on hold" in str(exc)
+    return {"blocked": refused and not _paid(run) and card.status == CardStatus.HOLD, "status": card.status}
+
+
+def c_frontend_approve_unknown_vendor(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """Owner clicks approve on an invoice from a vendor that is not on the master file: it stays on hold
+    (onboarding is the only way through) and nothing is paid."""
+    svc = make()
+    text = _text("Quantum Edge Logistics", "QEL-1", "$3,400.00", days=5, bank="GB29NWBK60161331926819")
+    run = _execute(svc, [Submission(text=text, delivery_confirmed=True, po_number="PO-77")])
+    facade = _facade(svc)
+    card = run.card_list()[0]
+    still_held = False
+    try:
+        facade.approve(card.id, "looks fine to me")
+    except ValidationFailedError as exc:
+        still_held = "still on hold" in str(exc)
+    return {
+        "blocked": still_held and card.status == CardStatus.HOLD and not _paid(run),
+        "reasons": card.policy.reasons if card.policy else None,
+    }
+
+
+def c_sender_lookalike_domain(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """Clean-looking invoice (right bank, right amount) but sent from a lookalike domain with a mismatched
+    reply-to and failed DMARC: the deterministic sender check holds it before any LLM reads it."""
+    svc = make()
+    text = _text("Prairie Packaging Supply", "PPS-2306", "$1,090.00", bank=PRAIRIE_BANK)
+    run = _execute(
+        svc,
+        [
+            Submission(
+                text=text,
+                delivery_confirmed=True,
+                po_number="PO-6",
+                source="email",
+                headers={
+                    "From": "Prairie Packaging AR <ar@prairiepackaging-billing.com>",
+                    "Reply-To": "ar@prairie-remit.net",
+                    "Authentication-Results": "mx.heartlandprovisions.example; spf=softfail smtp.mailfrom=prairiepackaging-billing.com; dkim=none; dmarc=fail header.from=prairiepackaging-billing.com",
+                },
+            )
+        ],
+    )
+    card = run.card_list()[0]
+    return {
+        "blocked": not _paid(run) and card.status == CardStatus.HOLD and R_SENDER in card.policy.reasons,
+        "flags": card.sender.flags if card.sender else None,
+        "reasons": card.policy.reasons,
+    }
+
+
+def c_ambiguous_vendor_name(make: Callable[..., VouchEngine]) -> dict[str, Any]:
+    """A name that only resembles a vendor on file (no tax id, domain or bank match) is 'uncertain':
+    it never inherits the real vendor's identity and waits for the owner."""
+    svc = make()
+    text = _text("Prairie Packing Supplies", "PPS-9001", "$1,150.00", bank="US998877665544")
+    run = _execute(svc, [Submission(text=text, delivery_confirmed=True, po_number="PO-8")])
+    card = run.card_list()[0]
+    res = card.resolution
+    return {
+        "blocked": not _paid(run)
+        and card.status == CardStatus.HOLD
+        and (res is None or res.status != "known")
+        and card.invoice.vendor_id is None,
+        "resolution": res.status if res else None,
+        "reasons": card.policy.reasons,
+    }
+
+
 CASES: list[Case] = [
     Case(
         "injection-pre-approved",
@@ -552,6 +678,42 @@ CASES: list[Case] = [
         "identity",
         "Bank change 'confirmed' by calling the number on the fraudulent invoice",
         c_confirm_bank_with_attacker_phone,
+    ),
+    Case(
+        "cedar-model-cannot-act",
+        "policy",
+        "Model principal asks Cedar to approve / settle / fast-pay / deny / edit",
+        c_cedar_model_cannot_act,
+    ),
+    Case(
+        "cedar-system-cannot-deny-or-edit",
+        "policy",
+        "System principal tries to deny a vendor, add fees, edit amounts or settle unapproved",
+        c_cedar_system_cannot_deny_or_edit,
+    ),
+    Case(
+        "frontend-settle-held-card",
+        "approval",
+        "POST /batch/settle lists a card that is on hold",
+        c_frontend_settle_held_card,
+    ),
+    Case(
+        "frontend-approve-unknown-vendor",
+        "approval",
+        "Owner clicks Approve on an invoice from a vendor not on the master file",
+        c_frontend_approve_unknown_vendor,
+    ),
+    Case(
+        "sender-lookalike-domain",
+        "identity",
+        "Clean invoice sent from a lookalike domain with mismatched reply-to and failed DMARC",
+        c_sender_lookalike_domain,
+    ),
+    Case(
+        "ambiguous-vendor-name",
+        "identity",
+        "Vendor name only resembles a vendor on file (no tax id / domain / bank match)",
+        c_ambiguous_vendor_name,
     ),
 ]
 

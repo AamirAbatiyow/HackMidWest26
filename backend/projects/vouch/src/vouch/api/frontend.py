@@ -69,6 +69,11 @@ def settle_batch(body: SettleBody) -> dict[str, Any]:
     return get_service().settle(body.payment_ids, body.funding, body.author, body.note or "")
 
 
+@payments.get("/receipts/{tx_id}", summary="Settlement record for a transaction id (the mock ledger's 'explorer')")
+def receipt(tx_id: str) -> dict[str, Any]:
+    return get_service().receipt(tx_id)
+
+
 @payments.get("/fairness", summary="Held-out model metrics in the frontend's fairness-report shape")
 def fairness() -> dict[str, Any]:
     from hm_ml_common import ModelRegistry

@@ -445,6 +445,7 @@ class VouchService:
                 return receipt_view(
                     batch_id=batch_id, settlements=[], cards=pairs, funding=funding,
                     scheduled_for=scheduled_for, adapter_name=adapter.name, network=adapter.network,
+                    public_url=self.settings.public_url,
                 )  # fmt: skip
 
             by_run: dict[str, list[str]] = {}
@@ -484,6 +485,7 @@ class VouchService:
             receipt = receipt_view(
                 batch_id=batch_id, settlements=settlements, cards=pairs, funding=funding,
                 scheduled_for=None, adapter_name=adapter.name, network=adapter.network,
+                public_url=self.settings.public_url,
             )  # fmt: skip
             if errors:
                 receipt["errors"] = errors
@@ -494,6 +496,25 @@ class VouchService:
         while d.weekday() >= 5:
             d += timedelta(days=1)
         return d
+
+    def receipt(self, tx_id: str) -> dict[str, Any]:
+        """Settlement record for one transaction id (the 'explorer' for the mock ledger)."""
+        for run in self.engine.runs.values():
+            for card in run.card_list():
+                rec = card.receipt or {}
+                if tx_id in (rec.get("tx_id"), rec.get("batch_tx_id")):
+                    return {
+                        "tx_id": tx_id,
+                        "card_id": card.id,
+                        "run_id": run.id,
+                        "vendor": card.invoice.vendor_name,
+                        "invoice_number": card.invoice.invoice_number,
+                        "amount_cents": card.payable_cents,
+                        "receipt": rec,
+                        "settlements": [s for s in run.settlements if any(p.get("tx_id") == tx_id or p.get("batch_tx_id") == tx_id for p in s.get("payments", []))],
+                        "stored": [s for s in self.store.settlements(200) if s["tx_id"] == tx_id or card.id in (s.get("card_ids") or [])],
+                    }
+        raise NotFoundError(f"unknown transaction {tx_id}")
 
     def audit(self, card_id: str) -> dict[str, Any]:
         run, card = self.engine.find_card(card_id)

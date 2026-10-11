@@ -55,6 +55,8 @@ class Settings(HMSettings):
         validation_alias=AliasChoices("VOUCH_CORS_ORIGINS", "CORS_ALLOW_ORIGINS"),
     )
     region: str = "us-ord (Chicago)"
+    # Where this API is reachable from a browser (receipt links for the mock ledger, health page links).
+    public_url: str = "http://localhost:8101"
     data_dir: Path = BACKEND_ROOT / "data"
     seed_demo: bool = True  # seed the vendor master + scripted run when the store is empty
 

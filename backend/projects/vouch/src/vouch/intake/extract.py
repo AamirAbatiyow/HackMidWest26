@@ -189,7 +189,7 @@ def extract_xlsx(data: bytes, filename: str) -> ExtractedDocument:
             cells = ["" if v is None else _cell(v) for v in row]
             if any(cells):
                 rows.append(cells)
-                lines.append("\t".join(c for c in cells if c))
+                lines.append(_row_text(cells))
         if rows:
             tables.append(ExtractedTable(source=f"{filename}!{ws.title}", rows=rows))
     return ExtractedDocument(
@@ -210,13 +210,22 @@ def _cell(v) -> str:
     return str(v)
 
 
+def _row_text(cells: list[str]) -> str:
+    """Key/value rows ("Total Due", "$4,780.00") read as `Total Due: $4,780.00` so the deterministic field
+    patterns (which expect a label separator) see the same text a PDF or email body would carry."""
+    filled = [c for c in cells if c]
+    if len(filled) == 2 and not filled[0].endswith(":") and len(filled[0]) <= 40:
+        return f"{filled[0]}: {filled[1]}"
+    return "\t".join(filled)
+
+
 # ------------------------------------------------------------------ CSV ----
 
 
 def extract_csv(data: bytes, filename: str) -> ExtractedDocument:
     text = data.decode("utf-8-sig", errors="replace")
     rows = [[c.strip() for c in r] for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
-    lines = ["\t".join(c for c in r if c) for r in rows]
+    lines = [_row_text(r) for r in rows]
     return ExtractedDocument(
         filename=filename,
         kind="csv",
