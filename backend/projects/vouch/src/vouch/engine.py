@@ -71,6 +71,7 @@ from vouch.policy import build_policy, evaluate_batch, evaluate_card
 from vouch.provenance import check_provenance
 from vouch.scorer import HeuristicScorer, Scorer, get_scorer
 from vouch.sender import check_sender
+from vouch.timing import card_step
 from vouch.vendors import VendorDirectory, resolve_vendor
 
 log = logging.getLogger(__name__)
@@ -273,18 +274,19 @@ class VouchEngine:
         for k, card in enumerate(run.card_list()):
             inv, sub = card.invoice, run.submissions[k] if k < len(run.submissions) else None
             env = self._envelope(sub) if sub else None
-            claim = extract_claim(inv.raw_text, sender_email=env.from_addr if env else None)
-            claim.name = inv.vendor_name if inv.vendor_name != "unknown vendor" else claim.name
-            claim.bank_account = inv.bank_account or claim.bank_account
-            claim.email = inv.remit_email or claim.email
-            res = resolve_vendor(
-                claim,
-                self.directory,
-                vendor_id=inv.vendor_id or (sub.vendor_id if sub else None),
-                sender_domain=email_domain(env.from_addr) if env else None,
-                embedder=embedder,
-                index=self.embedding_index,
-            )
+            with card_step(card, "screen"):
+                claim = extract_claim(inv.raw_text, sender_email=env.from_addr if env else None)
+                claim.name = inv.vendor_name if inv.vendor_name != "unknown vendor" else claim.name
+                claim.bank_account = inv.bank_account or claim.bank_account
+                claim.email = inv.remit_email or claim.email
+                res = resolve_vendor(
+                    claim,
+                    self.directory,
+                    vendor_id=inv.vendor_id or (sub.vendor_id if sub else None),
+                    sender_domain=email_domain(env.from_addr) if env else None,
+                    embedder=embedder,
+                    index=self.embedding_index,
+                )
             card.resolution = res
             if res.status == "known" and res.vendor_id:
                 inv.vendor_id = res.vendor_id
@@ -312,7 +314,8 @@ class VouchEngine:
             sub = run.submissions[k] if k < len(run.submissions) else None
             env = self._envelope(sub) if sub else None
             claimed = self.vendors.get(card.invoice.vendor_id or "")
-            findings: SenderFindings = check_sender(env, vendors, claimed)
+            with card_step(card, "sender"):
+                findings: SenderFindings = check_sender(env, vendors, claimed)
             card.sender = findings
             if findings.checked:
                 card.log(
@@ -329,12 +332,25 @@ class VouchEngine:
     def intake(self, run: Run) -> None:
         for k, sub in enumerate(run.submissions, start=1):
             card_id = f"{run.id}.{k}"
+            llm_before = self.llm.stats.by_role.get("intake", {}).get("calls", 0)
+            t0 = time.perf_counter()
             try:
                 inv, notes = self._intake_one(card_id, sub)
             except (MoneyParseError, ValueError) as exc:
                 raise ValidationFailedError(f"submission {k}: {exc}") from exc
+            read_ms = (time.perf_counter() - t0) * 1000
+            llm_calls = int(self.llm.stats.by_role.get("intake", {}).get("calls", 0) - llm_before)
             extra = sorted((sub.model_extra or {}).keys())
             card = PaymentCard(id=card_id, run_id=run.id, invoice=inv)
+            card.step_ms["read"] = round(read_ms, 3)
+            card.log(
+                "intake_read",
+                parser="kernel" if sub.text else "structured_fields",
+                llm_calls=llm_calls,
+                model=self.llm.model_name if llm_calls else None,
+                amount_origin=inv.amount_origin,
+                documents=len(sub.documents),
+            )
             if extra:
                 card.log(
                     "ignored_fields", fields=extra, note="unknown fields never influence payment decisions"
@@ -342,7 +358,8 @@ class VouchEngine:
             for note in notes:
                 card.log("intake_note", note=note)
             if sub.text or sub.documents:
-                self._classify_intake(run, card, sub)
+                with card_step(card, "format"):
+                    self._classify_intake(run, card, sub)
             run.cards[card_id] = card
             run.emit("card_created", card_id=card_id, vendor=inv.vendor_name, source=inv.source)
 
@@ -618,19 +635,20 @@ class VouchEngine:
             inv = card.invoice
             vendor = self.vendors.get(inv.vendor_id or "")
             card.vendor = vendor.model_copy(deep=True) if vendor else None
-            shared = self.graph.shared(vendor.id) if vendor else {}
-            checks = check_invoice(inv, vendor, invoices, self.limits, self.today, shared)
-            card.checks = asdict(checks)
-            card.flags = checks.flags()
-            if inv.is_credit_note:
-                card.status = CardStatus.CREDIT
-                card.payable_cents = 0
-                card.log("credit_note", applied_cents=inv.amount_cents)
-                continue
-            card.payable_cents = payable.get(inv.id, inv.amount_cents)
-            if card.payable_cents != inv.amount_cents:
-                card.log("netted", credit_applied_cents=inv.amount_cents - card.payable_cents)
-            card.features, card.categorical = invoice_features(inv, vendor, checks, self.graph)
+            with card_step(card, "check"):
+                shared = self.graph.shared(vendor.id) if vendor else {}
+                checks = check_invoice(inv, vendor, invoices, self.limits, self.today, shared)
+                card.checks = asdict(checks)
+                card.flags = checks.flags()
+                if inv.is_credit_note:
+                    card.status = CardStatus.CREDIT
+                    card.payable_cents = 0
+                    card.log("credit_note", applied_cents=inv.amount_cents)
+                    continue
+                card.payable_cents = payable.get(inv.id, inv.amount_cents)
+                if card.payable_cents != inv.amount_cents:
+                    card.log("netted", credit_applied_cents=inv.amount_cents - card.payable_cents)
+                card.features, card.categorical = invoice_features(inv, vendor, checks, self.graph)
             card.log("kernel_checked", flags=card.flags)
         totals = batch_totals(
             [(c.invoice.vendor_id or "?", c.invoice.currency, c.payable_cents) for c in self._payables(run)]
@@ -761,13 +779,14 @@ class VouchEngine:
             report = None
             if self.llm.enabled and budget > 0:
                 budget -= 1
-                report = self.llm.structured(
-                    f"investigator:{cls}",
-                    INVESTIGATOR_PROMPTS[cls],
-                    f"FACTS:\n{facts.as_prompt()}",
-                    InvestigationReport,
-                    tools=get_tools(self),
-                )
+                with card_step(card, "investigate"):
+                    report = self.llm.structured(
+                        f"investigator:{cls}",
+                        INVESTIGATOR_PROMPTS[cls],
+                        f"FACTS:\n{facts.as_prompt()}",
+                        InvestigationReport,
+                        tools=get_tools(self),
+                    )
             if report is None:
                 card.investigation = template
             else:
@@ -819,7 +838,8 @@ class VouchEngine:
         for card in self._payables(run):
             if card.status in (CardStatus.PAID, CardStatus.APPROVED):
                 continue
-            outcome = evaluate_card(self.policy, card)
+            with card_step(card, "policy"):
+                outcome = evaluate_card(self.policy, card)
             changed = card.policy is None or card.policy.lane != outcome.lane
             card.policy = outcome
             card.status = CardStatus.HOLD if outcome.lane == Lane.HOLD else CardStatus.READY
@@ -921,10 +941,12 @@ class VouchEngine:
                 c.log("settlement_failed", error=str(exc))
             run.emit("settlement_failed", lane=lane, error=str(exc))
             return []
-        self.time("settlement_ms", (time.perf_counter() - t0) * 1000)
+        settle_ms = (time.perf_counter() - t0) * 1000
+        self.time("settlement_ms", settle_ms)
         out = []
         for card, rec in zip(cards, receipts, strict=True):
             ok = rec.status.value == "settled"
+            card.step_ms["settle"] = round(settle_ms, 3)  # one batch transaction; same wall time per card
             card.receipt = {
                 "tx_id": rec.tx_id,
                 "status": rec.status.value,

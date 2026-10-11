@@ -25,7 +25,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import TypeVar
+from typing import Any, TypeVar
 
 F = TypeVar("F", bound=Callable)
 
@@ -138,6 +138,27 @@ def timed(step: str, registry: TimingRegistry | None = None) -> Generator[None, 
         try:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             reg.record(step, elapsed_ms)
+        except Exception:
+            pass
+
+
+@contextmanager
+def card_step(card: Any, step: str) -> Generator[None, None, None]:
+    """Record the wall-clock milliseconds one orchestrator step spent on *one* card.
+
+    Writes to ``card.step_ms[step]`` (summed when a step runs twice, e.g. policy re-evaluated after an
+    owner action) so the payment payload can show per-invoice durations instead of the run-wide node
+    time. Never raises: a card without ``step_ms`` is left untouched.
+    """
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        try:
+            ms = (time.perf_counter() - t0) * 1000
+            bucket = getattr(card, "step_ms", None)
+            if isinstance(bucket, dict):
+                bucket[step] = round(bucket.get(step, 0.0) + ms, 3)
         except Exception:
             pass
 
