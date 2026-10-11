@@ -7,6 +7,8 @@ infra/scripts/bootstrap.sh all      # installs uv if missing, deps (+torch CPU, 
 make lint && make test
 ```
 `make setup` = base only (fast). `setup-ml`, `setup-agents`, `setup-all` add stacks. Each is an exact sync, so the last one wins.
+Image invoices (PNG/JPG) need the Tesseract **binary** next to the Python deps: `sudo apt-get install -y tesseract-ocr tesseract-ocr-eng`
+(macOS: `brew install tesseract`). Without it the API still runs, `/v1/health` → `ocr.state` is `down` and the OCR tests skip.
 
 ## 1. Run one project locally (no Docker)
 ```bash
