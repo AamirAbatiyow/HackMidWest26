@@ -192,4 +192,5 @@ def test_health_shows_the_decider_role_and_api_exposes_the_engine(make):
     svc = make(None)
     with TestClient(main.app) as client:
         health = client.get("/health?format=json").json()
-        assert health["decider"]["state"] == "off" and "DECIDER_ENABLED=false" in health["decider"]["detail"]
+        assert health["decider"]["state"] == "off" and "deterministic routing" in health["decider"]["detail"]
+        assert "DECIDER_URL not set" in health["decider"]["detail"]

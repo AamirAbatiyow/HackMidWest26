@@ -308,7 +308,11 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
                 "Intake classifier (Strands Decider 2B)",
                 "self-hosted strands-decider server (CPU Linode in the VPC) · advisory routing only",
                 "live" if ok else "error",
-                (detail if ok else f"{s.decider_url} unreachable → hackathon-chat classifier ({detail})")
+                (
+                    detail
+                    if ok
+                    else f"{s.effective_decider_url} unreachable → hackathon-chat classifier ({detail})"
+                )
                 + f" · {counts}",
                 ms,
             )
@@ -320,7 +324,12 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
                 "Intake classifier (Strands Decider 2B)",
                 "self-hosted strands-decider server (CPU Linode in the VPC) · advisory routing only",
                 "off",
-                f"DECIDER_ENABLED=false → deterministic routing (set DECIDER_URL to enable) · {counts}",
+                (
+                    "DECIDER_ENABLED=false"
+                    if s.decider_enabled is False
+                    else "DECIDER_URL not set (deployed by infra/terraform/akamai, or `make decider-local`)"
+                )
+                + f" → deterministic routing · {counts}",
             )
         )
     return roles

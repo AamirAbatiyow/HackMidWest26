@@ -86,16 +86,16 @@ class Settings(HMSettings):
     llm_timeout_s: float = 45.0
     llm_max_retries: int = 1
 
-    # --- Strands Decider (advisory intake routing; off by default) ---
-    # When enabled, intake asks a Strands Decider server which format / parse tool a submission needs.
+    # --- Strands Decider (advisory intake routing; off unless a server is configured) ---
+    # When active, intake asks a Strands Decider server which format / parse tool a submission needs.
     # Unreachable, timed out, off-shape or low-confidence answers fall back to the hackathon-chat classifier
     # and then to deterministic sniffing; the response records which engine decided. Never a fraud verdict.
-    decider_enabled: bool = Field(
-        False, validation_alias=AliasChoices("VOUCH_DECIDER_ENABLED", "DECIDER_ENABLED")
+    # DECIDER_ENABLED unset = auto (active when DECIDER_URL is set, which is what the Terraform cloud-init
+    # writes); an explicit true/false always wins. DECIDER_URL unset + DECIDER_ENABLED=true -> localhost:8099.
+    decider_enabled: bool | None = Field(
+        None, validation_alias=AliasChoices("VOUCH_DECIDER_ENABLED", "DECIDER_ENABLED")
     )
-    decider_url: str = Field(
-        "http://127.0.0.1:8099", validation_alias=AliasChoices("VOUCH_DECIDER_URL", "DECIDER_URL")
-    )
+    decider_url: str = Field("", validation_alias=AliasChoices("VOUCH_DECIDER_URL", "DECIDER_URL"))
     decider_timeout_s: float = Field(
         20.0, validation_alias=AliasChoices("VOUCH_DECIDER_TIMEOUT_S", "DECIDER_TIMEOUT_S")
     )
@@ -147,6 +147,16 @@ class Settings(HMSettings):
         if self.llm_mode == "auto":
             return "live" if self.has_llm_key else "offline"
         return "offline" if self.llm_mode == "template" else self.llm_mode
+
+    @property
+    def decider_active(self) -> bool:
+        if self.decider_enabled is None:
+            return bool(self.decider_url)
+        return self.decider_enabled
+
+    @property
+    def effective_decider_url(self) -> str:
+        return self.decider_url or "http://127.0.0.1:8099"
 
     @property
     def has_bucket(self) -> bool:

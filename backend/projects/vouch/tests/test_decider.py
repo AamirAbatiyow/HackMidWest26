@@ -392,19 +392,21 @@ def test_disabled_classifier_never_calls_a_model():
 
 
 def test_from_settings_honours_decider_enabled_and_url(settings):
-    off = IntakeClassifier.from_settings(settings)
+    off = IntakeClassifier.from_settings(settings)  # nothing configured -> off
     assert off.client is None and off.threshold == settings.decider_min_confidence
-    on = IntakeClassifier.from_settings(
-        settings.model_copy(
-            update={
-                "decider_enabled": True,
-                "decider_url": "http://10.0.2.20:8099/",
-                "decider_min_confidence": 0.75,
-            }
-        )
+    assert settings.decider_enabled is None and not settings.decider_active
+    # DECIDER_URL alone switches it on (what the Terraform cloud-init writes) ...
+    by_url = IntakeClassifier.from_settings(
+        settings.model_copy(update={"decider_url": "http://10.0.2.20:8099/", "decider_min_confidence": 0.75})
     )
-    assert isinstance(on.client, HttpDeciderClient) and on.client.url == "http://10.0.2.20:8099"
-    assert on.threshold == 0.75 and on.client.timeout_s == settings.decider_timeout_s
+    assert isinstance(by_url.client, HttpDeciderClient) and by_url.client.url == "http://10.0.2.20:8099"
+    assert by_url.threshold == 0.75 and by_url.client.timeout_s == settings.decider_timeout_s
+    # ... an explicit DECIDER_ENABLED always wins, in both directions
+    forced_off = settings.model_copy(update={"decider_url": "http://10.0.2.20:8099", "decider_enabled": False})
+    assert IntakeClassifier.from_settings(forced_off).client is None
+    forced_on = settings.model_copy(update={"decider_enabled": True})
+    on = IntakeClassifier.from_settings(forced_on)
+    assert isinstance(on.client, HttpDeciderClient) and on.client.url == "http://127.0.0.1:8099"
 
 
 def test_classifier_serialises_concurrent_invoices():

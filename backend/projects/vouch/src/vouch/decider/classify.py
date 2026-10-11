@@ -422,8 +422,8 @@ class IntakeClassifier:
     def from_settings(
         cls, settings: Any, llm: Any = None, client: DeciderClient | None = None
     ) -> IntakeClassifier:
-        if client is None and getattr(settings, "decider_enabled", False):
-            client = HttpDeciderClient(settings.decider_url, timeout_s=settings.decider_timeout_s)
+        if client is None and getattr(settings, "decider_active", False):
+            client = HttpDeciderClient(settings.effective_decider_url, timeout_s=settings.decider_timeout_s)
         return cls(
             client,
             llm,
