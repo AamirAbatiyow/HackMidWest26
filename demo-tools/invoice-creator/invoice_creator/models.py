@@ -149,3 +149,4 @@ class SendLogEntry(BaseModel):
     message_id: str = ""
     attachment_name: str | None = None
     eml_url: str = ""
+    receiver_message_id: str = ""  # set when the receiver acknowledged the message with its id

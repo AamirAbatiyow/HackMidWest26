@@ -39,6 +39,7 @@ class Settings:
     backend_intake_url: str = ""  # e.g. http://10.0.0.5:8101/v1/intake/email
     backend_intake_format: str = "eml"  # eml (message/rfc822) or json (IntakeRequest body)
     receiver_inbound_url: str = ""  # e.g. http://127.0.0.1:8025/inbound
+    receiver_api_url: str = ""  # receiver HTTP API base for /health and /recent; derived when empty
     intake_shared_secret: str = ""
     intake_secret_header: str = "X-Vouch-Intake-Secret"
     http_timeout_s: float = 20.0
@@ -52,6 +53,16 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8300
     data_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data")
+
+    @property
+    def receiver_api_base(self) -> str:
+        """Where the receiver's read-only API lives: explicit RECEIVER_API_URL, else the host of
+        RECEIVER_INBOUND_URL, else port 8025 on the SMTP host (the receiver's default)."""
+        if self.receiver_api_url:
+            return self.receiver_api_url.rstrip("/")
+        if self.receiver_inbound_url:
+            return self.receiver_inbound_url.rsplit("/inbound", 1)[0].rstrip("/")
+        return f"http://{self.smtp_host}:8025"
 
     @property
     def deliveries(self) -> list[dict[str, str]]:
@@ -94,6 +105,7 @@ def load_settings() -> Settings:
     s.backend_intake_url = _env("BACKEND_INTAKE_URL", s.backend_intake_url)
     s.backend_intake_format = _env("BACKEND_INTAKE_FORMAT", s.backend_intake_format).lower() or "eml"
     s.receiver_inbound_url = _env("RECEIVER_INBOUND_URL", s.receiver_inbound_url)
+    s.receiver_api_url = _env("RECEIVER_API_URL", s.receiver_api_url)
     s.intake_shared_secret = _env("INTAKE_SHARED_SECRET", s.intake_shared_secret)
     s.intake_secret_header = _env("INTAKE_SECRET_HEADER", s.intake_secret_header)
     s.http_timeout_s = float(_env("DEMO_HTTP_TIMEOUT_S", str(s.http_timeout_s)))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -16,25 +17,48 @@ from .mail import eml_to_intake_json
 class DeliveryResult:
     ok: bool
     detail: str
+    receiver_message_id: str = ""  # the receiver's id for this message, when it told us
+
+    @staticmethod
+    def id_from_smtp_reply(reply: bytes | str) -> str:
+        """The receiver answers DATA with ``250 OK: queued as <id>``."""
+        text = reply.decode("ascii", "replace") if isinstance(reply, bytes) else reply
+        m = _QUEUED_AS.search(text)
+        return m.group(1) if m else ""
+
+
+_QUEUED_AS = re.compile(r"queued as (\S+)")
 
 
 def send_smtp(
     msg: EmailMessage, settings: Settings, *, envelope_from: str, to: str | None = None
 ) -> DeliveryResult:
+    """One SMTP transaction, command by command, so we keep the server's final reply
+    (``smtplib.send_message`` discards it, and it carries the receiver's message id)."""
     to = to or settings.mail_to
+    raw = msg.as_bytes(policy=msg.policy.clone(linesep="\r\n"))
+    where = f"{settings.smtp_host}:{settings.smtp_port}"
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_s) as smtp:
             smtp.ehlo_or_helo_if_needed()
-            refused = smtp.send_message(msg, from_addr=envelope_from, to_addrs=[to])
-        if refused:
-            return DeliveryResult(False, f"recipient refused: {refused}")
-        return DeliveryResult(True, f"accepted by {settings.smtp_host}:{settings.smtp_port} for {to}")
+            code, reply = smtp.mail(envelope_from)
+            if code != 250:
+                return DeliveryResult(False, f"MAIL FROM refused: {code} {reply.decode(errors='replace')}")
+            code, reply = smtp.rcpt(to)
+            if code not in (250, 251):
+                return DeliveryResult(
+                    False, f"recipient {to} refused: {code} {reply.decode(errors='replace')}"
+                )
+            code, reply = smtp.data(raw)
+            if code != 250:
+                return DeliveryResult(False, f"DATA refused: {code} {reply.decode(errors='replace')}")
+        rid = DeliveryResult.id_from_smtp_reply(reply)
+        detail = f"accepted by {where} for {to}" + (f" (receiver id {rid})" if rid else "")
+        return DeliveryResult(True, detail, receiver_message_id=rid)
     except smtplib.SMTPResponseException as exc:
         return DeliveryResult(False, f"SMTP {exc.smtp_code}: {exc.smtp_error!r}")
     except (smtplib.SMTPException, OSError) as exc:
-        return DeliveryResult(
-            False, f"SMTP connection to {settings.smtp_host}:{settings.smtp_port} failed: {exc}"
-        )
+        return DeliveryResult(False, f"SMTP connection to {where} failed: {exc}")
 
 
 def _secret_headers(settings: Settings) -> dict[str, str]:
@@ -59,7 +83,22 @@ def post_eml(
     except httpx.HTTPError as exc:
         return DeliveryResult(False, f"POST {url} failed: {exc}")
     body = r.text[:300].replace("\n", " ")
-    return DeliveryResult(r.is_success, f"POST {url} → HTTP {r.status_code} {body}".strip())
+    return DeliveryResult(
+        r.is_success,
+        f"POST {url} → HTTP {r.status_code} {body}".strip(),
+        receiver_message_id=_receiver_id_from_response(r),
+    )
+
+
+def _receiver_id_from_response(r: httpx.Response) -> str:
+    """The receiver's /inbound answers ``{"id": "...", "queued": true}``."""
+    try:
+        data = r.json()
+    except ValueError:
+        return ""
+    if isinstance(data, dict) and data.get("queued") and isinstance(data.get("id"), str):
+        return data["id"]
+    return ""
 
 
 def post_json(url: str, payload: dict, settings: Settings) -> DeliveryResult:

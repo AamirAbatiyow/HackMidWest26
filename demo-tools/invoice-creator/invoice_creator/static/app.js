@@ -308,6 +308,7 @@
       const e = await r.json();
       prependLog(e);
       setStatus(e.status === "failed" ? `Failed: ${e.detail}` : `${e.status === "built" ? "Built" : "Sent"} ${e.invoice_number} (${e.format}) — ${e.detail}`, e.status === "failed" ? "bad" : "ok");
+      setTimeout(refreshReceiver, 1500);
     } catch (err) {
       setStatus(`Send failed: ${err.message}`, "bad");
     } finally {
@@ -335,10 +336,16 @@
   });
 
   // --------------------------------------------------------------------- log ----
+  function backendCell(e) {
+    if (e.status !== "sent") return `<span class="muted">—</span>`;
+    if (e.delivery === "backend") return `<span class="st st-delivered">direct</span><div class="detail">posted straight to the backend</div>`;
+    if (!e.receiver_message_id) return `<span class="st st-pending">unknown</span><div class="detail">receiver did not return an id</div>`;
+    return `<span class="st st-pending">checking…</span><div class="detail mono">${esc(e.receiver_message_id)}</div>`;
+  }
   function logRow(e) {
     const when = new Date(e.at).toLocaleTimeString();
     const via = { smtp: "SMTP", receiver_http: "HTTP→receiver", backend: "HTTP→backend", none: "build only" }[e.delivery] || e.delivery;
-    return `<tr>
+    return `<tr data-log-id="${esc(e.id)}" data-receiver-id="${esc(e.receiver_message_id || "")}">
       <td>${esc(when)}</td>
       <td class="wrap">${esc(e.label || e.scenario || "custom")}</td>
       <td><span class="mono">${esc(e.invoice_number)}</span><br/><span class="muted">${esc(e.vendor_name)}</span></td>
@@ -348,22 +355,107 @@
       <td class="mono wrap">${esc(e.auth_summary)}</td>
       <td>${esc(via)}</td>
       <td><span class="st st-${esc(e.status)}">${esc(e.status)}</span><div class="detail">${esc(e.detail)}</div></td>
+      <td class="backend">${backendCell(e)}</td>
       <td><a href="${esc(e.eml_url)}" download>.eml</a></td>
     </tr>`;
   }
   function prependLog(e) {
     $("#log-body").insertAdjacentHTML("afterbegin", logRow(e));
     $("#log-empty").hidden = true;
+    trackBackend(e, 0);
   }
   async function loadLog() {
     const r = await fetch("/api/log");
     const entries = await r.json();
     $("#log-body").innerHTML = entries.map(logRow).join("");
     $("#log-empty").hidden = entries.length > 0;
+    entries.slice(0, 25).forEach((e) => trackBackend(e, 0));
   }
   $("#clear-log").addEventListener("click", async () => {
     await fetch("/api/log", { method: "DELETE" });
     loadLog();
+  });
+
+  // ---------------------------------------------- receiver → backend tracking ----
+  // After a send, follow the message through the receiver (/recent/{id} via the same-origin
+  // proxy) until its forward to the backend reaches a terminal state.
+  const TERMINAL = new Set(["delivered", "dead_letter", "stored", "missing"]);
+  const TRACK_DELAYS_MS = [600, 1200, 2000, 3000, 5000, 8000, 10000, 15000, 20000, 30000, 30000, 30000];
+  function paintBackend(row, status, detail, extra) {
+    const cell = row.querySelector("td.backend");
+    if (!cell) return;
+    const label = { delivered: "forwarded", dead_letter: "dead letter", stored: "stored only", retrying: "retrying", queued: "queued", received: "received", missing: "missing" }[status] || status;
+    cell.innerHTML = `<span class="st st-${esc(status)}">${esc(label)}</span><div class="detail">${esc(detail || "")}${extra ? `<br/>${esc(extra)}` : ""}</div>`;
+  }
+  async function trackBackend(e, step) {
+    if (e.status !== "sent" || e.delivery === "backend" || !e.receiver_message_id) return;
+    const row = document.querySelector(`tr[data-log-id="${CSS.escape(e.id)}"]`);
+    if (!row) return;
+    let info;
+    try {
+      const r = await fetch(`/api/receiver/messages/${encodeURIComponent(e.receiver_message_id)}`);
+      info = await r.json();
+    } catch (_err) {
+      info = { reachable: false };
+    }
+    if (!info.reachable) { paintBackend(row, "pending", "receiver API unreachable"); }
+    else if (!info.found) { paintBackend(row, "pending", "not on this receiver (restarted / different host?)"); return; }
+    else {
+      const d = info.delivery || {};
+      const attempts = d.attempts ? `attempt ${d.attempts}` : "";
+      const dropped = info.attachments_dropped ? `${info.attachments_dropped} attachment(s) dropped by allowlist` : "";
+      const detail = [attempts, (d.last_detail || "").slice(0, 160)].filter(Boolean).join(" · ");
+      paintBackend(row, d.status || "received", detail, dropped);
+      if (TERMINAL.has(d.status)) { refreshReceiver(); return; }
+    }
+    if (step < TRACK_DELAYS_MS.length) setTimeout(() => trackBackend(e, step + 1), TRACK_DELAYS_MS[step]);
+  }
+
+  // ------------------------------------------------------ receiver status pill ----
+  async function refreshReceiver() {
+    const pill = $("#receiver-pill");
+    let info;
+    try { info = await (await fetch("/api/receiver/health")).json(); } catch (_err) { info = { reachable: false }; }
+    pill.classList.remove("ok", "degraded", "down");
+    if (!info.reachable) {
+      pill.classList.add("down");
+      pill.textContent = `receiver unreachable (${(info.url || "").replace(/^https?:\/\//, "")})`;
+      pill.title = `No answer from the mail receiver API at ${info.url || "?"}: ${info.error || ""}`;
+      return;
+    }
+    const h = info.health;
+    pill.classList.add(h.status === "ok" ? "ok" : h.status === "degraded" ? "degraded" : "ok");
+    const dead = h.dead_letter_count ? ` · ${h.dead_letter_count} dead-letter` : "";
+    pill.textContent = `receiver ${h.status} · ${h.received_total} received · ${h.delivered_total} forwarded · queue ${h.queue_depth}${dead}`;
+    const last = h.last_delivery ? `last forward ${h.last_delivery.ok ? "ok" : "FAILED"} at ${new Date(h.last_delivery.at).toLocaleTimeString()} — ${h.last_delivery.detail}` : "no forwards yet";
+    pill.title = `${info.url} · ${h.config && h.config.backend_intake_url ? "backend " + h.config.backend_intake_url : "store-only (no BACKEND_INTAKE_URL)"} · ${last}`;
+  }
+
+  // --------------------------------------------------------- demo sequence ----
+  $("#send-all-btn").addEventListener("click", async () => {
+    const btn = $("#send-all-btn");
+    const sequence = state.presets; // API order is the demo order; hidden follow-ups included
+    btn.disabled = true;
+    let sent = 0, failed = 0;
+    for (const p of sequence) {
+      sent += 1;
+      setStatus(`Demo sequence ${sent}/${sequence.length}: sending ${p.title} — ${p.vendor}…`, "");
+      try {
+        const body = { invoice: p.invoice, sender: p.sender, format: p.format, delivery: state.delivery, scenario: p.key, label: p.title };
+        const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error(await r.text());
+        const e = await r.json();
+        prependLog(e);
+        if (e.status === "failed") failed += 1;
+      } catch (err) {
+        failed += 1;
+        setStatus(`Demo sequence: ${p.title} failed — ${err.message}`, "bad");
+      }
+      await new Promise((res) => setTimeout(res, 900));
+    }
+    btn.disabled = false;
+    setStatus(failed ? `Demo sequence done: ${sequence.length - failed} sent, ${failed} failed.` : `Demo sequence done: all ${sequence.length} emails sent. Watch the “Receiver → backend” column.`, failed ? "bad" : "ok");
+    refreshReceiver();
   });
 
   // -------------------------------------------------------------------- boot ----
@@ -377,6 +469,8 @@
     renderPresets(); renderDelivery(); renderFormat(); renderSenderKind(); renderItems(); writeInputs();
     await loadLog();
     applyPreset("reyes");
+    refreshReceiver();
+    setInterval(refreshReceiver, 10000);
   }
   boot().catch((err) => { $("#target-pill").textContent = "API unreachable"; setStatus(`Could not load the API: ${err.message}`, "bad"); });
 })();

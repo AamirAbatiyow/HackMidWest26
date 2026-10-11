@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from collections import OrderedDict
 from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
@@ -21,6 +23,7 @@ from .presets import build_presets
 from .render import Rendered, render
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+RECEIVER_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{12}-[0-9a-f]{6}$")
 
 
 class RenderRequest(BaseModel):
@@ -115,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "backend_intake_url": settings.backend_intake_url,
             "backend_intake_format": settings.backend_intake_format,
             "receiver_inbound_url": settings.receiver_inbound_url,
+            "receiver_api_url": settings.receiver_api_base,
             "intake_secret_configured": bool(settings.intake_shared_secret),
             "authserv_id": settings.authserv_id,
             "owner_name": settings.owner_name,
@@ -190,9 +194,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             message_id=str(msg["Message-ID"] or ""),
             attachment_name=attachment.filename if attachment else None,
             eml_url=f"/api/eml/{built_id}",
+            receiver_message_id=result.receiver_message_id,
         )
         store.append(entry)
         return entry
+
+    # The UI polls the receiver through these two proxies (same origin, no CORS or secrets in
+    # the browser) to show "received → forwarded to backend" live next to each send.
+    @app.get("/api/receiver/health")
+    def receiver_health() -> dict:
+        base = settings.receiver_api_base
+        try:
+            r = httpx.get(f"{base}/health", timeout=3.0)
+            r.raise_for_status()
+            data = r.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"reachable": False, "url": base, "error": str(exc)[:200]}
+        return {"reachable": True, "url": base, "health": data}
+
+    @app.get("/api/receiver/messages/{receiver_id}")
+    def receiver_message(receiver_id: str) -> dict:
+        if not RECEIVER_ID_RE.match(receiver_id):
+            raise HTTPException(404, "not found")
+        base = settings.receiver_api_base
+        try:
+            r = httpx.get(f"{base}/recent/{receiver_id}", timeout=3.0)
+        except httpx.HTTPError as exc:
+            return {"reachable": False, "error": str(exc)[:200]}
+        if r.status_code == 404:
+            return {"reachable": True, "found": False}
+        try:
+            r.raise_for_status()
+            view = r.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"reachable": False, "error": str(exc)[:200]}
+        meta = view.get("meta") or {}
+        return {
+            "reachable": True,
+            "found": True,
+            "delivery": meta.get("delivery") or {},
+            "attachments_kept": meta.get("attachments_kept"),
+            "attachments_dropped": meta.get("attachments_dropped"),
+            "warnings": meta.get("warnings") or [],
+            "authentication_results": meta.get("authentication_results") or [],
+        }
 
     @app.get("/api/eml/{built_id}")
     def eml(built_id: str) -> Response:
