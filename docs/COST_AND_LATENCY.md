@@ -1,16 +1,16 @@
 # Latency and Cost
 
-This document breaks down Vouch's infrastructure cost, per-invoice marginal cost, end-to-end latency, and the fraud-loss math that justifies the spend.
+This document breaks down Vouch's infrastructure cost, per-invoice marginal cost, latency instrumentation, and the fraud-loss math that justifies the spend.
 
 ## Infrastructure Cost (Akamai Cloud)
 
-From `backend/infra/terraform/akamai/` with default instance types:
+From `backend/infra/terraform/akamai/` with deployed instance types:
 
 | Resource | Type | Hourly | Monthly (730h) | Purpose |
 |----------|------|--------|----------------|---------|
 | App Linode | g6-standard-2 | $0.036 | ~$26 | API server, Strands graph |
 | Model Linode | g6-standard-2 | $0.036 | ~$26 | VouchNet + LIME inference |
-| Decider Linode | g6-dedicated-8 | $0.144 | ~$105 | Strands Decider 2B (4 vCPU, 16 GB) |
+| Decider Linode | g6-standard-6 | $0.144 | ~$105 | Strands Decider 2B (6 vCPU, 16 GB) |
 | Managed Postgres | g6-nanode-1 | $0.024 | ~$18 | pgvector, audit trail |
 | NodeBalancer | — | $0.015 | ~$11 | TLS termination, health checks |
 | **Total** | | **~$0.255** | **~$186** | |
@@ -23,63 +23,54 @@ Object Storage is pay-per-use and negligible at demo scale (a few cents per GB-m
 
 The demo processes six invoices with about six LLM calls total. On the deployed stack:
 
-| Path | Model calls | Estimated cost | Notes |
-|------|-------------|----------------|-------|
+| Path | Model calls | Cost | Notes |
+|------|-------------|------|-------|
 | Deterministic (obvious PDF) | 0 | ~$0.00 | Code routes, no inference |
 | Decider-routed (ambiguous) | 2 Decider questions | ~$0.00 | CPU-only, no per-call fee |
-| LLM intake + investigation | 2–4 chat calls | workshop-provided | Akamai hosted inference was provided for the hackathon; no per-token billing |
+| LLM intake + investigation | 2–4 chat calls | workshop-provided | Akamai hosted inference was provided for the hackathon; no per-token billing during the event |
 
-The Strands Decider 2B runs on a dedicated Linode, so Decider calls cost nothing beyond the fixed infrastructure. The hosted inference (`hackathon-chat`) was workshop-provided with no per-token charges during the event.
+The Strands Decider 2B runs on a dedicated Linode, so Decider calls cost nothing beyond the fixed infrastructure. The hosted inference (`hackathon-chat`) was workshop-provided with no per-token charges.
 
-**Estimated marginal cost per invoice: effectively zero for deterministic and Decider paths; the LLM path depends on token pricing if moved to a pay-per-use provider.**
+**Marginal cost per invoice: effectively zero for deterministic and Decider paths. The LLM path would incur token costs on a pay-per-use provider; actual pricing depends on the provider and model.**
 
-For a rough estimate with standard LLM pricing (~$0.01–0.03 per 1K tokens, ~500 tokens per invoice): about $0.01–0.02 per invoice through the full LLM path.
+## Latency Instrumentation
 
-## Latency
+Vouch instruments latency at multiple levels:
 
-Measured from `/v1/latency` endpoint and `frontend/src/data/netstats.ts` demo fixtures (representative of deployed performance):
+- **Per-node timing** in the Strands graph (`pipeline.py`): each `StageNode` records wall-clock milliseconds
+- **Per-run waterfall** at `GET /v1/latency`: shows the last run's step-by-step breakdown
+- **Rolling p50/p95** via `timing.py`: ring buffer per step, exposed at `/v1/latency`
+- **Decider latency**: the Decider server reports `latency_ms` in each response; the client records it
+- **Frontend Network page**: visualizes tier RTT, pipeline waterfall, and inference latency
 
-### Pipeline Steps
+### Local Measurements
 
-| Step | p50 | p95 | What it does |
-|------|-----|-----|--------------|
-| reader | 12 ms | 28 ms | Parse email, extract text |
-| sender_check | 8 ms | 19 ms | SPF/DKIM/DMARC, lookalike detection |
-| vendor_resolution | 15 ms | 42 ms | Match to known vendors, embeddings |
-| detector_amount | 2 ms | 5 ms | Amount anomalies |
-| detector_bank | 3 ms | 8 ms | Bank-change window |
-| detector_duplicate | 6 ms | 14 ms | Duplicate/split detection |
-| detector_ring | 18 ms | 45 ms | Vendor ring graph |
-| scorer | 85 ms | 210 ms | VouchNet + LIME |
-| policy | 4 ms | 9 ms | Cedar evaluation |
-| writer | 11 ms | 26 ms | Persist to audit store |
-| **Pipeline total** | **164 ms** | **406 ms** | |
+Running the six-invoice demo locally (offline LLM mode, CPU-only, 2026-10-11):
 
-### Model Inference
+| Node | p50 | p95 | Notes |
+|------|-----|-----|-------|
+| intake | 1 ms | 11 ms | Parse, extract |
+| resolve | 4 ms | 6 ms | Vendor matching |
+| sender | 2 ms | 2 ms | SPF/DKIM checks |
+| kernel | 1 ms | 2 ms | Amount/duplicate/split detection |
+| score | 1,245 ms | 3,158 ms | VouchNet + LIME (cold-start overhead) |
+| investigate | 0 ms | 1 ms | Skipped in offline mode |
+| policy | 0 ms | 0 ms | Cedar evaluation |
+| funding | 0 ms | 0 ms | Funding plan |
+| explain | 0 ms | 0 ms | Skipped in offline mode |
+| fast_pay | 0 ms | 6 ms | Settlement routing |
 
-| Model | p50 | p95 | Notes |
-|-------|-----|-----|-------|
-| Strands Decider 2B | ~85–100 ms | ~200 ms | CPU-only, single question |
-| hackathon-chat (Llama 3.3 70B) | 320 ms | 890 ms | Akamai hosted inference |
-| hackathon-embedding | 45 ms | 120 ms | Vendor embeddings |
-| VouchNet + LIME | 85 ms | 210 ms | Local PyTorch, CPU |
+*Measured locally on CPU, 3 runs (18 invoices total). The `score` node dominates due to PyTorch model loading and LIME explanation generation; this would be faster on GPU or with a warm model server.*
 
-### Data Tier
+### Deployed Latency
 
-| Service | p50 | p95 |
-|---------|-----|-----|
-| Managed Postgres | 2 ms | 6 ms |
-| Object Storage | 15 ms | 42 ms |
-
-**End-to-end p50 for a typical invoice: under 200 ms deterministic, under 500 ms with LLM calls.**
-
-The Strands Decider answers a routing question in ~100 ms on CPU, compared to 300–1400 ms for a full chat model. This makes the advisory layer practical without adding perceptible latency.
+The deployed stack has `/v1/latency` instrumented but no production traffic yet. When traffic flows, the endpoint reports rolling p50/p95 for each pipeline step, inference tier, Postgres, and Object Storage.
 
 ## Fraud-Loss Context
 
 ### Occupational/Internal Fraud (ACFE 2024)
 
-The [ACFE 2024 Report to the Nations](https://www.acfe.com/fraud-resources/report-to-the-nations) (occupational fraud, internal bad actors):
+The [ACFE 2024 Report to the Nations](https://www.acfe.com/-/media/files/acfe/pdfs/rttn/2024/2024-report-to-the-nations.pdf) covers occupational fraud (internal bad actors):
 
 - A typical organization loses **5% of revenue to fraud** each year
 - Median loss per case: **$145,000** overall
@@ -89,15 +80,15 @@ The [ACFE 2024 Report to the Nations](https://www.acfe.com/fraud-resources/repor
 
 ### External Payments Fraud (AFP 2025, 2026)
 
-The [AFP 2025 Payments Fraud and Control Survey](https://www.afponline.org/publications-data-tools/reports/survey-research-economic-data/payments-fraud-survey) (covering 2024, 521 respondents, external payments fraud):
+The [AFP 2025 Payments Fraud and Control Survey](https://www.financialprofessionals.org/about/learn-more/press-releases/Details/survey-79-percent-of-organizations-were-victims-of-attempted-or-actual-payments-fraud-activity-in-2024) (covering 2024, 521 respondents) covers external payments fraud:
 
 - **79%** of organizations experienced attempted or actual payments fraud
 - **Business email compromise (BEC)** was the top attack avenue at **63%**
 - **Vendor impersonation: 45%** (up 11 percentage points from prior year)
 - **36%** of organizations lost money to BEC
-- Only **22%** recovered 75%+ of lost funds in 2024 (down from 41% in 2023)
+- Only **22%** of organizations recovered 75%+ of lost funds in 2024 (down from 41% in 2023)
 
-The [AFP 2026 Payments Fraud and Control Survey](https://www.afponline.org/publications-data-tools/reports/survey-research-economic-data/payments-fraud-survey) (covering 2025):
+The [AFP 2026 Payments Fraud and Control Survey](https://www.financialprofessionals.org/about/learn-more/press-releases/Details/over-75-percent-of-us-firms-experienced-payments-fraud-in-2025-while-ai-adoption-for-fraud-mitigation-lags) (covering 2025):
 
 - **76%** experienced attempted or actual payments fraud
 - **74%** were affected by BEC
@@ -106,7 +97,7 @@ The [AFP 2026 Payments Fraud and Control Survey](https://www.afponline.org/publi
 
 ### Cost Justification
 
-Simple arithmetic (not a guarantee):
+Simple arithmetic (not a guarantee of outcomes):
 
 - Full Vouch infrastructure: **$186/month = $2,232/year**
 - Median fraud loss for firms under 100 employees (ACFE 2024): **$141,000**
@@ -115,13 +106,12 @@ Simple arithmetic (not a guarantee):
 **Preventing a single median-loss case pays for about 63 years of running the full stack.**
 
 This does not account for:
-- The multiplier effect (LexisNexis 2026: every $1 of fraud costs ~$5.13 in total impact)
+- The multiplier effect (LexisNexis 2026: every $1 of fraud costs ~$5.13 in total impact, already cited in the main README)
 - Reputational damage and vendor relationship harm
-- Time spent investigating and recovering (median 12-month fraud duration)
-- The 78% of BEC victims who do not recover most of their funds (AFP 2025)
+- Time spent investigating and recovering (median 12-month fraud duration per ACFE)
 
 The comparison is directional: fraud prevention infrastructure is cheap relative to a single successful attack.
 
 ## One Sentence for Narration
 
-> Vouch screens an invoice for about a tenth of a cent in compute and catches the fraud that costs 5× the stolen amount to clean up—preventing one median loss would pay for 63 years of infrastructure.
+> The full stack runs for about $186/month—preventing one median $141,000 small-business fraud case (ACFE 2024) would pay for over 60 years of infrastructure.

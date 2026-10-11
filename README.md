@@ -166,18 +166,19 @@ The owner reviews holds, approves the clean invoices, and settlement happens as 
 
 ## Latency and Cost
 
-The full Vouch stack on Akamai Cloud costs about **$0.255/hour (~$186/month)** and screens an invoice end-to-end in under 500 ms at p95.
+The full Vouch stack on Akamai Cloud costs about **$0.255/hour (~$186/month)**. Latency is instrumented per-node at `/v1/latency` and visualized on the Network page.
 
-| Component | p50 | p95 | Notes |
-|-----------|-----|-----|-------|
-| Pipeline (10 nodes) | 164 ms | 406 ms | Reader through writer |
-| VouchNet + LIME | 85 ms | 210 ms | Risk score and explanation |
-| Strands Decider 2B | ~100 ms | ~200 ms | CPU-only; vs 300–1400 ms for a chat model |
-| Hosted inference | 320 ms | 890 ms | Llama 3.3 70B via Akamai |
+| Resource | Type | Hourly | Purpose |
+|----------|------|--------|---------|
+| App Linode | g6-standard-2 | $0.036 | API + Strands graph |
+| Model Linode | g6-standard-2 | $0.036 | VouchNet + LIME |
+| Decider Linode | g6-standard-6 | $0.144 | Strands Decider 2B |
+| Managed Postgres | g6-nanode-1 | $0.024 | pgvector, audit |
+| NodeBalancer | — | $0.015 | TLS termination |
 
-**One sentence for the pitch:** *Vouch screens an invoice for about a tenth of a cent in compute and catches the fraud that costs 5× the stolen amount to clean up.*
+**One sentence for the pitch:** *The full stack runs for about $186/month—preventing one median $141,000 small-business fraud case (ACFE 2024) would pay for decades of infrastructure.*
 
-For infrastructure breakdown, per-invoice marginal cost, and fraud-loss math, see [docs/COST_AND_LATENCY.md](docs/COST_AND_LATENCY.md).
+For per-invoice marginal cost and fraud-loss context, see [docs/COST_AND_LATENCY.md](docs/COST_AND_LATENCY.md).
 
 ## Limitations
 
