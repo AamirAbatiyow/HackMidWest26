@@ -67,7 +67,14 @@ export function limeLabel(feature: string, value: number | null, fallback = ''):
     return n > 0 ? `Urgency language (${n} term${n === 1 ? '' : 's'})` : 'No urgency language'
   }
   if (feature === 'amount_vs_history' && value != null && value > 0) {
-    return `Amount is ${value.toFixed(1)}× this vendor’s usual`
+    return Math.abs(value - 1) < 0.05 ? 'Amount in line with this vendor’s usual' : `Amount is ${value.toFixed(1)}× this vendor’s usual`
+  }
+  // log1p(count): below 1 means no completed payment yet; below ~1.1 for age means under 2 days old.
+  if (feature === 'history_count_log' && value != null) {
+    return value < 1 ? 'No payment history yet' : value < 2 ? 'Short payment history' : 'Long payment history'
+  }
+  if (feature === 'vendor_age_log' && value != null) {
+    return value < 4.1 ? 'Vendor added less than 60 days ago' : 'Long-standing vendor'
   }
   if (OTHER[feature]) return OTHER[feature]
   const cleaned = fallback

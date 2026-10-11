@@ -20,6 +20,11 @@ describe('limeLabel', () => {
     expect(limeLabel('urgency_terms', 3)).toBe('Urgency language (3 terms)')
     expect(limeLabel('amount_vs_history', 3.2)).toBe('Amount is 3.2× this vendor’s usual')
     expect(limeLabel('neighbour_suspicion', 0.875)).toBe('Red flags among linked vendors')
+    expect(limeLabel('amount_vs_history', 1.0)).toBe('Amount in line with this vendor’s usual')
+    expect(limeLabel('history_count_log', 0)).toBe('No payment history yet')
+    expect(limeLabel('history_count_log', 2.6)).toBe('Long payment history')
+    expect(limeLabel('vendor_age_log', Math.log1p(9))).toBe('Vendor added less than 60 days ago')
+    expect(limeLabel('vendor_age_log', Math.log1p(1460))).toBe('Long-standing vendor')
   })
 
   it('cleans the backend label for unknown features', () => {
