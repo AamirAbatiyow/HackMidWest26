@@ -197,6 +197,7 @@ export function normalizePayment(raw: unknown): Payment {
 function normalizeReceipt(raw: unknown, fallbackIds: string[]): SettlementReceipt {
   const r = asRecord(raw)
   const txId = str(pick(r, 'tx_id', 'txId', 'transaction_id', 'hash'), '')
+  const adapter = str(pick(r, 'adapter', 'settlement_adapter'), '')
   const linesRaw = pick(r, 'lines', 'payments', 'items')
   const lines = Array.isArray(linesRaw)
     ? linesRaw.map((l, i) => {
@@ -210,10 +211,18 @@ function normalizeReceipt(raw: unknown, fallbackIds: string[]): SettlementReceip
       })
     : []
   const funding = str(pick(r, 'funding'), 'now') === 'scheduled' ? 'scheduled' : 'now'
+  const explorerUrlRaw = str(pick(r, 'explorer_url', 'explorerUrl'), '')
+  const explorerUrl = explorerUrlRaw
+    ? explorerUrlRaw
+    : adapter === 'xrpl' && txId
+      ? `https://testnet.xrpl.org/transactions/${txId}`
+      : txId
+        ? `https://basescan.org/tx/${txId}`
+        : '#'
   return {
     batchId: str(pick(r, 'batch_id', 'batchId', 'id'), `batch-${Date.now()}`),
     txId,
-    explorerUrl: str(pick(r, 'explorer_url', 'explorerUrl'), txId ? `https://basescan.org/tx/${txId}` : '#'),
+    explorerUrl,
     settledAt: str(pick(r, 'settled_at', 'settledAt'), new Date().toISOString()),
     funding,
     scheduledFor: pick(r, 'scheduled_for', 'scheduledFor') ? str(pick(r, 'scheduled_for', 'scheduledFor')) : undefined,
@@ -291,159 +300,6 @@ function normalizeRedTeam(raw: unknown): RedTeamReport {
           }
         })
       : [],
-  }
-}
-
-export interface LiveApiOptions {
-  baseUrl: string
-  fetchImpl?: typeof fetch
-}
-
-export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): VouchApi {
-  const base = baseUrl.replace(/\/$/, '')
-
-  /** Try /v1/<path> first; fall back to the unversioned path when the server does not know it. */
-  async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    try {
-      return await requestAt<T>(`/v1${path}`, init)
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) return requestAt<T>(path, init)
-      throw err
-    }
-  }
-
-  async function requestAt<T>(path: string, init?: RequestInit): Promise<T> {
-    let res: Response
-    try {
-      res = await fetchImpl(`${base}${path}`, {
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(init?.headers ?? {}) },
-        ...init,
-      })
-    } catch (err) {
-      throw new ApiError(`Could not reach the Vouch API at ${base}. ${err instanceof Error ? err.message : ''}`.trim())
-    }
-    if (!res.ok) {
-      let detail = ''
-      try {
-        const body = (await res.json()) as Json
-        detail = str(body.detail ?? body.message)
-      } catch {
-        /* no body */
-      }
-      throw new ApiError(detail || `${res.status} ${res.statusText}`, res.status)
-    }
-    if (res.status === 204) return undefined as T
-    return (await res.json()) as T
-  }
-
-  const unwrapList = (raw: unknown): unknown[] => {
-    if (Array.isArray(raw)) return raw
-    const r = asRecord(raw)
-    const inner = pick(r, 'payments', 'items', 'data', 'results')
-    return Array.isArray(inner) ? inner : []
-  }
-
-  return {
-    mode: 'live',
-
-    async listPayments() {
-      const raw = await request<unknown>('/payments')
-      return unwrapList(raw).map(normalizePayment)
-    },
-
-    async getPayment(id) {
-      return normalizePayment(await request<unknown>(`/payments/${encodeURIComponent(id)}`))
-    },
-
-    async approvePayment(id, note) {
-      return normalizePayment(
-        await request<unknown>(`/payments/${encodeURIComponent(id)}/approve`, {
-          method: 'POST',
-          body: JSON.stringify({ note: note ?? '' }),
-        }),
-      )
-    },
-
-    async holdPayment(id, note) {
-      return normalizePayment(
-        await request<unknown>(`/payments/${encodeURIComponent(id)}/hold`, {
-          method: 'POST',
-          body: JSON.stringify({ note: note ?? '' }),
-        }),
-      )
-    },
-
-    async appealPayment(id, note) {
-      return normalizePayment(
-        await request<unknown>(`/payments/${encodeURIComponent(id)}/appeal`, {
-          method: 'POST',
-          body: JSON.stringify({ note: note ?? '' }),
-        }),
-      )
-    },
-
-    async settleBatch(paymentIds, funding) {
-      const raw = await request<unknown>('/batch/settle', {
-        method: 'POST',
-        body: JSON.stringify({ payment_ids: paymentIds, funding }),
-      })
-      return normalizeReceipt(raw, paymentIds)
-    },
-
-    async getNetwork() {
-      return normalizeNetwork(await request<unknown>('/netz'))
-    },
-
-    async getRedTeam() {
-      return normalizeRedTeam(await request<unknown>('/redteam'))
-    },
-
-    async getFairness() {
-      try {
-        const raw = asRecord(await request<unknown>('/fairness'))
-        if (Object.keys(raw).length === 0) return DEMO_FAIRNESS
-        return { ...DEMO_FAIRNESS, ...(raw as Partial<FairnessReport>) }
-      } catch (err) {
-        // The backend may not expose a fairness endpoint yet; fall back to the reference report.
-        if (err instanceof ApiError && err.status === 404) return DEMO_FAIRNESS
-        throw err
-      }
-    },
-
-    async getHealth() {
-      const started = performance.now()
-      try {
-        const raw = asRecord(await request<unknown>('/health'))
-        return {
-          ok: true,
-          version: str(pick(raw, 'version', 'model_version'), undefined as never) || undefined,
-          latencyMs: Math.round(performance.now() - started),
-        }
-      } catch (err) {
-        return { ok: false, latencyMs: Math.round(performance.now() - started), reason: err instanceof Error ? err.message : 'unreachable' }
-      }
-    },
-
-    async getInfo() {
-      const raw = asRecord(await request<unknown>('/info'))
-      const model = pick(raw, 'model', 'active_model', 'activeModel', 'model_version', 'modelVersion')
-      const policy = pick(raw, 'policy_mode', 'policyMode', 'policy')
-      return {
-        model: model == null ? null : str(model),
-        policyMode: policy == null ? null : str(policy),
-        version: str(pick(raw, 'version'), undefined as never) || undefined,
-      }
-    },
-
-    async getLatency(): Promise<LatencyStats> {
-      const raw = asRecord(await request<unknown>('/latency'))
-      return normalizeLatency(raw)
-    },
-
-    async getTopology(): Promise<TopologyData> {
-      const raw = asRecord(await request<unknown>('/topology'))
-      return normalizeTopology(raw)
-    },
   }
 }
 
@@ -631,5 +487,197 @@ function normalizeTopology(raw: Json): TopologyData {
     tiers,
     nodes,
     edges,
+  }
+}
+
+export interface LiveApiOptions {
+  baseUrl: string
+  fetchImpl?: typeof fetch
+}
+
+export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): VouchApi {
+  const base = baseUrl.replace(/\/$/, '')
+
+  /** Try /v1/<path> first; fall back to the unversioned path when the server does not know it. */
+  async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    try {
+      return await requestAt<T>(`/v1${path}`, init)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return requestAt<T>(path, init)
+      throw err
+    }
+  }
+
+  async function requestAt<T>(path: string, init?: RequestInit): Promise<T> {
+    let res: Response
+    try {
+      res = await fetchImpl(`${base}${path}`, {
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(init?.headers ?? {}) },
+        ...init,
+      })
+    } catch (err) {
+      throw new ApiError(`Could not reach the Vouch API at ${base}. ${err instanceof Error ? err.message : ''}`.trim())
+    }
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const body = (await res.json()) as Json
+        detail = str(body.detail ?? body.message)
+      } catch {
+        /* no body */
+      }
+      throw new ApiError(detail || `${res.status} ${res.statusText}`, res.status)
+    }
+    if (res.status === 204) return undefined as T
+    return (await res.json()) as T
+  }
+
+  const unwrapList = (raw: unknown): unknown[] => {
+    if (Array.isArray(raw)) return raw
+    const r = asRecord(raw)
+    const inner = pick(r, 'payments', 'items', 'data', 'results')
+    return Array.isArray(inner) ? inner : []
+  }
+
+  return {
+    mode: 'live',
+
+    async listPayments() {
+      const raw = await request<unknown>('/payments')
+      return unwrapList(raw).map(normalizePayment)
+    },
+
+    async getPayment(id) {
+      return normalizePayment(await request<unknown>(`/payments/${encodeURIComponent(id)}`))
+    },
+
+    async approvePayment(id, note) {
+      return normalizePayment(
+        await request<unknown>(`/payments/${encodeURIComponent(id)}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({ note: note ?? '' }),
+        }),
+      )
+    },
+
+    async holdPayment(id, note) {
+      return normalizePayment(
+        await request<unknown>(`/payments/${encodeURIComponent(id)}/hold`, {
+          method: 'POST',
+          body: JSON.stringify({ note: note ?? '' }),
+        }),
+      )
+    },
+
+    async appealPayment(id, note) {
+      return normalizePayment(
+        await request<unknown>(`/payments/${encodeURIComponent(id)}/appeal`, {
+          method: 'POST',
+          body: JSON.stringify({ note: note ?? '' }),
+        }),
+      )
+    },
+
+    async settleBatch(paymentIds, funding) {
+      const raw = await request<unknown>('/batch/settle', {
+        method: 'POST',
+        body: JSON.stringify({ payment_ids: paymentIds, funding }),
+      })
+      return normalizeReceipt(raw, paymentIds)
+    },
+
+    async getNetwork() {
+      return normalizeNetwork(await request<unknown>('/netz'))
+    },
+
+    async getRedTeam() {
+      return normalizeRedTeam(await request<unknown>('/redteam'))
+    },
+
+    async getFairness() {
+      try {
+        const raw = asRecord(await request<unknown>('/fairness'))
+        if (Object.keys(raw).length === 0) return DEMO_FAIRNESS
+        return { ...DEMO_FAIRNESS, ...(raw as Partial<FairnessReport>) }
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return DEMO_FAIRNESS
+        throw err
+      }
+    },
+
+    async getHealth() {
+      const started = performance.now()
+      try {
+        const raw = asRecord(await request<unknown>('/health'))
+        return {
+          ok: true,
+          version: str(pick(raw, 'version', 'model_version'), undefined as never) || undefined,
+          latencyMs: Math.round(performance.now() - started),
+        }
+      } catch (err) {
+        return { ok: false, latencyMs: Math.round(performance.now() - started), reason: err instanceof Error ? err.message : 'unreachable' }
+      }
+    },
+
+    async getInfo() {
+      const raw = asRecord(await request<unknown>('/info'))
+      const model = pick(raw, 'model', 'active_model', 'activeModel', 'model_version', 'modelVersion')
+      const policy = pick(raw, 'policy_mode', 'policyMode', 'policy')
+      return {
+        model: model == null ? null : str(model),
+        policyMode: policy == null ? null : str(policy),
+        version: str(pick(raw, 'version'), undefined as never) || undefined,
+        settlementAdapter: str(pick(raw, 'settlement_adapter', 'settlementAdapter'), undefined as never) || undefined,
+        settlementNetwork: str(pick(raw, 'settlement_network', 'settlementNetwork'), undefined as never) || undefined,
+        llmMode: str(pick(raw, 'llm_mode', 'llmMode'), undefined as never) || undefined,
+        scorer: str(pick(raw, 'scorer'), undefined as never) || undefined,
+        runs: num(pick(raw, 'runs'), undefined as never) || undefined,
+        vendors: num(pick(raw, 'vendors'), undefined as never) || undefined,
+      }
+    },
+
+    async getLatency(): Promise<LatencyStats> {
+      const raw = asRecord(await request<unknown>('/latency'))
+      return normalizeLatency(raw)
+    },
+
+    async getTopology(): Promise<TopologyData> {
+      const raw = asRecord(await request<unknown>('/topology'))
+      return normalizeTopology(raw)
+    },
+
+    async listRuns() {
+      const raw = await request<unknown>('/runs')
+      const list = Array.isArray(raw) ? raw : []
+      return list.map((item) => {
+        const r = asRecord(item)
+        const cardIds = Array.isArray(pick(r, 'cards')) ? (pick(r, 'cards') as unknown[]).map((c) => str(asRecord(c).id)) : []
+        return {
+          id: str(pick(r, 'id')),
+          label: str(pick(r, 'label')),
+          status: str(pick(r, 'status'), 'completed') as 'running' | 'awaiting_approval' | 'completed' | 'failed',
+          createdAt: str(pick(r, 'created_at', 'createdAt')),
+          pendingApproval: Boolean(pick(r, 'pending_approval', 'pendingApproval', 'pending')),
+          cardIds,
+        }
+      })
+    },
+
+    async getRunEvents(runId, after = 0) {
+      const raw = asRecord(await request<unknown>(`/runs/${encodeURIComponent(runId)}/events?after=${after}`))
+      const events = Array.isArray(raw.events)
+        ? (raw.events as unknown[]).map((e) => {
+            const ev = asRecord(e)
+            return {
+              seq: num(pick(ev, 'seq')),
+              type: str(pick(ev, 'type')),
+              at: str(pick(ev, 'at', 'timestamp')),
+              cardId: str(pick(ev, 'card_id', 'cardId'), undefined as never) || undefined,
+              data: ev,
+            }
+          })
+        : []
+      return { status: str(raw.status, 'unknown'), events }
+    },
   }
 }

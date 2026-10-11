@@ -109,20 +109,20 @@ export function createMockApi(): VouchApi {
         }
       })
       payments = payments.map((p) => (ids.includes(p.id) ? { ...p, lifecycle: 'settled' } : p))
-      const txId = `0x${randomHex(64)}`
+      const txId = randomHex(64).toUpperCase()
       const scheduled = new Date()
       scheduled.setDate(scheduled.getDate() + 1)
       scheduled.setHours(9, 0, 0, 0)
       const receipt: SettlementReceipt = {
         batchId: `batch-${randomHex(6)}`,
         txId,
-        explorerUrl: `https://explorer.vouch.example/tx/${txId}`,
+        explorerUrl: `https://testnet.xrpl.org/transactions/${txId}`,
         settledAt: new Date().toISOString(),
         funding,
         scheduledFor: funding === 'scheduled' ? scheduled.toISOString() : undefined,
         totalAmount: lines.reduce((s, l) => s + l.amount, 0),
         lines,
-        network: 'USDC · Base',
+        network: 'XRPL testnet (simulated)',
         feeUsd: 0,
       }
       return receipt
@@ -130,7 +130,6 @@ export function createMockApi(): VouchApi {
 
     async getNetwork() {
       await wait(200)
-      // Nudge latencies a little so the page feels live.
       const jitter = (n: number) => Math.max(1, Math.round(n * (0.9 + Math.random() * 0.2)))
       const hops = DEMO_NETWORK.hops.map((h) => ({ ...h, p50Ms: jitter(h.p50Ms), p95Ms: jitter(h.p95Ms) }))
       return {
@@ -181,6 +180,25 @@ export function createMockApi(): VouchApi {
     async getTopology() {
       await wait(150)
       return clone(DEMO_TOPOLOGY)
+    },
+
+    async listRuns() {
+      await wait(100)
+      return [
+        {
+          id: 'run-demo',
+          label: 'demo: Friday vendor run',
+          status: 'completed' as const,
+          createdAt: new Date().toISOString(),
+          pendingApproval: false,
+          cardIds: payments.map((p) => p.id),
+        },
+      ]
+    },
+
+    async getRunEvents(_runId, _after = 0) {
+      await wait(50)
+      return { status: 'completed', events: [] }
     },
   }
 }

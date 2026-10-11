@@ -20,6 +20,92 @@ npm run lint       # oxlint
 npm run preview    # serve the production build
 ```
 
+## Local development with backend
+
+Run the backend and frontend together for full end-to-end development:
+
+```bash
+# Terminal 1: Start the Vouch backend (from repo root)
+cd backend && make dev
+# or: cd backend && make run
+
+# Terminal 2: Seed demo data (one time)
+curl -X POST http://localhost:8101/v1/demo/seed
+
+# Terminal 3: Start the frontend
+cd frontend
+VITE_API_BASE_URL=http://localhost:8101 npm run dev
+```
+
+The frontend auto-detects the backend: when `/v1/health` responds, it switches to live mode (green `live` tag in the status bar). If the backend is down, it falls back to mock data (amber `mock` tag).
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_API_BASE_URL` | `http://localhost:8101` | Backend API base URL |
+| `VITE_API_MODE` | `auto` | Force `live` or `mock` mode (auto = try live, fall back to mock) |
+| `VITE_USE_MOCK` | — | Set to `1` to force mock data even when backend is reachable |
+
+### Live features when connected to backend
+
+- **Payment list**: fetches from `/v1/payments` with real invoice data
+- **Owner actions**: approve, hold, appeal call the real API and update state
+- **Settlement**: `/v1/batch/settle` returns real XRPL testnet transaction IDs
+- **Receipt links**: open in the XRPL testnet explorer (`https://testnet.xrpl.org/transactions/...`)
+- **Agent feed**: polls `/v1/runs/{id}/events` for live intake, scoring, and settlement events
+- **Status bar**: shows real `/v1/netz` latencies and `/v1/info` service info
+- **Email/file intake**: new invoices from `/v1/intake/*` appear in the feed automatically
+
+## Deploy (production build)
+
+Build the static assets and serve from any static host (Akamai NodeBalancer, Linode, Nginx, S3, etc.):
+
+```bash
+cd frontend
+npm run build      # outputs to dist/
+```
+
+The `dist/` folder contains:
+- `index.html` — the single-page app entry point
+- `assets/` — hashed JS/CSS bundles
+- `favicon.svg` — the Vouch icon
+
+### Serve from Nginx
+
+```nginx
+server {
+    listen 80;
+    server_name vouch.example.com;
+    root /var/www/vouch/dist;
+    index index.html;
+
+    # SPA fallback: serve index.html for all routes
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cache assets with hashes forever
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+### Serve from Linode / Akamai NodeBalancer
+
+1. Deploy the backend to Linode (see `backend/` and `infra/terraform/akamai/`)
+2. Copy `dist/` to the web server (e.g. `/var/www/vouch/dist`)
+3. Configure the NodeBalancer to route `/` to the static server
+4. Set `VITE_API_BASE_URL` to the backend's public URL at build time:
+
+```bash
+VITE_API_BASE_URL=https://api.vouch.example.com npm run build
+```
+
+The frontend is fully static and can be served from any CDN or edge network. The backend URL is baked into the bundle at build time.
+
 ## Mock data vs. live API
 
 The app ships with built-in demo data (the six vendors from the brief). A typed client layer (`src/api/`) has two implementations behind one `VouchApi` interface:
