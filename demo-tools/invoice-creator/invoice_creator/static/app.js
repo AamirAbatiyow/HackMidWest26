@@ -9,7 +9,9 @@
 
   const state = {
     config: null,
-    presets: [],
+    allPresets: [], // every story, as served by /api/presets
+    presets: [], // the active story's presets, in demo order (hidden follow-ups included)
+    story: null,
     presetKey: null,
     senderKind: "custom",
     format: "pdf",
@@ -19,7 +21,7 @@
       invoice_date: today(0), due_date: today(14), po_number: "", description: "", line_items: [],
       bank: { bank_name: "", account_label: "Account Number", account_number: "", routing_label: "Routing Number", routing_number: "" },
       remit_to: { address: "", phone: "", tax_id_label: "Tax ID", tax_id: "", contact_name: "" },
-      notes: "",
+      notes: "", bill_to_name: "", bill_to_address: "",
     },
     sender: {
       from_name: "", from_addr: "", reply_to: "", envelope_from: "", subject: "", body: "", add_received_header: true,
@@ -116,6 +118,36 @@
     renderItems();
     $("#items-body tr:last-child input").focus();
   });
+
+  // ----------------------------------------------------------------- stories ----
+  const storyOf = (key) => ((state.config && state.config.stories) || []).find((s) => s.key === key);
+  function renderStories() {
+    const seg = $("#story-seg");
+    seg.innerHTML = "";
+    ((state.config && state.config.stories) || []).forEach((s) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", String(s.key === state.story));
+      b.dataset.story = s.key;
+      b.textContent = s.title;
+      b.title = s.summary;
+      b.addEventListener("click", () => selectStory(s.key));
+      seg.appendChild(b);
+    });
+    const s = storyOf(state.story);
+    $("#story-summary").textContent = s ? s.summary : "";
+    const n = state.presets.length;
+    $("#send-all-btn").textContent = `Send all ${n} scenario${n === 1 ? "" : "s"}`;
+    $("#send-all-detail").textContent = `Sends every “${s ? s.title : ""}” scenario in order with its own format and sender — ${n} emails, about ${Math.max(5, Math.round(n * 1.3))} seconds. The form is left untouched.`;
+  }
+  function selectStory(key, firstPreset) {
+    state.story = key;
+    state.presets = state.allPresets.filter((p) => p.story === key);
+    renderStories(); renderPresets();
+    const first = firstPreset || (state.presets.find((p) => !p.hidden) || {}).key;
+    if (first) applyPreset(first);
+  }
 
   // ----------------------------------------------------------------- presets ----
   function renderPresets() {
@@ -226,6 +258,13 @@
   // Mirrors render.account_line(): labels the backend parser knows stay; others print as "Bank account".
   const PARSEABLE_ACCOUNT_LABELS = new Set(["iban", "account number", "account no", "account no.", "account #", "acct", "acct."]);
   const accountLabel = (label) => (PARSEABLE_ACCOUNT_LABELS.has(String(label || "").trim().toLowerCase()) ? label : "Bank account");
+  // Mirrors render.bill_to(): the invoice's own bill-to wins, else the operator's configured owner.
+  function billTo(inv, c) {
+    const name = (inv.bill_to_name || "").trim();
+    const address = name ? (inv.bill_to_address || "").trim() : (c.owner_address || "");
+    const who = name || c.owner_name || "";
+    return who ? (address ? `${who}, ${address}` : who) : "";
+  }
   function renderPaper() {
     const inv = state.invoice, c = state.config || {};
     const cur = inv.currency || "USD";
@@ -245,7 +284,7 @@
       <div class="kv"><b>Invoice Date:</b> ${esc(inv.invoice_date)}</div>
       <div class="kv"><b>Due Date:</b> ${esc(inv.due_date)}</div>
       ${inv.po_number ? `<div class="kv"><b>PO Number:</b> ${esc(inv.po_number)}</div>` : ""}
-      <div class="kv"><b>Bill To:</b> ${esc(c.owner_name || "")}${c.owner_address ? ", " + esc(c.owner_address) : ""}</div>
+      ${billTo(inv, c) ? `<div class="kv"><b>Bill To:</b> ${esc(billTo(inv, c))}</div>` : ""}
       ${inv.description ? `<div class="kv"><b>Description:</b> ${esc(inv.description)}</div>` : ""}
       ${rows ? `<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
       <div class="kv">Subtotal: ${money(subtotal, cur)}</div>
@@ -469,12 +508,15 @@
 
   async function boot() {
     const [cfg, presets] = await Promise.all([fetch("/api/config").then((r) => r.json()), fetch("/api/presets").then((r) => r.json())]);
-    state.config = cfg; state.presets = presets;
+    state.config = cfg; state.allPresets = presets;
     $("#target-pill").textContent = `SMTP ${cfg.smtp_host}:${cfg.smtp_port} → ${cfg.mail_to}`;
     $("#version").textContent = `invoice-creator v${cfg.version}`;
-    renderPresets(); renderDelivery(); renderFormat(); renderSenderKind(); renderItems(); writeInputs();
+    $("#bill-to-name").placeholder = cfg.owner_name || "";
+    $("#bill-to-address").placeholder = cfg.owner_address || "";
+    renderDelivery(); renderFormat(); renderSenderKind(); renderItems(); writeInputs();
     await loadLog();
-    applyPreset("reyes");
+    const wanted = new URLSearchParams(location.search).get("story");
+    selectStory(storyOf(wanted) ? wanted : cfg.default_story || (presets[0] || {}).story);
     refreshReceiver();
     setInterval(refreshReceiver, 10000);
   }

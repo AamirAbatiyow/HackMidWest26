@@ -80,6 +80,16 @@ def account_line(inv: Invoice) -> tuple[str, str] | None:
     return "Bank account", f"{inv.bank.account_number}  ({label})"
 
 
+def bill_to(inv: Invoice, owner_name: str = "", owner_address: str = "") -> str:
+    """The billed party: the invoice's own bill-to when set, else the operator's configured owner."""
+    name = inv.bill_to_name.strip()
+    address = inv.bill_to_address.strip() if name else owner_address
+    name = name or owner_name
+    if not name:
+        return ""
+    return f"{name}, {address}" if address else name
+
+
 def invoice_lines(inv: Invoice, owner_name: str = "", owner_address: str = "") -> list[str]:
     """Canonical plain-text form of the invoice (email body, PNG and the PDF are built from it).
     The ``From:`` line and the label vocabulary below are what the backend's parser keys on."""
@@ -104,9 +114,8 @@ def invoice_lines(inv: Invoice, owner_name: str = "", owner_address: str = "") -
     ]
     if inv.po_number:
         lines.append(f"PO Number: {inv.po_number}")
-    if owner_name:
-        bill_to = owner_name if not owner_address else f"{owner_name}, {owner_address}"
-        lines.append(f"Bill To: {bill_to}")
+    if billed := bill_to(inv, owner_name, owner_address):
+        lines.append(f"Bill To: {billed}")
     if inv.description:
         lines.append(f"Description: {inv.description}")
     if inv.line_items:
@@ -155,8 +164,8 @@ def invoice_rows(inv: Invoice, owner_name: str = "", owner_address: str = "") ->
     ]
     if inv.po_number:
         rows.append(["PO Number", inv.po_number])
-    if owner_name:
-        rows.append(["Bill To", f"{owner_name}, {owner_address}" if owner_address else owner_name])
+    if billed := bill_to(inv, owner_name, owner_address):
+        rows.append(["Bill To", billed])
     if inv.description:
         rows.append(["Description", inv.description])
     if inv.line_items:
@@ -258,9 +267,8 @@ def render_pdf(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
     line(f"Due Date: {inv.due_date.isoformat()}", 10, bold)
     if inv.po_number:
         line(f"PO Number: {inv.po_number}")
-    if owner_name:
-        bill_to = owner_name if not owner_address else f"{owner_name}, {owner_address}"
-        line(f"Bill To: {bill_to}")
+    if billed := bill_to(inv, owner_name, owner_address):
+        line(f"Bill To: {billed}")
     if inv.description:
         line(f"Description: {inv.description}")
     y -= 4
@@ -334,10 +342,14 @@ def render_png(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
         font = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans.ttf", 34)
         bold = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans-Bold.ttf", 46)
         small = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSans.ttf", 22)
+        # Slashed-zero monospace for identifiers: OCR otherwise reads "US0710…" as "USO710…".
+        mono = ImageFont.truetype(f"{_FONT_DIR}/DejaVuSansMono.ttf", 34)
     except OSError:  # pragma: no cover - font layout differs per host
         font = ImageFont.load_default(size=34)
         bold = ImageFont.load_default(size=46)
         small = ImageFont.load_default(size=22)
+        mono = font
+    has_identifier = re.compile(r"\d{4,}|[A-Z]{2}\d{2}")  # account numbers, tax ids, phones, dates
 
     lines = invoice_lines(inv, owner_name, owner_address)
     width = 1600
@@ -358,7 +370,7 @@ def render_png(inv: Invoice, owner_name: str = "", owner_address: str = "") -> b
             draw.text((90, y), ln, fill="black", font=bold)
             y += 64
             continue
-        draw.text((90, y), ln, fill="black", font=font)
+        draw.text((90, y), ln, fill="black", font=mono if has_identifier.search(ln) else font)
         y += 54
     draw.text((90, height - 44), DEMO_FOOTER, fill=(130, 130, 130), font=small)
     buf = io.BytesIO()

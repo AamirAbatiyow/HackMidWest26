@@ -31,6 +31,11 @@
       <div class="card">
         <h2 id="presets-h">1 · Pick a scenario</h2>
         <p class="muted">Each preset fills the whole form. Everything is invented: companies, people, accounts, tax ids, domains.</p>
+        <div class="story-row">
+          <span class="story-label">Vendor world</span>
+          <div class="segmented" id="story-seg" role="radiogroup" aria-label="Preset family (story)"></div>
+        </div>
+        <p class="muted small" id="story-summary"></p>
         <div class="preset-grid" id="preset-grid" role="group" aria-label="Scenario presets"></div>
         <div class="scenario-card" id="scenario-card" hidden>
           <div class="scenario-head">
@@ -59,6 +64,10 @@
           <label>Due date<input data-bind="invoice.due_date" type="date" required /></label>
         </div>
         <label>Description (one line)<input data-bind="invoice.description" /></label>
+        <div class="grid-2">
+          <label>Bill to (your company)<input data-bind="invoice.bill_to_name" id="bill-to-name" /></label>
+          <label>Bill-to address<input data-bind="invoice.bill_to_address" id="bill-to-address" /></label>
+        </div>
 
         <fieldset>
           <legend>Line items</legend>
@@ -157,9 +166,9 @@
         <div class="demo-run">
           <div>
             <strong>Judge demo sequence</strong>
-            <p class="muted small">Sends every scenario in order with its own format and sender — 8 emails, about 10 seconds. The form is left untouched.</p>
+            <p class="muted small" id="send-all-detail">Sends every scenario in order with its own format and sender. The form is left untouched.</p>
           </div>
-          <button type="button" class="btn btn-secondary" id="send-all-btn">Send all 6 scenarios</button>
+          <button type="button" class="btn btn-secondary" id="send-all-btn">Send all scenarios</button>
         </div>
       </section>
     </section>

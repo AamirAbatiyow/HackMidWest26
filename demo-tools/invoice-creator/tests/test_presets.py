@@ -7,7 +7,15 @@ from datetime import date
 
 import pytest
 
-from invoice_creator.presets import build_presets, demo_sequence, get_preset, preset_map
+from invoice_creator.presets import (
+    DEFAULT_STORY,
+    HEARTLAND_RING_BANK,
+    STORIES,
+    build_presets,
+    demo_sequence,
+    get_preset,
+    preset_map,
+)
 
 TODAY = date(2026, 10, 11)
 
@@ -24,14 +32,25 @@ def digits(s: str) -> str:
     return "".join(ch for ch in s if ch.isdigit())
 
 
-def test_six_scenarios_a_to_f_plus_follow_ups():
-    presets = build_presets(TODAY)
-    groups = sorted({p.group for p in presets})
-    assert groups == ["a", "b", "c", "d", "e", "f"]
-    visible = [p for p in presets if not p.hidden]
-    assert [p.group for p in visible] == ["a", "b", "c", "d", "e", "f"]
-    assert len({p.key for p in presets}) == len(presets)
-    assert demo_sequence() == [
+def test_two_stories_each_with_scenarios_a_to_f():
+    assert [s.key for s in STORIES] == ["heartland", "reyes"] and DEFAULT_STORY == "heartland"
+    everything = build_presets(TODAY, story=None)
+    assert len({p.key for p in everything}) == len(everything)  # keys unique across stories
+    for story in STORIES:
+        presets = build_presets(TODAY, story=story.key)
+        assert presets and all(p.story == story.key for p in presets)
+        visible = [p for p in presets if not p.hidden]
+        assert [p.group for p in visible] == ["a", "b", "c", "d", "e", "f"], story.key
+        for p in presets:
+            if p.follow_up:
+                assert preset_map(TODAY)[p.follow_up].hidden
+    assert build_presets(TODAY) == build_presets(TODAY, story="heartland")
+    with pytest.raises(KeyError):
+        build_presets(TODAY, story="nope")
+
+
+def test_reyes_story_demo_sequence_includes_follow_ups():
+    assert demo_sequence("reyes") == [
         "reyes",
         "warsaw",
         "midwest",
@@ -41,13 +60,18 @@ def test_six_scenarios_a_to_f_plus_follow_ups():
         "nova",
         "santa-rita",
     ]
-    for p in presets:
-        if p.follow_up:
-            assert preset_map(TODAY)[p.follow_up].hidden
+    assert demo_sequence() == demo_sequence("heartland") == [
+        "prairie",
+        "sonora",
+        "midwest-facility",
+        "rheinland",
+        "apex",
+        "baolin",
+    ]
 
 
 def test_invoice_numbers_do_not_collide_with_backend_samples():
-    for p in build_presets(TODAY):
+    for p in build_presets(TODAY, story="reyes"):
         assert p.invoice.invoice_number not in BACKEND_SAMPLE_INVOICE_NUMBERS
 
 
@@ -61,13 +85,62 @@ def test_amounts_and_line_items_are_consistent():
         "brightline-2": 4900.00,
         "nova": 7200.00,
         "santa-rita": 1850.00,
+        "prairie": 1215.00,
+        "sonora": 9850.00,
+        "midwest-facility": 4780.00,
+        "rheinland": 8240.00,
+        "apex": 12000.00,
+        "baolin": 640.00,
     }
-    for p in build_presets(TODAY):
+    for p in build_presets(TODAY, story=None):
         assert p.invoice.amount == expected[p.key], p.key
         assert p.invoice.line_total == p.invoice.amount, p.key
         assert p.invoice.amount_cents == round(expected[p.key] * 100)
         assert p.invoice.due_date >= p.invoice.invoice_date
         assert p.invoice.invoice_date <= TODAY
+
+
+# The backend's scripted vendor master (vouch/demo/story.py): name -> (email, bank account, tax id).
+HEARTLAND_MASTER = {
+    "Prairie Packaging Supply": ("ar@prairiepackaging.com", "US021000089912", "48-1234567"),
+    "Rheinland Gewürze GmbH": ("buchhaltung@rheinland-gewuerze.de", "DE44500105175407324931", "71-2345882"),
+    "Bao Lin Ceramics": ("baolin.ceramics@gmail.com", "VN12000123456789", "30-9876540"),
+    "Sonora Fresh Produce": ("cobranza@sonorafresh.com", "MX12072180001234567890", "62-3456716"),
+    "Midwest Facility Services": ("billing@midwestfacility.com", "US101000019876", "43-5566771"),
+    "Apex Global Trading LLC": ("apexglobal.trade@proton.me", "US071000013345", "84-7712093"),
+}
+# Invoice numbers / amounts of the backend's own scripted submissions; a paid one lands in the vendor's
+# history, so the emailed versions must differ or they would read as duplicates (INV-2291A is meant to).
+HEARTLAND_SCRIPTED = {"PPS-2207", "RG-2026-0918", "BLC-0042", "SFP-88213", "AGT-1007"}
+
+
+def test_heartland_presets_match_the_backend_vendor_master():
+    presets = {p.key: p for p in build_presets(TODAY, story="heartland")}
+    assert set(presets) == {"prairie", "sonora", "midwest-facility", "rheinland", "apex", "baolin"}
+    for p in presets.values():
+        email, bank, tax_id = HEARTLAND_MASTER[p.invoice.vendor_name]
+        assert p.invoice.remit_to.tax_id == tax_id, p.key
+        assert p.invoice.invoice_number not in HEARTLAND_SCRIPTED, p.key
+        assert p.invoice.bill_to_name == "Heartland Provisions Co."
+        legit = next(o for o in p.sender_options if o.kind == "legit")
+        assert legit.from_addr == email, p.key
+        if p.key != "sonora":
+            assert p.invoice.bank.account_number.replace(" ", "") == bank, p.key
+            assert p.sender.from_addr == email
+    sonora = presets["sonora"]
+    assert sonora.invoice.bank.account_number.replace(" ", "") != HEARTLAND_MASTER["Sonora Fresh Produce"][1]
+    assert sonora.sender.from_addr.endswith("@sonorafresh-billing.com")
+    assert sonora.sender.reply_to.endswith("@sonorafresh-pagos.net")
+    auth = sonora.sender.auth
+    assert (auth.spf, auth.dkim, auth.dmarc) == ("softfail", "none", "fail")
+    assert "pre-approved" in sonora.invoice.notes and "URGENT" in sonora.invoice.notes
+    assert presets["prairie"].invoice.amount < 2500 and presets["prairie"].invoice.po_number == "PO-48790"
+    dup = presets["midwest-facility"].invoice
+    assert dup.invoice_number == "INV-2291A"  # INV-2291 was paid 9 days ago
+    assert dup.amount == 4780.00 and not dup.po_number
+    assert presets["rheinland"].invoice.currency == "EUR"
+    assert presets["apex"].invoice.bank.account_number == HEARTLAND_RING_BANK
+    assert {p.format for p in presets.values()} == {"pdf", "png", "xlsx", "csv", "body"}
 
 
 def test_legit_vendor_matches_known_history():
@@ -142,7 +215,7 @@ def test_new_small_vendor_is_honest():
 
 
 def test_every_preset_offers_legit_and_lookalike_sender_options():
-    for p in build_presets(TODAY):
+    for p in build_presets(TODAY, story=None):
         kinds = {o.kind for o in p.sender_options}
         assert kinds == {"legit", "lookalike"}, p.key
         legit = next(o for o in p.sender_options if o.kind == "legit")

@@ -19,7 +19,7 @@ from .config import Settings, load_settings
 from .deliver import deliver
 from .mail import auth_summary, build_message, describe, eml_to_intake_json, message_bytes
 from .models import BuiltMessage, Invoice, OutputFormat, SendLogEntry, SendRequest
-from .presets import build_presets
+from .presets import DEFAULT_STORY, build_presets, stories
 from .render import Rendered, render
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -124,12 +124,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "owner_name": settings.owner_name,
             "owner_address": settings.owner_address,
             "deliveries": settings.deliveries,
+            "stories": [s.model_dump() for s in stories()],
+            "default_story": DEFAULT_STORY,
             "version": __version__,
         }
 
     @app.get("/api/presets")
-    def presets() -> list[dict]:
-        return [p.model_dump(mode="json") for p in build_presets()]
+    def presets(story: str | None = None) -> list[dict]:
+        """Every story's presets (each tagged with its ``story``), or one story's with ``?story=``."""
+        try:
+            return [p.model_dump(mode="json") for p in build_presets(story=story)]
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/api/render")
     def render_file(req: RenderRequest) -> Response:

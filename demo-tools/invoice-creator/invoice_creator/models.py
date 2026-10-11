@@ -60,6 +60,8 @@ class Invoice(BaseModel):
     bank: BankDetails = Field(default_factory=BankDetails)
     remit_to: RemitTo = Field(default_factory=RemitTo)
     notes: str = ""
+    bill_to_name: str = ""  # the business being billed; empty = the operator's configured owner
+    bill_to_address: str = ""
 
     @field_validator("currency")
     @classmethod

@@ -12,7 +12,7 @@ from .config import load_settings
 from .deliver import deliver
 from .mail import auth_summary, build_message, eml_to_intake_json, message_bytes
 from .models import SendRequest
-from .presets import build_presets, demo_sequence, get_preset
+from .presets import DEFAULT_STORY, STORIES, build_presets, demo_sequence, get_preset
 
 
 def _request_from_preset(key: str, fmt: str | None, delivery: str, sender_kind: str | None) -> SendRequest:
@@ -33,12 +33,17 @@ def _request_from_preset(key: str, fmt: str | None, delivery: str, sender_kind: 
     )
 
 
-def cmd_presets(_args: argparse.Namespace) -> int:
-    for p in build_presets():
-        flag = "  (follow-up)" if p.hidden else ""
-        print(f"{p.key:16s} [{p.group}] {p.title}{flag}")
-        print(f"{'':16s}     {p.vendor} · default format {p.format} · from {p.sender.from_addr}")
-        print(f"{'':16s}     expected: {p.expected}")
+def cmd_presets(args: argparse.Namespace) -> int:
+    for story in STORIES:
+        if args.story and story.key != args.story:
+            continue
+        print(f"== story {story.key}: {story.title} — {story.summary}")
+        for p in build_presets(story=story.key):
+            flag = "  (follow-up)" if p.hidden else ""
+            print(f"{p.key:16s} [{p.group}] {p.title}{flag}")
+            print(f"{'':16s}     {p.vendor} · default format {p.format} · from {p.sender.from_addr}")
+            print(f"{'':16s}     expected: {p.expected}")
+        print()
     return 0
 
 
@@ -84,7 +89,7 @@ def cmd_send(args: argparse.Namespace) -> int:
 def cmd_send_all(args: argparse.Namespace) -> int:
     settings = load_settings()
     failures = 0
-    for key in demo_sequence():
+    for key in demo_sequence(args.story):
         req = _request_from_preset(key, args.format, args.delivery, None)
         info = _send_one(req, settings, Path(args.out) if args.out else None, args.json)
         mark = "ok " if info["ok"] else "FAIL"
@@ -133,7 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int)
     s.set_defaults(fn=cmd_serve)
 
-    s = sub.add_parser("presets", help="list demo presets")
+    story_keys = [st.key for st in STORIES]
+
+    s = sub.add_parser("presets", help="list demo presets (every story unless --story is given)")
+    s.add_argument("--story", choices=story_keys)
     s.set_defaults(fn=cmd_presets)
 
     fmts = ["pdf", "png", "xlsx", "csv", "body"]
@@ -148,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", action="store_true", help="also write the IntakeRequest JSON next to the .eml")
     s.set_defaults(fn=cmd_send)
 
-    s = sub.add_parser("send-all", help="send every preset in demo order (follow-ups included)")
+    s = sub.add_parser("send-all", help="send every preset of a story in demo order (follow-ups included)")
+    s.add_argument("--story", choices=story_keys, default=DEFAULT_STORY)
     s.add_argument("--format", choices=fmts, help="force one format for every preset")
     s.add_argument("--delivery", choices=deliveries, default="smtp")
     s.add_argument("--out")
