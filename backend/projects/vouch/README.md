@@ -126,9 +126,9 @@ Hooks on every agent:
 | GET | `/vendors`, `/vendors/{id}`; PUT `/vendors/{id}` | Vendor master, including linked vendors (ring graph). |
 | GET | `/cash` | Cash forecast and pay-now / schedule recommendations. |
 | GET | `/netz` (alias `/stats`) | LLM calls, tokens, latency, node timings, provider, rate-limit headroom. |
-| GET | `/redteam`; POST `/redteam/run` | Adversarial suite results (29 attacks, including injected bodies aimed at the intake decision classifier). |
+| GET | `/redteam`; POST `/redteam/run` | Adversarial suite results (30 attacks, including injected bodies and schema-breaking outputs aimed at the intake decision classifier). |
 | GET | `/model`, `/info` | Model metadata, held-out metrics, active scorer, LLM mode, adapter. |
-| GET | `/payments/{id}/decisions` | The intake decision chain (format → extraction tool → kickback reason): question, options, chosen answer, engine, latency, tokens; also embedded in `/payments/{id}` as `intake.decisions`. |
+| GET | `/payments/{id}/decisions` | The intake decision chain (format → extraction tool → kickback reason): question, options, chosen answer, reason code, engine, latency, tokens, every output the strict schema rejected, and whether the safe default put the card in owner review; also embedded in `/payments/{id}` as `intake.decisions`. |
 | GET | `/outbox?status=` | Kickback email drafts (`awaiting_owner`, `approved`, `declined`); nothing in the service sends them. |
 | POST | `/payments/{id}/kickback/approve`, `/payments/{id}/kickback/decline` | Owner decides a kickback draft (Cedar P-08: Owner only); the payment stays on hold. |
 
@@ -158,10 +158,15 @@ See [`MODEL_CARD.md`](MODEL_CARD.md) for the caveats.
 - **Synthetic data and features:** determinism, graph ring detection.
 - **End to end with a scripted LLM** (Strands `ScriptedModel`): the happy path, the attack path, resolving
   a hold then settling, decline, offline mode, and ambiguous approvals.
-- **Red-team suite:** all 29 attacks must be blocked (including the intake decision classifier: injected
-  bodies, a model that calls unreadable input readable, auto-send attempts, money in the kickback draft).
-- **Decision classifier:** deterministic-first routing, the Strands structured-output helper with a closed
-  enum, bounded retries, admissibility, kickback templates (never amounts or bank details), Cedar P-08.
+- **Red-team suite:** all 30 attacks must be blocked (including the intake decision classifier: injected
+  bodies, schema-breaking outputs, a model that calls unreadable input readable, auto-send attempts, money
+  in the kickback draft).
+- **Decision classifier:** deterministic-first routing; one strict Pydantic model per question
+  (`FormatDecision`, `ToolDecision`, `KickbackDecision`: `extra="forbid"`, `strict=True`, enum answer and
+  enum reason code, a validator that rejects tools the format cannot use) validated by Strands structured
+  output; one retry with the validation error, then the owner-review / kickback safe default (never
+  payment); admissibility; kickback templates (never amounts or bank details); Cedar P-08. See
+  [`docs/STRANDS.md`](../../docs/STRANDS.md).
 - **API flow.**
 - **Model training and inference with LIME** (skipped without torch).
 
