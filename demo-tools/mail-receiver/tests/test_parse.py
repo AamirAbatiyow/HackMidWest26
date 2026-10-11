@@ -17,7 +17,9 @@ AUTH = (
     "mx.vouch.local (demo-simulated); spf=pass smtp.mailfrom=reyespackaging.mx; "
     "dkim=pass header.d=reyespackaging.mx; dmarc=pass header.from=reyespackaging.mx"
 )
-RECEIVED_1 = "from mail.reyespackaging.mx (mail.reyespackaging.mx [203.0.113.10]) by mx.vouch.local with ESMTPS id abc"
+RECEIVED_1 = (
+    "from mail.reyespackaging.mx (mail.reyespackaging.mx [203.0.113.10]) by mx.vouch.local with ESMTPS id abc"
+)
 RECEIVED_2 = "from relay.example (relay.example [203.0.113.11]) by mail.reyespackaging.mx with ESMTP id def"
 
 
