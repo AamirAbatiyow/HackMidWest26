@@ -33,7 +33,7 @@ fi
 # 2. cheap probe
 probe=$(get /v1/health)
 if echo "$probe" | jq -e '.status == "ok"' >/dev/null 2>&1; then
-  ok "/v1/health: $(echo "$probe" | jq -r '"\(.service) \(.version) llm=\(.llm_mode) scorer=\(.scorer) settlement=\(.settlement_adapter) db=\(.database)"')"
+  ok "/v1/health: $(echo "$probe" | jq -r '"\(.service) \(.version) llm=\(.llm_mode) scorer=\(.scorer) settlement=\(.settlement_adapter) db=\(.database) ocr=\(.ocr.state // "missing")/\(.ocr.tesseract_version // "-")"')"
 else
   bad "/v1/health did not return status ok: $probe"
 fi
@@ -41,17 +41,20 @@ fi
 # 3. roles: which Akamai services are live
 health=$(get /health)
 if echo "$health" | jq -e '.status' >/dev/null 2>&1; then
-  for role in inference embeddings model_server database object_storage nodebalancer firewall vpc settlement risk_model policy_engine; do
+  for role in inference embeddings model_server database object_storage nodebalancer firewall vpc settlement risk_model policy_engine ocr; do
     state=$(echo "$health" | jq -r --arg r "$role" '.[$r].state // "missing"')
     detail=$(echo "$health" | jq -r --arg r "$role" '.[$r].detail // ""')
     case "$state" in
       live) ok "role $role: live ($detail)";;
       fallback) warn "role $role: fallback ($detail)";;
       off) warn "role $role: off ($detail)";;
+      down) bad "role $role: down ($detail)";;
       *) bad "role $role: $state ($detail)";;
     esac
   done
-  for must in database model_server nodebalancer firewall vpc; do
+  # ocr: image invoices (PNG/JPG) need the tesseract binary inside the API container; without it they are
+  # held as unreadable (see docs/RUNBOOK.md "Image invoices come out as amount 0").
+  for must in database model_server nodebalancer firewall vpc ocr; do
     [[ "$(echo "$health" | jq -r --arg r "$must" '.[$r].state')" == "live" ]] || bad "expected $must to be live on Akamai"
   done
 else

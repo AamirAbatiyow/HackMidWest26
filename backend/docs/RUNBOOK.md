@@ -45,6 +45,35 @@ Managed Postgres is slow to provision; enable it early (`enable_postgres = true`
 | Frontend CORS error | add its exact origin to `CORS_ALLOW_ORIGINS`, restart the API |
 | `ProfileNotFound` from boto3 | an empty `AWS_PROFILE=` is exported; remove it |
 | Deploy works but NodeBalancer shows nodes down | API must listen on `api_port` (8100) on the VPC IP; check `docker compose ps` on the VM |
+| Image invoices (PNG/JPG) come out as amount 0, card says "this server has no OCR engine" | the API container has no `tesseract` binary: `curl -s $URL/v1/health \| jq .ocr` shows `"state": "down"`. Rebuild (section 4a) or hot-install it (section 4b); PDFs are unaffected |
+
+### 4a. OCR: redeploy with the rebuilt image (tesseract baked in)
+`infra/docker/python-app.Dockerfile` installs `tesseract-ocr` + `tesseract-ocr-eng` in the runtime stage, so any
+`docker compose ... up -d --build` from a checkout at or after this change ships OCR. On the app Linode:
+```bash
+ssh root@<app-public-ip>
+cd /opt/vouch/repo && git pull --ff-only && cd backend
+docker compose -f infra/compose/akamai-app.yml up -d --build        # ~2-3 min rebuild, ~10 s restart
+docker compose -f infra/compose/akamai-app.yml exec api tesseract --version
+curl -s http://127.0.0.1:8101/v1/health | jq .ocr                    # {"state":"live","backend":"tesseract",...}
+```
+Or from your laptop: `infra/scripts/deploy_akamai.sh --secrets-only` (git pull + `up -d --build` on every app
+node, then `verify_deploy.sh`, which now fails if the `ocr` role is not `live`).
+
+### 4b. OCR: no-downtime alternative (install into the running container, no rebuild)
+The API runs as the unprivileged `app` user inside Debian-slim; apt needs root in the *container* (installing on the
+Linode host does nothing for the container). The OCR probe re-checks a missing engine every 15 s, so neither the
+container nor the process is restarted:
+```bash
+ssh root@<app-public-ip>
+cd /opt/vouch/repo/backend
+docker compose -f infra/compose/akamai-app.yml exec -u root api \
+  sh -c 'apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*'
+docker compose -f infra/compose/akamai-app.yml exec api tesseract --list-langs   # must list eng
+sleep 15; curl -s http://127.0.0.1:8101/v1/health | jq .ocr                      # "state": "live"
+```
+This lives only in the current container: the next `up -d --build` / recreate replaces it with the image from 4a,
+which already carries tesseract. Held image invoices are not re-read automatically; re-send them (or re-key them).
 
 ## 5. Freeze before judging
 Last commit before the deadline, then **no code changes**. Re-run `docs/SUBMISSION.md`.

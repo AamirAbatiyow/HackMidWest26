@@ -4,6 +4,7 @@ Newest first. One line of context, the decision, and what would make us revisit 
 
 | When (CT) | Decision | Why | Revisit if |
 |---|---|---|---|
+| Sun am | The API image ships the Tesseract binary (`tesseract-ocr` + `tesseract-ocr-eng`, also in the app Linode apt list); a missing engine is `down` in `/health` + `/v1/health` and leads the card's hold reason (`R_OCR_MISSING`) instead of "could not be read"; the OCR probe re-checks a negative every 15 s | on Akamai an emailed PNG came out as amount 0: `python:3.12-slim` has no tesseract and pytesseract alone is not OCR; PDFs never touched it | image size matters (use the pure-Python `ocr-rapid` extra instead) |
 | Sat eve | Owner approval accepts only `approved: true` or an explicit approve word; anything else declines | interrupt responses are attacker-reachable input; type confusion must fail closed | — |
 | Sat eve | Scorer chain: inference service → in-process model → labelled heuristic | demo must never die on a missing model or torch | heuristic ever shown on stage (retrain first) |
 | Sat eve | XRPL: approved cards settle as one atomic `Batch` (tfAllOrNothing, ≤8 inner); amounts scaled by `XRPL_XRP_PER_USD` | one owner approval = one all-or-nothing transfer; faucet funds last | Batch amendment disabled on testnet (set `XRPL_USE_BATCH=false`) |
