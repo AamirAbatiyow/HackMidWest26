@@ -1,8 +1,10 @@
-"""Audit records: runs, decisions, policy results, approvals, settlements, documents.
+"""Audit records: vendors, runs, payment cards, decisions, policy results, approvals, settlements,
+intake documents and the embedding cache.
 
-Postgres (Akamai Managed PostgreSQL) when ``DATABASE_URL`` is set; a SQLite file otherwise
-(``VOUCH_DATA_DIR/vouch.sqlite3``); ``sqlite://`` for in-memory tests. API state is loaded
-from here at startup, so restarts are safe.
+Postgres (Akamai Managed PostgreSQL) when ``DATABASE_URL`` is set and reachable; a SQLite file otherwise
+(``VOUCH_DATA_DIR/vouch.sqlite3``); ``sqlite://`` for in-memory tests. The engine's state (runs + cards +
+vendor master) is written after every graph node and owner action and loaded back at startup, so a
+restart never loses a hold, an approval or a settlement receipt.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
-from ..contracts import PaymentRecord, Vendor
+from ..cards import PaymentCard
+from ..domain import Vendor
 
 log = logging.getLogger(__name__)
 
@@ -35,48 +38,48 @@ class Base(DeclarativeBase):
     pass
 
 
-class PaymentRow(Base):
-    __tablename__ = "payments"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    vendor_id: Mapped[str] = mapped_column(String(64), index=True)
-    status: Mapped[str] = mapped_column(String(32))
-    lifecycle: Mapped[str] = mapped_column(String(32))
-    received_at: Mapped[str] = mapped_column(String(40))
-    data: Mapped[dict] = mapped_column(JSON)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
-
-
 class VendorRow(Base):
     __tablename__ = "vendors"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     data: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class RunRow(Base):
     __tablename__ = "runs"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    payment_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    llm_mode: Mapped[str] = mapped_column(String(16))
+    label: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[str] = mapped_column(String(40))
+    llm_mode: Mapped[str] = mapped_column(String(16), default="offline")
     model: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="ok")
-    source: Mapped[str] = mapped_column(String(16), default="email")
-    node_timings: Mapped[dict] = mapped_column(JSON, default=dict)
-    trace: Mapped[dict] = mapped_column(JSON, default=dict)
+    data: Mapped[dict] = mapped_column(JSON)  # events, node_ms, settlements, approval, pending, error
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class CardRow(Base):
+    __tablename__ = "payment_cards"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    vendor_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
+    lane: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class DecisionRow(Base):
     __tablename__ = "decisions"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     run_id: Mapped[str] = mapped_column(String(64), index=True)
-    payment_id: Mapped[str] = mapped_column(String(64), index=True)
+    card_id: Mapped[str] = mapped_column(String(64), index=True)
+    lane: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(32))
-    risk: Mapped[str] = mapped_column(String(32))
-    trust_score: Mapped[int] = mapped_column(Integer)
-    reason: Mapped[str] = mapped_column(Text)
-    evidence: Mapped[list] = mapped_column(JSON)
+    reasons: Mapped[list] = mapped_column(JSON)
+    scorer: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    legitimacy: Mapped[float | None] = mapped_column(nullable=True)
+    lime: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -84,10 +87,10 @@ class PolicyRow(Base):
     __tablename__ = "policy_results"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     run_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
-    payment_id: Mapped[str] = mapped_column(String(64), index=True)
+    card_id: Mapped[str] = mapped_column(String(64), index=True)
     engine: Mapped[str] = mapped_column(String(32))
-    action: Mapped[str] = mapped_column(String(64))
     principal: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(64))
     allowed: Mapped[bool] = mapped_column(Boolean)
     reasons: Mapped[list] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -96,10 +99,10 @@ class PolicyRow(Base):
 class ApprovalRow(Base):
     __tablename__ = "approvals"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    payment_id: Mapped[str] = mapped_column(String(64), index=True)
-    action: Mapped[str] = mapped_column(String(16))
+    card_id: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(24))
     note: Mapped[str] = mapped_column(Text, default="")
-    author: Mapped[str] = mapped_column(String(80), default="Owner")
+    author: Mapped[str] = mapped_column(String(80), default="owner")
     policy_rule: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -107,21 +110,25 @@ class ApprovalRow(Base):
 class SettlementRow(Base):
     __tablename__ = "settlements"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # batch id
-    tx_id: Mapped[str] = mapped_column(String(80))
-    payment_ids: Mapped[list] = mapped_column(JSON)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    tx_id: Mapped[str] = mapped_column(String(120))
+    explorer_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    card_ids: Mapped[list] = mapped_column(JSON)
     total_cents: Mapped[int] = mapped_column(Integer)
-    funding: Mapped[str] = mapped_column(String(16))
+    funding: Mapped[str] = mapped_column(String(16), default="now")
     scheduled_for: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    network: Mapped[str] = mapped_column(String(40), default="USDC · Base (simulated)")
-    fee_cents: Mapped[int] = mapped_column(Integer, default=0)
+    adapter: Mapped[str] = mapped_column(String(24), default="mock")
+    network: Mapped[str] = mapped_column(String(60), default="mock")
+    lane: Mapped[str] = mapped_column(String(16), default="standard")
+    payments: Mapped[list] = mapped_column(JSON, default=list)
     settled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class DocumentRow(Base):
     __tablename__ = "intake_documents"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    payment_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
-    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    card_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     filename: Mapped[str] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(String(16))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
@@ -149,11 +156,30 @@ def make_engine(url: str) -> Engine:
     return create_engine(url, pool_pre_ping=True, future=True)
 
 
+def _json(obj: Any) -> Any:
+    return json.loads(json.dumps(obj, default=str))
+
+
 class AuditStore:
     def __init__(self, url: str) -> None:
         self.url = url
         self.engine = make_engine(url)
         Base.metadata.create_all(self.engine)
+
+    @classmethod
+    def open(cls, url: str, fallback_url: str | None = None) -> AuditStore:
+        """Open `url`; if it is unreachable (e.g. Postgres not running locally) fall back to SQLite."""
+        try:
+            store = cls(url)
+            ok, detail = store.ping()
+            if ok:
+                return store
+            raise RuntimeError(detail)
+        except Exception as exc:
+            if not fallback_url or fallback_url == url:
+                raise
+            log.warning("audit store %s unavailable (%s); using %s", _redact(url), exc, fallback_url)
+            return cls(fallback_url)
 
     @property
     def backend(self) -> str:
@@ -179,48 +205,7 @@ class AuditStore:
         except Exception as exc:
             return False, f"{type(exc).__name__}: {str(exc)[:120]}"
 
-    # ---- payments & vendors (API state) -----------------------------------
-    def save_payment(self, p: PaymentRecord) -> None:
-        with self.session() as s:
-            row = s.get(PaymentRow, p.id)
-            data = json.loads(p.model_dump_json(by_alias=True))
-            if row is None:
-                row = PaymentRow(
-                    id=p.id,
-                    vendor_id=p.vendor_id,
-                    status=p.status,
-                    lifecycle=p.lifecycle,
-                    received_at=p.received_at,
-                    data=data,
-                )
-                s.add(row)
-            else:
-                row.vendor_id, row.status, row.lifecycle, row.received_at, row.data = (
-                    p.vendor_id,
-                    p.status,
-                    p.lifecycle,
-                    p.received_at,
-                    data,
-                )
-            s.commit()
-
-    def load_payments(self) -> list[PaymentRecord]:
-        with self.session() as s:
-            rows = s.execute(select(PaymentRow).order_by(PaymentRow.received_at)).scalars().all()
-            return [PaymentRecord.model_validate(r.data) for r in rows]
-
-    def delete_all_payments(self) -> None:
-        with self.session() as s:
-            s.query(PaymentRow).delete()
-            s.commit()
-
-    def delete_payment(self, payment_id: str) -> None:
-        """Drop the queue row only; runs, decisions and policy results stay for the audit trail."""
-        with self.session() as s:
-            row = s.get(PaymentRow, payment_id)
-            if row is not None:
-                s.delete(row)
-                s.commit()
+    # ---- vendor master -----------------------------------------------------
 
     def save_vendors(self, vendors: list[Vendor]) -> None:
         with self.session() as s:
@@ -237,50 +222,112 @@ class AuditStore:
         with self.session() as s:
             return [Vendor.model_validate(r.data) for r in s.execute(select(VendorRow)).scalars().all()]
 
-    # ---- audit trail ---------------------------------------------------------
-    def start_run(self, llm_mode: str, model: str | None, source: str, payment_id: str | None = None) -> str:
-        run_id = new_id("run")
+    # ---- engine state: runs + cards ---------------------------------------
+
+    def save_run(self, run: Any, llm_mode: str = "offline", model: str | None = None) -> None:
+        """`run` is a `vouch.engine.Run`; its cards are stored one row each."""
+        data = {
+            "submissions": [sub.model_dump(mode="json") for sub in run.submissions],
+            "events": run.events,
+            "node_ms": run.node_ms,
+            "settlements": run.settlements,
+            "approval": run.approval,
+            "pending": run.pending,
+            "error": run.error,
+        }
         with self.session() as s:
+            row = s.get(RunRow, run.id)
+            if row is None:
+                s.add(
+                    RunRow(
+                        id=run.id,
+                        label=run.label,
+                        status=run.status,
+                        created_at=run.created_at,
+                        llm_mode=llm_mode,
+                        model=model,
+                        data=_json(data),
+                    )
+                )
+            else:
+                row.status, row.label, row.data = run.status, run.label, _json(data)
+            for card in run.card_list():
+                self._upsert_card(s, card)
+            s.commit()
+
+    def _upsert_card(self, s: Session, card: PaymentCard) -> None:
+        data = json.loads(card.model_dump_json())
+        row = s.get(CardRow, card.id)
+        lane = card.policy.lane.value if card.policy else None
+        if row is None:
             s.add(
-                RunRow(
-                    id=run_id,
-                    payment_id=payment_id,
-                    started_at=now(),
-                    llm_mode=llm_mode,
-                    model=model,
-                    source=source,
+                CardRow(
+                    id=card.id,
+                    run_id=card.run_id,
+                    vendor_id=card.invoice.vendor_id,
+                    status=card.status.value,
+                    lane=lane,
+                    data=data,
                 )
             )
-            s.commit()
-        return run_id
+        else:
+            row.vendor_id, row.status, row.lane, row.data = card.invoice.vendor_id, card.status.value, lane, data
 
-    def finish_run(
-        self, run_id: str, payment_id: str | None, status: str, node_timings: dict, trace: dict
-    ) -> None:
+    def load_runs(self) -> list[dict[str, Any]]:
+        """Runs with their cards, oldest first. The caller rebuilds `Run` objects (graph state is not kept)."""
         with self.session() as s:
-            row = s.get(RunRow, run_id)
-            if row:
-                row.finished_at, row.payment_id, row.status, row.node_timings, row.trace = (
-                    now(),
-                    payment_id,
-                    status,
-                    node_timings,
-                    trace,
-                )
-                s.commit()
+            runs = s.execute(select(RunRow).order_by(RunRow.created_at)).scalars().all()
+            cards = s.execute(select(CardRow).order_by(CardRow.id)).scalars().all()
+        by_run: dict[str, list[PaymentCard]] = {}
+        for c in cards:
+            by_run.setdefault(c.run_id, []).append(PaymentCard.model_validate(c.data))
+        return [
+            {
+                "id": r.id,
+                "label": r.label,
+                "status": r.status,
+                "created_at": r.created_at,
+                **r.data,
+                "cards": by_run.get(r.id, []),
+            }
+            for r in runs
+        ]
 
-    def record_decision(self, run_id: str, p: PaymentRecord) -> None:
+    def delete_runs(self, run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+        with self.session() as s:
+            for rid in run_ids:
+                for c in s.execute(select(CardRow).where(CardRow.run_id == rid)).scalars().all():
+                    s.delete(c)
+                row = s.get(RunRow, rid)
+                if row is not None:
+                    s.delete(row)
+            s.commit()
+
+    def delete_all_runs(self) -> None:
+        with self.session() as s:
+            s.query(CardRow).delete()
+            s.query(RunRow).delete()
+            s.commit()
+
+    # ---- audit trail ---------------------------------------------------------
+
+    def record_decision(self, card: PaymentCard) -> None:
+        if card.policy is None:
+            return
         with self.session() as s:
             s.add(
                 DecisionRow(
                     id=new_id("dec"),
-                    run_id=run_id,
-                    payment_id=p.id,
-                    status=p.status,
-                    risk=p.risk,
-                    trust_score=p.trust_score,
-                    reason=p.reason,
-                    evidence=[e.model_dump() for e in p.evidence],
+                    run_id=card.run_id,
+                    card_id=card.id,
+                    lane=card.policy.lane.value,
+                    status=card.status.value,
+                    reasons=list(card.policy.reasons),
+                    scorer=card.scores.scorer if card.scores else None,
+                    legitimacy=card.scores.legitimacy if card.scores else None,
+                    lime=_json(card.scores.lime[:6]) if card.scores else [],
                 )
             )
             s.commit()
@@ -288,7 +335,7 @@ class AuditStore:
     def record_policy(
         self,
         run_id: str | None,
-        payment_id: str,
+        card_id: str,
         engine: str,
         principal: str,
         action: str,
@@ -300,84 +347,102 @@ class AuditStore:
                 PolicyRow(
                     id=new_id("pol"),
                     run_id=run_id,
-                    payment_id=payment_id,
+                    card_id=card_id,
                     engine=engine,
                     principal=principal,
                     action=action,
                     allowed=allowed,
-                    reasons=reasons,
+                    reasons=list(reasons),
                 )
             )
             s.commit()
 
     def record_approval(
-        self, payment_id: str, action: str, note: str, author: str, policy_rule: str | None
+        self, card_id: str, action: str, note: str, author: str, policy_rule: str | None = None
     ) -> str:
         aid = new_id("apr")
         with self.session() as s:
             s.add(
                 ApprovalRow(
-                    id=aid,
-                    payment_id=payment_id,
-                    action=action,
-                    note=note,
-                    author=author,
-                    policy_rule=policy_rule,
+                    id=aid, card_id=card_id, action=action, note=note, author=author, policy_rule=policy_rule
                 )
             )
             s.commit()
         return aid
 
-    def has_owner_approval(self, payment_id: str) -> bool:
+    def has_owner_approval(self, card_id: str) -> bool:
         with self.session() as s:
             row = s.execute(
-                select(ApprovalRow).where(
-                    ApprovalRow.payment_id == payment_id, ApprovalRow.action == "approve"
-                )
+                select(ApprovalRow).where(ApprovalRow.card_id == card_id, ApprovalRow.action == "approve")
             ).first()
             return row is not None
 
     def record_settlement(
         self,
         batch_id: str,
+        run_id: str | None,
         tx_id: str,
-        payment_ids: list[str],
+        explorer_url: str | None,
+        card_ids: list[str],
         total_cents: int,
         funding: str,
         scheduled_for: str | None,
-        fee_cents: int = 0,
+        adapter: str,
+        network: str,
+        lane: str,
+        payments: list[dict[str, Any]],
     ) -> None:
         with self.session() as s:
+            if s.get(SettlementRow, batch_id) is not None:
+                return
             s.add(
                 SettlementRow(
                     id=batch_id,
+                    run_id=run_id,
                     tx_id=tx_id,
-                    payment_ids=payment_ids,
+                    explorer_url=explorer_url,
+                    card_ids=card_ids,
                     total_cents=total_cents,
                     funding=funding,
                     scheduled_for=scheduled_for,
-                    fee_cents=fee_cents,
+                    adapter=adapter,
+                    network=network,
+                    lane=lane,
+                    payments=_json(payments),
                 )
             )
             s.commit()
 
-    def last_settlement(self) -> dict | None:
+    def settlements(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.session() as s:
-            row = s.execute(select(SettlementRow).order_by(SettlementRow.settled_at.desc())).scalars().first()
-            if not row:
-                return None
-            return {
-                "batch_id": row.id,
-                "tx_id": row.tx_id,
-                "payment_ids": row.payment_ids,
-                "total_cents": row.total_cents,
-                "settled_at": row.settled_at.isoformat(),
-            }
+            rows = (
+                s.execute(select(SettlementRow).order_by(SettlementRow.settled_at.desc()).limit(limit))
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "batch_id": r.id,
+                    "run_id": r.run_id,
+                    "tx_id": r.tx_id,
+                    "explorer_url": r.explorer_url,
+                    "card_ids": r.card_ids,
+                    "total_cents": r.total_cents,
+                    "funding": r.funding,
+                    "scheduled_for": r.scheduled_for,
+                    "adapter": r.adapter,
+                    "network": r.network,
+                    "lane": r.lane,
+                    "payments": r.payments,
+                    "settled_at": r.settled_at.isoformat(),
+                }
+                for r in rows
+            ]
 
     def record_document(
         self,
         run_id: str | None,
-        payment_id: str | None,
+        card_id: str | None,
         filename: str,
         kind: str,
         sha256: str,
@@ -390,7 +455,7 @@ class AuditStore:
                 DocumentRow(
                     id=new_id("doc"),
                     run_id=run_id,
-                    payment_id=payment_id,
+                    card_id=card_id,
                     filename=filename,
                     kind=kind,
                     sha256=sha256,
@@ -415,9 +480,9 @@ class AuditStore:
     def counts(self) -> dict[str, int]:
         with self.session() as s:
             return {
-                "payments": s.query(PaymentRow).count(),
                 "vendors": s.query(VendorRow).count(),
                 "runs": s.query(RunRow).count(),
+                "payment_cards": s.query(CardRow).count(),
                 "decisions": s.query(DecisionRow).count(),
                 "policy_results": s.query(PolicyRow).count(),
                 "approvals": s.query(ApprovalRow).count(),
@@ -426,39 +491,26 @@ class AuditStore:
                 "embedding_cache": s.query(EmbeddingCacheRow).count(),
             }
 
-    def audit_trail(self, payment_id: str) -> dict[str, Any]:
+    def audit_trail(self, card_id: str) -> dict[str, Any]:
         with self.session() as s:
-            runs = s.execute(select(RunRow).where(RunRow.payment_id == payment_id)).scalars().all()
-            decisions = (
-                s.execute(select(DecisionRow).where(DecisionRow.payment_id == payment_id)).scalars().all()
-            )
-            policies = s.execute(select(PolicyRow).where(PolicyRow.payment_id == payment_id)).scalars().all()
-            approvals = (
-                s.execute(select(ApprovalRow).where(ApprovalRow.payment_id == payment_id)).scalars().all()
-            )
-            docs = s.execute(select(DocumentRow).where(DocumentRow.payment_id == payment_id)).scalars().all()
+            decisions = s.execute(select(DecisionRow).where(DecisionRow.card_id == card_id)).scalars().all()
+            policies = s.execute(select(PolicyRow).where(PolicyRow.card_id == card_id)).scalars().all()
+            approvals = s.execute(select(ApprovalRow).where(ApprovalRow.card_id == card_id)).scalars().all()
+            docs = s.execute(select(DocumentRow).where(DocumentRow.card_id == card_id)).scalars().all()
+            settlements = [
+                r for r in s.execute(select(SettlementRow)).scalars().all() if card_id in (r.card_ids or [])
+            ]
             return {
-                "runs": [
-                    {
-                        "id": r.id,
-                        "llm_mode": r.llm_mode,
-                        "model": r.model,
-                        "status": r.status,
-                        "started_at": r.started_at.isoformat(),
-                        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-                        "node_timings": r.node_timings,
-                        "trace": r.trace,
-                    }
-                    for r in runs
-                ],
                 "decisions": [
                     {
                         "id": d.id,
                         "run_id": d.run_id,
+                        "lane": d.lane,
                         "status": d.status,
-                        "risk": d.risk,
-                        "trust_score": d.trust_score,
-                        "reason": d.reason,
+                        "reasons": d.reasons,
+                        "scorer": d.scorer,
+                        "legitimacy": d.legitimacy,
+                        "lime": d.lime,
                         "at": d.created_at.isoformat(),
                     }
                     for d in decisions
@@ -485,6 +537,18 @@ class AuditStore:
                     }
                     for a in approvals
                 ],
+                "settlements": [
+                    {
+                        "batch_id": r.id,
+                        "tx_id": r.tx_id,
+                        "explorer_url": r.explorer_url,
+                        "network": r.network,
+                        "adapter": r.adapter,
+                        "total_cents": r.total_cents,
+                        "settled_at": r.settled_at.isoformat(),
+                    }
+                    for r in settlements
+                ],
                 "documents": [
                     {
                         "filename": d.filename,
@@ -500,3 +564,10 @@ class AuditStore:
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)
         Base.metadata.create_all(self.engine)
+
+
+def _redact(url: str) -> str:
+    if "@" in url and "://" in url:
+        scheme, rest = url.split("://", 1)
+        return f"{scheme}://***@{rest.rsplit('@', 1)[-1]}"
+    return url

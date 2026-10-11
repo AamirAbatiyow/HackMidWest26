@@ -1,24 +1,57 @@
-# Python / uv
-.venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-build/
-dist/
-
-# Local state (SQLite, attachments, embedding cache). Synthetic samples live in
-# projects/vouch/samples and ARE committed.
-data/
-*.sqlite3
-*.sqlite3-journal
-
-# Secrets - never commit the inference key or Linode token.
+# Secrets - never commit the inference key, Linode token, wallet seeds or kubeconfigs.
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+secrets/
+kubeconfig*
+.kubeconfig*
+infra/k8s/**/secret.yaml
+
+# Python / uv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local runtime state (SQLite, attachments, embedding cache, agent sessions).
+data/raw/*
+data/interim/*
+data/processed/*
+data/attachments/
+!data/**/.gitkeep
+*.sqlite3
+*.sqlite3-journal
+.sessions/
+*.log
+
+# Model weights: only the shipped vouch-risk bundles (~240 KB each) are tracked.
+artifacts/*
+!artifacts/models/
+artifacts/models/*
+!artifacts/models/vouch-risk/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+*.keras
+*.joblib
+*.safetensors
+mlruns/
+wandb/
+
+# Notebooks
+.ipynb_checkpoints/
 
 # Terraform
 **/.terraform/
@@ -29,4 +62,10 @@ data/
 *.tfvars.json
 !*.tfvars.example
 *.tfplan
+tfplan
 crash.log
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
