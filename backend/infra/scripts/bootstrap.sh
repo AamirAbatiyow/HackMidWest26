@@ -18,4 +18,16 @@ case "${1:-base}" in
 esac
 
 uv run --all-packages pre-commit install >/dev/null 2>&1 || true
+
+# Image invoices (PNG/JPEG, scanned PDFs) need the Tesseract binary; pytesseract alone reads nothing.
+if ! command -v tesseract >/dev/null; then
+  if command -v apt-get >/dev/null; then
+    echo "installing tesseract-ocr (image invoice OCR)..."
+    sudo_cmd=""; [[ $EUID -ne 0 ]] && command -v sudo >/dev/null && sudo_cmd="sudo"
+    $sudo_cmd apt-get install -y -qq tesseract-ocr tesseract-ocr-eng \
+      || echo "warning: could not install tesseract-ocr; image invoices will be held as unreadable"
+  else
+    echo "warning: tesseract not found (brew install tesseract / apt-get install tesseract-ocr tesseract-ocr-eng)"
+  fi
+fi
 echo "ready: edit .env (AKAMAI_INFERENCE_API_KEY), then 'make test', 'make demo-vouch' and 'make run-vouch'"

@@ -1,6 +1,8 @@
 # App Linode: only the API container. Postgres and Object Storage are Akamai managed services and the
 # risk model runs on the private model Linode; all of that comes in through .env (see cloud-init-app).
 #   cd backend && docker compose -f infra/compose/akamai-app.yml up -d --build
+# The image carries tesseract-ocr + tesseract-ocr-eng (Dockerfile OCR=1): image invoices are OCRed in
+# this container, so a host-level apt install does not help it. Check: curl :8101/v1/health | jq .ocr
 services:
   api:
     build:
@@ -9,6 +11,7 @@ services:
       args:
         PROJECT: vouch
         EXTRAS: --extra ml --extra cedar
+        OCR: "1"
     env_file:
       - ../../.env
     environment:

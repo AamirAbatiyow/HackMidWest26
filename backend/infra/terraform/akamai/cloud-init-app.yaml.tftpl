@@ -11,6 +11,10 @@ packages:
   - make
   - curl
   - jq
+  # OCR for image invoices. The API container brings its own copy (infra/docker/python-app.Dockerfile,
+  # OCR=1); the host copy serves `uv run vouch-api` outside Docker and `tesseract --version` checks.
+  - tesseract-ocr
+  - tesseract-ocr-eng
 %{ if run_proxy ~}
   - tinyproxy
 %{ endif ~}
@@ -75,6 +79,9 @@ write_files:
       if [ ! -f .env ]; then cp /opt/vouch/env.terraform .env; fi
       docker compose -f infra/compose/akamai-app.yml up -d --build
       echo "vouch api started on :${api_port}"
+      # Image invoices need tesseract inside the container; a boot that fails this is caught by verify_deploy.sh.
+      docker compose -f infra/compose/akamai-app.yml exec -T api tesseract --version | head -1 \
+        || echo "WARNING: tesseract missing in the api image; PNG/JPEG invoices will be held as unreadable"
 
 runcmd:
   - systemctl enable --now docker

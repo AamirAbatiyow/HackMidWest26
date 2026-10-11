@@ -37,11 +37,19 @@ if echo "$probe" | jq -e '.status == "ok"' >/dev/null 2>&1; then
 else
   bad "/v1/health did not return status ok: $probe"
 fi
+# image invoices (PNG/JPEG) need tesseract inside the API container; without it they are held with amount 0
+ocr_state=$(echo "$probe" | jq -r '.ocr.state // "missing"')
+ocr_detail=$(echo "$probe" | jq -r '.ocr.detail // ""')
+if [[ "$ocr_state" == "live" ]]; then
+  ok "OCR engine in the API container: $ocr_detail"
+else
+  bad "OCR engine $ocr_state in the API container ($ocr_detail): rebuild the api image (Dockerfile OCR=1) or apt-get install tesseract-ocr tesseract-ocr-eng in it"
+fi
 
 # 3. roles: which Akamai services are live
 health=$(get /health)
 if echo "$health" | jq -e '.status' >/dev/null 2>&1; then
-  for role in inference embeddings model_server database object_storage nodebalancer firewall vpc settlement risk_model policy_engine; do
+  for role in inference embeddings model_server database object_storage nodebalancer firewall vpc settlement risk_model policy_engine ocr; do
     state=$(echo "$health" | jq -r --arg r "$role" '.[$r].state // "missing"')
     detail=$(echo "$health" | jq -r --arg r "$role" '.[$r].detail // ""')
     case "$state" in
