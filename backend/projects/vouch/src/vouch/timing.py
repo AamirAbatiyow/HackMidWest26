@@ -21,7 +21,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
@@ -120,7 +120,7 @@ TIMING = TimingRegistry()
 
 
 @contextmanager
-def timed(step: str, registry: TimingRegistry | None = None) -> Iterator[None]:
+def timed(step: str, registry: TimingRegistry | None = None) -> Generator[None, None, None]:
     """Context manager that records elapsed time in milliseconds to the registry.
 
     Safe: catches all exceptions from the timing machinery itself.

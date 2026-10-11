@@ -55,25 +55,44 @@ deterministic_route(probes)                     # MIME, extension, magic bytes, 
 class StrictDecisionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+
 class FormatDecision(StrictDecisionModel):
-    answer: Literal["pdf_attachment", "image_attachment", "excel_attachment",
-                    "csv_attachment", "email_body_text", "unreadable_or_unsupported"]
-    reason_code: Literal["mime_type", "file_extension", "file_signature", "text_layer",
-                         "body_text", "no_usable_content", "unsure", "not_stated"]
+    answer: Literal[
+        "pdf_attachment",
+        "image_attachment",
+        "excel_attachment",
+        "csv_attachment",
+        "email_body_text",
+        "unreadable_or_unsupported",
+    ]
+    reason_code: Literal[
+        "mime_type",
+        "file_extension",
+        "file_signature",
+        "text_layer",
+        "body_text",
+        "no_usable_content",
+        "unsure",
+        "not_stated",
+    ]
+
 
 class ToolDecision(StrictDecisionModel):
-    format: Format            # pinned to the question-1 answer via ToolDecision.for_format(fmt)
-    answer: Literal["pdf_text", "image_ocr", "excel_reader", "csv_reader",
-                    "body_parser", "request_resubmission"]
+    format: Format  # pinned to the question-1 answer via ToolDecision.for_format(fmt)
+    answer: Literal[
+        "pdf_text", "image_ocr", "excel_reader", "csv_reader", "body_parser", "request_resubmission"
+    ]
     reason_code: ToolBasis
 
     @model_validator(mode="after")
-    def _tool_fits_format(self):   # csv_reader only for csv_attachment, OCR only for images/PDFs, ...
+    def _tool_fits_format(self):  # csv_reader only for csv_attachment, OCR only for images/PDFs, ...
         ...
 
+
 class KickbackDecision(StrictDecisionModel):
-    answer: Literal["unsupported_format", "unreadable_scan", "empty_submission",
-                    "missing_fields", "ambiguous_submission"]   # selects a fixed reply template
+    answer: Literal[
+        "unsupported_format", "unreadable_scan", "empty_submission", "missing_fields", "ambiguous_submission"
+    ]  # selects a fixed reply template
     reason_code: KickbackBasis
 ```
 

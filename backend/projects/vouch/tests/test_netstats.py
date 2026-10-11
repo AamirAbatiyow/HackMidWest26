@@ -27,10 +27,10 @@ class TestRingStats:
     def test_single_sample(self):
         ring = RingStats("test", max_size=10)
         ring.record(42.5)
-        assert ring.p50() == 42.5
-        assert ring.p95() == 42.5
+        assert ring.p50() == pytest.approx(42.5)
+        assert ring.p95() == pytest.approx(42.5)
         assert ring.count() == 1
-        assert ring.latest() == 42.5
+        assert ring.latest() == pytest.approx(42.5)
 
     def test_multiple_samples_percentiles(self):
         ring = RingStats("test", max_size=100)
@@ -39,14 +39,14 @@ class TestRingStats:
         assert ring.count() == 100
         assert 49.0 <= ring.p50() <= 52.0
         assert 94.0 <= ring.p95() <= 96.0
-        assert ring.latest() == 100.0
+        assert ring.latest() == pytest.approx(100.0)
 
     def test_ring_buffer_eviction(self):
         ring = RingStats("test", max_size=5)
         for i in range(1, 11):
             ring.record(float(i))
         assert ring.count() == 5
-        assert ring.latest() == 10.0
+        assert ring.latest() == pytest.approx(10.0)
         assert 6.0 <= ring.p50() <= 10.0
 
     def test_stats_dict(self):
