@@ -2,21 +2,23 @@
 
 **Every payment, vouched for.**
 
-Vouch is an invoice-payment trust layer for small businesses making irreversible vendor payouts. It reads invoices from email or file uploads, classifies risk, explains every decision with LIME, and settles approved payments on the XRPL testnet—but only after the business owner approves.
+Vouch is a fintech trust layer for small businesses that pay vendors. It sits between your inbox and your payment rails, reads invoices from email or file uploads, classifies risk, explains every decision, and settles approved payments on the XRPL testnet—but only after you approve.
 
 ## The Problem
 
-Dana runs Heartland Provisions, a 40-person food wholesaler in Kansas City. Every Friday she pays vendors in four countries. Stablecoin payouts settle in seconds for pennies—and they cannot be pulled back. One "we changed banks, please pay today" email can wipe out a month of margin.
+Dana runs Heartland Provisions, a 40-person food wholesaler in Kansas City. Every Friday she pays vendors in four countries. Stablecoin payouts settle in seconds for pennies—and they cannot be pulled back. One "we changed our account details, please pay today" email can wipe out a month of margin.
 
-Today she checks every invoice by hand, so honest vendors wait. Vouch automates the trust decision so good invoices move fast and bad ones stop before the wire.
+The [LexisNexis True Cost of Fraud 2026 study](https://risk.lexisnexis.com/about-us/press-room/press-release/20260624-tcof-retail-and-commerce) (retail and e-commerce, North America) found that every $1 of direct fraud loss costs US merchants about $5.13 once you include chargebacks, fees, labor, and merchandise replacement. For a small business owner like Dana, the real cost of a single fraudulent wire isn't just the stolen amount—it's the weeks spent chasing it.
+
+Today she checks every invoice by hand, so honest vendors wait. Vouch automates the trust decision so good invoices move fast and bad ones stop before the wire. It's built for business owners who approve payments, not for the payment rails themselves—though payment platforms could offer Vouch to their business customers in the future.
 
 ### Three Threat Types
 
 | Threat | Pattern | Example |
 |--------|---------|---------|
-| **ATO / BEC** | A real vendor's identity is hijacked; the attacker changes bank details and adds urgency | "Sonora Fresh Produce" email from a lookalike domain says *urgent, new bank in Hong Kong, the owner pre-approved this* |
+| **ATO / BEC** | A real vendor's identity is hijacked; the attacker changes remittance details and adds urgency | "Sonora Fresh Produce" email from a lookalike domain says *urgent, new account in Hong Kong, the owner pre-approved this* |
 | **Insider Abuse** | An employee submits duplicates, splits invoices under the approval limit, or creeps amounts over time | The same invoice paid 9 days ago is re-submitted with a trailing "A" suffix |
-| **Fake / Synthetic Vendors** | Shell vendors created to siphon money; often share a bank account, phone, or PO box | Three "vendors" with different names all remit to the same Kansas City bank account |
+| **Fake / Synthetic Vendors** | Shell vendors created to siphon money; often share an account, phone, or PO box | Three "vendors" with different names all remit to the same Kansas City account |
 
 Vouch detects all three. A hold is never a denial: every hold has a resolution path (call-back to the number on file, owner review, or vendor appeal).
 
@@ -154,11 +156,11 @@ The Terraform config creates a VPC with three subnets, Cloud Firewalls, a NodeBa
 The demo seeds six invoices from Dana's Friday vendor run:
 
 1. **Prairie Packaging Supply** — verified, small, fast-pay eligible → **PAID** instantly on XRPL
-2. **Rheinland Gewürze GmbH** — bank changed last month, but confirmed by call-back → **STANDARD**, 2/10 discount recommended
+2. **Rheinland Gewürze GmbH** — account details changed last month, but confirmed by call-back → **STANDARD**, 2/10 discount recommended
 3. **Bao Lin Ceramics** — new small vendor, PDF text invoice → **STANDARD**, legitimacy 97%, not punished for being new
-4. **Sonora Fresh Produce** — ATO/BEC: new offshore bank, lookalike domain, urgency, prompt injection → **HOLD**, call-back required
+4. **Sonora Fresh Produce** — ATO/BEC: new offshore account, lookalike domain, urgency, prompt injection → **HOLD**, call-back required
 5. **Midwest Facility Services** — duplicate of an invoice paid 9 days ago → **HOLD**
-6. **Apex Global Trading LLC** — fake vendor ring: shares bank account with two other "vendors" → **HOLD**
+6. **Apex Global Trading LLC** — fake vendor ring: shares a remittance account with two other "vendors" → **HOLD**
 
 The owner reviews holds, approves the clean invoices, and settlement happens as one atomic XRPL `Batch` transaction.
 

@@ -171,11 +171,11 @@ The red-team module (`redteam.py`) runs 24 adversarial cases against `ScriptedMo
 
 | Category | Example Cases |
 |----------|---------------|
-| **Injection** | "pre-approved by the owner", bank swap in invoice text, classifier injection |
-| **LLM Output** | Invented amounts, wrong number, invented bank, explainer claims paid |
+| **Injection** | "pre-approved by the owner", account swap in invoice text, classifier injection |
+| **LLM Output** | Invented amounts, wrong number, invented account details, explainer claims paid |
 | **Approval** | Smuggled `approved: true`, forged card ids, type confusion |
 | **Limits** | Line-item tamper, CEO fraud over limit, batch limit exceeded |
-| **Identity** | Confirm bank with attacker's phone, lookalike domain, ambiguous vendor |
+| **Identity** | Confirm account change with attacker's phone, lookalike domain, ambiguous vendor |
 | **Policy** | Cedar: model cannot act, system cannot deny or edit |
 
 Every case passes when the attack is blocked: no unauthorized money moves, the tampered value never reaches settlement. The suite runs in ~12 seconds on CPU.
