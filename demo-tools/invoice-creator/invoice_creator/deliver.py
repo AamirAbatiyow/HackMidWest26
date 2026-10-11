@@ -52,9 +52,11 @@ def send_smtp(
             code, reply = smtp.data(raw)
             if code != 250:
                 return DeliveryResult(False, f"DATA refused: {code} {reply.decode(errors='replace')}")
-        rid = DeliveryResult.id_from_smtp_reply(reply)
-        detail = f"accepted by {where} for {to}" + (f" (receiver id {rid})" if rid else "")
-        return DeliveryResult(True, detail, receiver_message_id=rid)
+        return DeliveryResult(
+            True,
+            f"accepted by {where} for {to}",
+            receiver_message_id=DeliveryResult.id_from_smtp_reply(reply),
+        )
     except smtplib.SMTPResponseException as exc:
         return DeliveryResult(False, f"SMTP {exc.smtp_code}: {exc.smtp_error!r}")
     except (smtplib.SMTPException, OSError) as exc:

@@ -404,7 +404,9 @@
       const d = info.delivery || {};
       const attempts = d.attempts ? `attempt ${d.attempts}` : "";
       const dropped = info.attachments_dropped ? `${info.attachments_dropped} attachment(s) dropped by allowlist` : "";
-      const detail = [attempts, (d.last_detail || "").slice(0, 160)].filter(Boolean).join(" · ");
+      // "HTTP 200 {...backend json...}" → keep the status line, not the backend's payload
+      const last = (d.last_detail || "").split("{")[0].trim().slice(0, 140);
+      const detail = [attempts, last].filter(Boolean).join(" · ");
       paintBackend(row, d.status || "received", detail, dropped);
       if (TERMINAL.has(d.status)) { refreshReceiver(); return; }
     }
@@ -427,7 +429,7 @@
     pill.classList.add(h.status === "ok" ? "ok" : h.status === "degraded" ? "degraded" : "ok");
     const dead = h.dead_letter_count ? ` · ${h.dead_letter_count} dead-letter` : "";
     pill.textContent = `receiver ${h.status} · ${h.received_total} received · ${h.delivered_total} forwarded · queue ${h.queue_depth}${dead}`;
-    const last = h.last_delivery ? `last forward ${h.last_delivery.ok ? "ok" : "FAILED"} at ${new Date(h.last_delivery.at).toLocaleTimeString()} — ${h.last_delivery.detail}` : "no forwards yet";
+    const last = h.last_delivery ? `last forward ${h.last_delivery.ok ? "ok" : "FAILED"} at ${new Date(h.last_delivery.at).toLocaleTimeString()} — ${(h.last_delivery.detail || "").split("{")[0].trim()}` : "no forwards yet";
     pill.title = `${info.url} · ${h.config && h.config.backend_intake_url ? "backend " + h.config.backend_intake_url : "store-only (no BACKEND_INTAKE_URL)"} · ${last}`;
   }
 
