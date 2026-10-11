@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 export const STATUS_META: Record<VouchStatus, { label: string; code: string; description: string }> = {
   vouched: { label: 'Vouched', code: 'VCH', description: 'Checked and explained. Clear to pay.' },
   quick_check: { label: 'Quick check', code: 'QCK', description: 'Held for a quick check.' },
-  verify: { label: 'Verify before release', code: 'VER', description: 'Call-back required before release.' },
+  verify: { label: 'Verify', code: 'VER', description: 'Call the vendor before paying.' },
 }
 
 /** Row left-border and tag colors per status. Green = clear, amber = needs a look. */
@@ -15,7 +15,7 @@ export const STATUS_TONE: Record<VouchStatus, { tag: string; border: string }> =
 }
 
 const lifecycleMeta: Partial<Record<Lifecycle, { label: string; code: string; className: string }>> = {
-  held: { label: 'On hold', code: 'HLD', className: 'border-border text-muted-foreground' },
+  held: { label: 'Held', code: 'HLD', className: 'border-border text-muted-foreground' },
   settled: { label: 'Settled', code: 'STL', className: 'border-border text-muted-foreground' },
   approved: { label: 'Verified', code: 'VRF', className: 'border-green/50 bg-green-soft text-green' },
 }

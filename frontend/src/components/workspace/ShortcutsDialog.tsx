@@ -3,9 +3,9 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { SHORTCUTS, type ShortcutId } from '@/lib/shortcuts'
 
 const GROUPS: { title: string; ids: ShortcutId[] }[] = [
-  { title: 'Navigate', ids: ['next', 'prev', 'open', 'close', 'search', 'palette', 'help'] },
-  { title: 'Act', ids: ['check', 'approve', 'hold', 'verify', 'appeal', 'explain'] },
-  { title: 'Views', ids: ['goPayments', 'goApprove', 'goFairness', 'goNetwork', 'goRedTeam', 'goTokens', 'feed', 'theme'] },
+  { title: 'Move', ids: ['next', 'prev', 'open', 'close', 'search', 'palette'] },
+  { title: 'Act', ids: ['approve', 'hold', 'verify', 'explain'] },
+  { title: 'Go to', ids: ['goPayments', 'goApprove', 'theme'] },
 ]
 
 export function ShortcutsDialog() {
@@ -17,10 +17,10 @@ export function ShortcutsDialog() {
   }, [])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="w-[640px] max-w-[92vw] gap-0 border bg-popover p-0" showCloseButton={false}>
+      <DialogContent className="w-[520px] max-w-[92vw] gap-0 border bg-popover p-0" showCloseButton={false}>
         <div className="flex h-8 items-center justify-between border-b px-3">
           <DialogTitle className="text-sm font-medium">Keyboard shortcuts</DialogTitle>
-          <DialogDescription className="num text-2xs text-muted-foreground">esc closes</DialogDescription>
+          <DialogDescription className="num text-2xs text-muted-foreground">esc</DialogDescription>
         </div>
         <div className="grid grid-cols-3 divide-x">
           {GROUPS.map((g) => (

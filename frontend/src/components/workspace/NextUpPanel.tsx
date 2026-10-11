@@ -1,4 +1,3 @@
-import { formatMoney } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePayments } from '@/store/PaymentsProvider'
 import { useUi } from '@/store/UiProvider'
@@ -14,36 +13,26 @@ export function NextUpPanel({ className }: { className?: string }) {
 
   return (
     <aside className={cn('flex min-h-0 flex-col bg-background', className)} aria-label="Next up">
-      <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b px-3">
+      <header className="flex h-8 shrink-0 items-center border-b px-3">
         <h2 className="text-sm font-medium">Next up</h2>
-        <span className="num text-2xs text-muted-foreground">{openRows.length} open</span>
       </header>
       <div className="px-3 py-1">
         <div className="flex h-6 items-center justify-between border-b text-xs">
-          <span className="text-muted-foreground">Need your decision</span>
-          <span className="num text-foreground">
-            {needsAction.length} · {formatMoney(needsAction.reduce((s, p) => s + p.amount, 0))}
-          </span>
+          <span className="text-muted-foreground">Needs you</span>
+          <span className="num text-foreground">{needsAction.length}</span>
         </div>
         <div className="flex h-6 items-center justify-between border-b text-xs">
-          <span className="text-green">Ready to approve</span>
-          <span className="num text-green">
-            {batchReady.length} · {formatMoney(batchReady.reduce((s, p) => s + p.amount, 0))}
-          </span>
+          <span className="text-green">Ready to pay</span>
+          <span className="num text-green">{batchReady.length}</span>
         </div>
         {next && (
           <button type="button" className="flex h-6 w-full items-center justify-between text-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={() => open(next.id)}>
-            <span className="text-muted-foreground">First to review</span>
-            <span className="num text-foreground">
-              {next.vendor.name} · {next.invoiceNumber}
-            </span>
+            <span className="text-muted-foreground">Review first</span>
+            <span className="text-foreground">{next.vendor.name}</span>
           </button>
         )}
       </div>
       <p className="num flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-3 py-2 text-2xs text-muted-foreground">
-        <span>
-          <Shortcut id="next" /> <Shortcut id="prev" /> move
-        </span>
         <span>
           <Shortcut id="open" /> open
         </span>
@@ -51,10 +40,7 @@ export function NextUpPanel({ className }: { className?: string }) {
           <Shortcut id="approve" /> approve
         </span>
         <span>
-          <Shortcut id="hold" /> hold
-        </span>
-        <span>
-          <Shortcut id="help" /> all
+          <Shortcut id="help" /> shortcuts
         </span>
       </p>
     </aside>
