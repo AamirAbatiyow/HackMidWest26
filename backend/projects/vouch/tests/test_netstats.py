@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 from vouch import main
 from vouch.audit import AuditStore
+from vouch.demo import demo_submissions
+from vouch.pipeline import execute
 from vouch.service import VouchService
 from vouch.timing import TIMING, RingStats, TimingRegistry, timed, timed_decorator
 
@@ -360,3 +362,41 @@ class TestNetstatsAPI:
         assert "label" in firewall
         assert "configured" in firewall
         assert "rules" in firewall
+
+
+class TestPipelineTimingRecording:
+    """After one pipeline run, GET /v1/latency should show non-null stats for mapped steps."""
+
+    def test_latency_populated_after_pipeline_run(self, settings, tmp_path):
+        from datetime import date
+
+        TIMING.clear()
+        settings = settings.model_copy(update={"data_dir": tmp_path, "seed_demo": False})
+        service = VouchService(settings, store=AuditStore("sqlite://"), seed_demo=False, restore=False)
+        service.seed(run_demo=True, background_vendors=10)
+        main.set_service(service)
+        try:
+            engine = service.engine
+            run = execute(engine, engine.new_run(demo_submissions(date(2026, 10, 10))))
+            client = TestClient(main.app)
+            response = client.get("/v1/latency")
+            assert response.status_code == 200
+            data = response.json()
+
+            steps_needing_data = ["reader", "sender_check", "vendor_resolution", "scorer", "policy", "writer"]
+            for step in steps_needing_data:
+                stat = data["pipeline_steps"][step]
+                assert stat["count"] >= 1, f"{step} should have count >= 1"
+                assert stat["latest_ms"] is not None, f"{step} should have latest_ms"
+
+            for detector in ["detector_amount", "detector_bank", "detector_duplicate", "detector_ring"]:
+                stat = data["pipeline_steps"][detector]
+                assert stat["count"] >= 1, f"{detector} should have count >= 1"
+
+            waterfall = data.get("last_run_waterfall")
+            assert waterfall is not None and waterfall["run_id"] == run.id
+            for entry in waterfall["steps"]:
+                if entry["step"] in steps_needing_data:
+                    assert entry["latency_ms"] is not None, f"waterfall {entry['step']} should have latency_ms"
+        finally:
+            main.set_service(None)

@@ -32,9 +32,20 @@ from strands.telemetry.metrics import EventLoopMetrics
 
 from hm_agents_common.approval import approval_responses, normalize_approval
 from vouch.engine import Run, VouchEngine
+from vouch.timing import TIMING
 
 APPROVAL_INTERRUPT = "owner_approval"
 LLM_NODES = {"intake", "investigate", "explain"}
+
+NODE_TO_STEPS: dict[str, list[str]] = {
+    "intake": ["reader"],
+    "sender": ["sender_check"],
+    "resolve": ["vendor_resolution"],
+    "kernel": ["detector_amount", "detector_bank", "detector_duplicate", "detector_ring"],
+    "score": ["scorer"],
+    "policy": ["policy"],
+    "explain": ["writer"],
+}
 
 
 class StageNode(MultiAgentBase):
@@ -58,6 +69,12 @@ class StageNode(MultiAgentBase):
         ms = int((time.perf_counter() - t0) * 1000)
         run.node_ms[self.id] = run.node_ms.get(self.id, 0) + ms
         self.service.time(f"node:{self.id}", ms)
+        try:
+            for step in NODE_TO_STEPS.get(self.id, []):
+                TIMING.record(step, ms)
+                TIMING.record(f"run:{run.id}:{step}", ms)
+        except Exception:
+            pass
         usage = {
             "inputTokens": stats.input_tokens - before[0],
             "outputTokens": stats.output_tokens - before[1],
