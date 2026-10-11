@@ -15,8 +15,15 @@ class SettlementSettings(HMSettings):
     xrpl_network_url: str = "https://s.altnet.rippletest.net:51234"
     xrpl_wallet_seed: SecretStr = SecretStr("")
     xrpl_destination_address: str = ""
+    # IOU / issued-currency settings (stablecoin-style token on testnet).
+    # The issuer is the account that issued the token; receivers must have a trustline to it.
+    # Currency code: 3-char ISO (USD, EUR) or 40-hex for longer codes (RLUSD = 524C555344...).
+    xrpl_iou_issuer: str = ""
+    xrpl_iou_currency: str = "USD"
+    # When true, payments use the IOU; when false or issuer is empty, falls back to XRP drops.
+    xrpl_use_iou: bool = True
     # Testnet demo scaling: invoices are in USD, testnet faucets hand out ~100 XRP.
-    # 0.0001 XRP per USD means a $48,000 batch moves 4.8 test XRP.
+    # 0.0001 XRP per USD means a $48,000 batch moves 4.8 test XRP. Only used for XRP fallback.
     xrpl_xrp_per_usd: Decimal = Decimal("0.0001")
     # Use the XLS-56 Batch transaction (all-or-nothing) for multi-payment batches when available.
     xrpl_use_batch: bool = True

@@ -534,6 +534,15 @@ def receipt_view(
         )
     total = sum(c.payable_cents for _, c in cards)
     simulated = adapter_name == "mock"
+    if adapter_name == "xrpl":
+        if "USD" in network or "IOU" in network.upper():
+            network_label = f"XRPL Testnet · {network.split('-')[-1].upper()} IOU"
+        elif "xrp" in network.lower():
+            network_label = "XRPL Testnet · XRP"
+        else:
+            network_label = "XRPL Testnet"
+    else:
+        network_label = f"{network} (simulated)"
     return {
         "batch_id": batch_id,
         "tx_id": tx_id,
@@ -544,7 +553,7 @@ def receipt_view(
         "total_amount": total / 100,
         "total_cents": total,
         "lines": lines,
-        "network": "XRPL testnet (real transactions)" if adapter_name == "xrpl" else f"{network} (simulated)",
+        "network": network_label,
         "adapter": adapter_name,
         "simulated": simulated,
         "fee_usd": 0,

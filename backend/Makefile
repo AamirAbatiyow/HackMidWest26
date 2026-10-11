@@ -11,7 +11,7 @@ TF_DIR := infra/terraform/akamai
 
 .PHONY: help setup setup-min setup-agents setup-all lint format test check \
         run-vouch serve-vouch train-vouch dev-vouch demo-vouch demo-vouch-files demo-vouch-xrpl redteam-vouch \
-        smoke-llm samples xrpl-wallets up down logs smoke \
+        smoke-llm samples xrpl-wallets xrpl-smoke up down logs smoke \
         tf-init tf-validate tf-plan deploy-akamai destroy-akamai verify-akamai tail-logs clean
 
 help: ## Show targets
@@ -82,8 +82,11 @@ smoke-llm: ## Live Akamai inference smoke (chat + embeddings); skips cleanly whe
 samples: ## Regenerate projects/vouch/samples (synthetic .eml / PDF / XLSX / PNG / CSV invoices)
 	$(RUN) vouch-make-samples
 
-xrpl-wallets: ## Fund two XRPL testnet faucet wallets and write SETTLEMENT_ADAPTER=xrpl + seeds into .env (never commit .env)
+xrpl-wallets: ## Fund two XRPL testnet faucet wallets, set up IOU trustlines and write XRPL_* vars into .env (never commit .env)
 	$(RUN) python -m hm_settlement.xrpl_setup --write-env
+
+xrpl-smoke: ## Opt-in live XRPL testnet smoke test: sends a real IOU payment (needs XRPL_WALLET_SEED from `make xrpl-wallets`)
+	$(RUN) pytest packages/settlement/tests/test_xrpl_smoke.py -v -s
 
 # --- Local infra (Docker) -----------------------------------------------------------------------
 
