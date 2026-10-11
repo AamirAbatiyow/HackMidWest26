@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
-
-T = TypeVar("T", bound=BaseModel)
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
@@ -47,14 +45,16 @@ def _extract_json(text: str) -> Any:
     return json.loads(text[start : end + 1])
 
 
-def parse_json_output(text: str, model: type[T]) -> T:
+def parse_json_output[T: BaseModel](text: str, model: type[T]) -> T:
     try:
         return model.model_validate(_extract_json(text))
     except (ValueError, ValidationError) as exc:
         raise ValueError(f"could not parse {model.__name__} from model output: {exc}") from exc
 
 
-def structured_call(agent: Any, output_model: type[T], prompt: str | list[Any], **kwargs: Any) -> T:
+def structured_call[T: BaseModel](
+    agent: Any, output_model: type[T], prompt: str | list[Any], **kwargs: Any
+) -> T:
     """Run a Strands agent and return its validated structured output (raises if missing)."""
     result = agent(prompt, structured_output_model=output_model, **kwargs)
     output = getattr(result, "structured_output", None)

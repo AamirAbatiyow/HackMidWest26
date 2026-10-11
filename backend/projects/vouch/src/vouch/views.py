@@ -153,7 +153,12 @@ def trust_score(card: PaymentCard) -> int:
 
 
 def _factor(idx: int, label: str, weight: float, direction: str) -> dict[str, Any]:
-    return {"id": f"e{idx}", "label": label, "weight": round(min(1.0, abs(weight)), 3), "direction": direction}
+    return {
+        "id": f"e{idx}",
+        "label": label,
+        "weight": round(min(1.0, abs(weight)), 3),
+        "direction": direction,
+    }
 
 
 def evidence_of(card: PaymentCard) -> list[dict[str, Any]]:
@@ -165,7 +170,14 @@ def evidence_of(card: PaymentCard) -> list[dict[str, Any]]:
             w = float(item.get("weight", 0.0))
             concern = (w < 0) if toward_legit else (w > 0)
             n += 1
-            out.append(_factor(n, str(item.get("label") or item.get("feature")), w, "concern" if concern else "reassuring"))
+            out.append(
+                _factor(
+                    n,
+                    str(item.get("label") or item.get("feature")),
+                    w,
+                    "concern" if concern else "reassuring",
+                )
+            )
     if card.sender and card.sender.checked:
         if card.sender.auth_pass:
             n += 1
@@ -207,7 +219,8 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                 "id": f"t{k}",
                 "date": (today - timedelta(days=v.created_days_ago)).isoformat(),
                 "title": "Vendor onboarded",
-                "detail": f"{v.name} added to the master file" + (" · identity verified out-of-band" if v.oob_verified else ""),
+                "detail": f"{v.name} added to the master file"
+                + (" · identity verified out-of-band" if v.oob_verified else ""),
                 "kind": "onboard",
             }
         )
@@ -218,6 +231,9 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
                     "id": f"t{k}",
                     "date": (today - timedelta(days=past.days_ago)).isoformat(),
                     "title": f"Paid {past.invoice_number or 'invoice'} · ${past.amount_cents / 100:,.2f}",
+                    "detail": f"Invoice {past.invoice_number}"
+                    if past.invoice_number
+                    else "Prior payment on file",
                     "kind": "payment",
                 }
             )
@@ -332,7 +348,13 @@ def checklist_of(card: PaymentCard) -> list[dict[str, Any]]:
             items.append({"id": f"c{i}", "text": action[0].upper() + action[1:], "done": bool(done)})
     if card.investigation:
         for j, q in enumerate(card.investigation.vendor_questions[:3], start=1):
-            items.append({"id": f"q{j}", "text": q, "done": "confirm_bank" in done_kinds or "resolve_risk" in done_kinds})
+            items.append(
+                {
+                    "id": f"q{j}",
+                    "text": q,
+                    "done": "confirm_bank" in done_kinds or "resolve_risk" in done_kinds,
+                }
+            )
     if card.vendor and card.policy and card.policy.lane == Lane.HOLD:
         items.append(
             {
@@ -408,10 +430,16 @@ def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, 
     inv = card.invoice
     vendor = engine.vendors.get(inv.vendor_id or "") or card.vendor
     duplicate_of, split_with, duplicate_note = _relations(card, run)
-    ring = ring_graph(engine.graph, engine.vendors, inv.vendor_id) if card.checks.get("shared_attributes") else None
+    ring = (
+        ring_graph(engine.graph, engine.vendors, inv.vendor_id)
+        if card.checks.get("shared_attributes")
+        else None
+    )
     receipt = dict(card.receipt) if card.receipt else None
     if receipt and not receipt.get("explorer_url"):
-        receipt["explorer_url"] = f"{engine.settings.public_url.rstrip('/')}/v1/receipts/{receipt.get('tx_id')}"
+        receipt["explorer_url"] = (
+            f"{engine.settings.public_url.rstrip('/')}/v1/receipts/{receipt.get('tx_id')}"
+        )
     return {
         "id": card.id,
         "run_id": run.id,

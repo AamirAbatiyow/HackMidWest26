@@ -13,6 +13,7 @@ with ``SETTLEMENT_ADAPTER=xrpl`` the receipts carry real XRPL testnet transactio
 from __future__ import annotations
 
 import base64
+import itertools
 import logging
 import secrets
 import threading
@@ -21,7 +22,6 @@ from typing import Any
 
 from hm_core.errors import ForbiddenError, NotFoundError, UpstreamError, ValidationFailedError
 from hm_settlement import SettlementAdapter
-
 from vouch import __version__
 from vouch.audit import AuditStore
 from vouch.cards import PaymentCard, now_iso
@@ -70,11 +70,15 @@ class VouchService:
             if llm_mode and llm_mode != "auto":
                 s = s.model_copy(update={"llm_mode": llm_mode})
             llm = LLMRuntime.from_settings(
-                s, embedding_lookup=self.store.embedding_lookup, embedding_persist=self.store.embedding_persist
+                s,
+                embedding_lookup=self.store.embedding_lookup,
+                embedding_persist=self.store.embedding_persist,
             )
             engine = VouchEngine(settings=s, llm=llm, adapter=adapter, scorer=scorer, today=today)
         self.engine = engine
-        self.engine.embedding_index = make_embedding_index(self.store.engine, self.store.backend == "postgres")
+        self.engine.embedding_index = make_embedding_index(
+            self.store.engine, self.store.backend == "postgres"
+        )
 
         if restore:
             self._restore()
@@ -175,7 +179,9 @@ class VouchService:
         demo = [v for v in vendors if v.id.startswith("v-")]
         rest = [v for v in vendors if not v.id.startswith("v-")][: max(0, limit - len(demo))]
         try:
-            self.vendors_indexed = index_vendors(VendorDirectory(demo + rest), embedder, self.engine.embedding_index)
+            self.vendors_indexed = index_vendors(
+                VendorDirectory(demo + rest), embedder, self.engine.embedding_index
+            )
         except Exception as exc:  # embeddings are a re-ranker only; never block startup on them
             log.warning("vendor embedding index skipped: %s", exc)
         return self.vendors_indexed
@@ -211,7 +217,9 @@ class VouchService:
             key = None
             try:
                 key = self.attachments.put(
-                    AttachmentStore.key_for(intake_id, doc.sha256 or att.sha256, att.filename), data, att.content_type
+                    AttachmentStore.key_for(intake_id, doc.sha256 or att.sha256, att.filename),
+                    data,
+                    att.content_type,
                 )
             except Exception as exc:  # storage is best effort; the hash is what the audit trail needs
                 log.warning("attachment not stored: %s", exc)
@@ -323,7 +331,11 @@ class VouchService:
         if not outcome.allowed:
             raise ForbiddenError(
                 f"{action} denied by policy ({outcome.engine}): {', '.join(outcome.reasons)}",
-                details={"rules": outcome.reasons, "lifecycle": lifecycle_of(card), "status": vouch_status(card)},
+                details={
+                    "rules": outcome.reasons,
+                    "lifecycle": lifecycle_of(card),
+                    "status": vouch_status(card),
+                },
             )
         return outcome.reasons
 
@@ -351,7 +363,9 @@ class VouchService:
         if R_LIMIT in reasons:
             self._resolve(card, "limit_override", actor, note or "one-time limit override by the owner")
         if not card.has_resolution("resolve_risk"):
-            self._resolve(card, "resolve_risk", actor, note or "owner reviewed the evidence and verified the payment")
+            self._resolve(
+                card, "resolve_risk", actor, note or "owner reviewed the evidence and verified the payment"
+            )
 
     def approve(self, card_id: str, note: str | None = None, author: str = "Owner") -> dict[str, Any]:
         """Owner approval: a READY card becomes APPROVED (in the batch); a HOLD card is first verified."""
@@ -418,7 +432,10 @@ class VouchService:
                 if card.status == CardStatus.HOLD:
                     raise ValidationFailedError(
                         f"{card.id} is on hold: " + "; ".join(card.policy.reasons if card.policy else []),
-                        details={"card_id": card.id, "required_actions": card.policy.required_actions if card.policy else []},
+                        details={
+                            "card_id": card.id,
+                            "required_actions": card.policy.required_actions if card.policy else [],
+                        },
                     )
                 if card.status != CardStatus.APPROVED:
                     self.approve(card.id, note or "Approved in batch", author)
@@ -458,7 +475,9 @@ class VouchService:
             for rid, ids in by_run.items():
                 try:
                     approve_run(
-                        self.engine, runs[rid], {"approved": True, "card_ids": ids, "approver": author, "note": note}
+                        self.engine,
+                        runs[rid],
+                        {"approved": True, "card_ids": ids, "approver": author, "note": note},
                     )
                 except Exception as exc:  # the run records the failure; report it with the receipt
                     log.exception("settlement failed for run %s", rid)
@@ -472,7 +491,9 @@ class VouchService:
                     for e in run.events[-6:]
                     if e["type"] in ("settlement_failed", "batch_blocked", "settle_blocked")
                 ]
-                raise UpstreamError("settlement did not complete: " + "; ".join(detail or ["no card was paid"]))
+                raise UpstreamError(
+                    "settlement did not complete: " + "; ".join(detail or ["no card was paid"])
+                )
             payments = [p for s in settlements for p in s.get("payments", [])]
             first = payments[0] if payments else {}
             self.store.record_settlement(
@@ -511,8 +532,19 @@ class VouchService:
                         "invoice_number": card.invoice.invoice_number,
                         "amount_cents": card.payable_cents,
                         "receipt": rec,
-                        "settlements": [s for s in run.settlements if any(p.get("tx_id") == tx_id or p.get("batch_tx_id") == tx_id for p in s.get("payments", []))],
-                        "stored": [s for s in self.store.settlements(200) if s["tx_id"] == tx_id or card.id in (s.get("card_ids") or [])],
+                        "settlements": [
+                            s
+                            for s in run.settlements
+                            if any(
+                                p.get("tx_id") == tx_id or p.get("batch_tx_id") == tx_id
+                                for p in s.get("payments", [])
+                            )
+                        ],
+                        "stored": [
+                            s
+                            for s in self.store.settlements(200)
+                            if s["tx_id"] == tx_id or card.id in (s.get("card_ids") or [])
+                        ],
                     }
         raise NotFoundError(f"unknown transaction {tx_id}")
 
@@ -569,18 +601,18 @@ class VouchService:
     def netz(self) -> dict[str, Any]:
         from hm_llm.clients import akamai_limiter
         from hm_llm.settings import get_llm_settings
-
         from vouch.pipeline import LLM_NODES, STAGES
 
         e = self.engine
         llm_settings = get_llm_settings()
         shared_limiter = akamai_limiter(llm_settings)
         timings = {
-            k: {"n": len(v), "p50_ms": _pct(v, 0.5), "p95_ms": _pct(v, 0.95)} for k, v in sorted(e.timings.items())
+            k: {"n": len(v), "p50_ms": _pct(v, 0.5), "p95_ms": _pct(v, 0.95)}
+            for k, v in sorted(e.timings.items())
         }
         cards = [c for r in e.runs.values() for c in r.card_list()]
         hops = []
-        for a, b in zip(STAGES, STAGES[1:], strict=False):
+        for a, b in itertools.pairwise(STAGES):
             t = timings.get(f"node:{b}", {})
             hops.append(
                 {
@@ -658,7 +690,9 @@ class VouchService:
             case.setdefault("prompt", case.get("attack"))
             detail = case.get("detail") or {}
             reasons = detail.get("reasons") or detail.get("second_reasons") or []
-            case.setdefault("rule", reasons[0] if reasons else ("blocked" if case["blocked"] else "NOT BLOCKED"))
+            case.setdefault(
+                "rule", reasons[0] if reasons else ("blocked" if case["blocked"] else "NOT BLOCKED")
+            )
         self.redteam = result
         return result
 

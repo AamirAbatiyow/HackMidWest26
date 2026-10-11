@@ -2,12 +2,12 @@ from datetime import date
 
 import pytest
 
+from hm_settlement import MockSettlementAdapter
 from vouch.config import Settings
 from vouch.demo import seed
+from vouch.engine import VouchEngine
 from vouch.llm import LLMRuntime
 from vouch.scorer import HeuristicScorer
-from vouch.engine import VouchEngine
-from hm_settlement import MockSettlementAdapter
 
 TODAY = date(2026, 10, 10)
 

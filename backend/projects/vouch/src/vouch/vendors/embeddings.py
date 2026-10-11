@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Protocol
 
 import numpy as np
@@ -61,12 +62,17 @@ class MemoryEmbeddingIndex:
         return len(self._keys)
 
 
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 class PgVectorEmbeddingIndex:
     backend = "pgvector"
 
     def __init__(self, engine: Engine, table: str = "vendor_embeddings") -> None:
+        if not _IDENT.fullmatch(table):
+            raise ValueError(f"invalid table name {table!r}")
         self.engine = engine
-        self.table = table
+        self.table = table  # validated identifier; interpolated into the SQL below (S608)
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.execute(
@@ -81,7 +87,7 @@ class PgVectorEmbeddingIndex:
         with self.engine.begin() as conn:
             conn.execute(
                 text(
-                    f"INSERT INTO {self.table} (key, label, embedding) VALUES (:k, :l, CAST(:e AS vector)) "
+                    f"INSERT INTO {self.table} (key, label, embedding) VALUES (:k, :l, CAST(:e AS vector)) "  # noqa: S608
                     "ON CONFLICT (key) DO UPDATE SET label = EXCLUDED.label, embedding = EXCLUDED.embedding, "
                     "updated_at = now()"
                 ),
@@ -92,7 +98,7 @@ class PgVectorEmbeddingIndex:
         with self.engine.begin() as conn:
             rows = conn.execute(
                 text(
-                    f"SELECT key, label, 1 - (embedding <=> CAST(:e AS vector)) AS sim FROM {self.table} "
+                    f"SELECT key, label, 1 - (embedding <=> CAST(:e AS vector)) AS sim FROM {self.table} "  # noqa: S608
                     "ORDER BY embedding <=> CAST(:e AS vector) LIMIT :k"
                 ),
                 {"e": json.dumps([float(x) for x in vector]), "k": k},
@@ -101,7 +107,8 @@ class PgVectorEmbeddingIndex:
 
     def __len__(self) -> int:
         with self.engine.begin() as conn:
-            return int(conn.execute(text(f"SELECT count(*) FROM {self.table}")).scalar() or 0)
+            count = conn.execute(text(f"SELECT count(*) FROM {self.table}")).scalar()  # noqa: S608
+            return int(count or 0)
 
 
 def make_embedding_index(engine: Engine | None, is_postgres: bool) -> EmbeddingIndex:

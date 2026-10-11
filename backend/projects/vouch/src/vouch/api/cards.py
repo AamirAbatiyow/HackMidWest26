@@ -13,9 +13,9 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
-from hm_core.errors import NotFoundError, ValidationFailedError
 from pydantic import BaseModel, Field
 
+from hm_core.errors import NotFoundError, ValidationFailedError
 from vouch.api.state import get_engine, get_service
 from vouch.cards import PaymentCard
 from vouch.domain import CardStatus, Lane, Resolution, Vendor
@@ -74,7 +74,9 @@ def _run(run_id: str) -> Run:
 class SubmitRequest(BaseModel):
     invoices: list[Submission] = Field(min_length=1, max_length=100)
     label: str = ""
-    wait: bool = Field(True, description="Run synchronously; false returns immediately (poll or stream the run)")
+    wait: bool = Field(
+        True, description="Run synchronously; false returns immediately (poll or stream the run)"
+    )
 
 
 class TextSubmitRequest(BaseModel):
@@ -153,7 +155,9 @@ def _start(svc: VouchEngine, r: Run, wait: bool) -> dict[str, Any]:
     return run_view(r)
 
 
-@router.post("/invoices", summary="Submit invoices (JSON fields and/or raw PDF text) and run the payment graph")
+@router.post(
+    "/invoices", summary="Submit invoices (JSON fields and/or raw PDF text) and run the payment graph"
+)
 def submit_invoices(req: SubmitRequest) -> dict[str, Any]:
     svc = get_engine()
     r = svc.new_run(req.invoices, label=req.label)
@@ -189,7 +193,9 @@ def run_events(run_id: str, after: int = 0) -> dict[str, Any]:
     return {"status": r.status, "events": [e for e in r.events if e["seq"] > after]}
 
 
-@router.get("/runs/{run_id}/stream", summary="Server-sent events for a run (node progress, decisions, settlements)")
+@router.get(
+    "/runs/{run_id}/stream", summary="Server-sent events for a run (node progress, decisions, settlements)"
+)
 async def run_stream(run_id: str, after: int = 0) -> StreamingResponse:
     r = _run(run_id)
 
@@ -211,7 +217,10 @@ async def run_stream(run_id: str, after: int = 0) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@router.post("/runs/{run_id}/approve", summary="Owner answers the approval interrupt; approved cards settle as one batch")
+@router.post(
+    "/runs/{run_id}/approve",
+    summary="Owner answers the approval interrupt; approved cards settle as one batch",
+)
 def approve_run(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
     from vouch.pipeline import approve
 
@@ -222,12 +231,16 @@ def approve_run(run_id: str, req: ApprovalRequest) -> dict[str, Any]:
     return run_view(r)
 
 
-@router.post("/runs/{run_id}/settle", summary="Run a batch settle for every READY card (same approval + policy path)")
+@router.post(
+    "/runs/{run_id}/settle", summary="Run a batch settle for every READY card (same approval + policy path)"
+)
 def settle_run(run_id: str, approver: str = "owner") -> dict[str, Any]:
     return approve_run(run_id, ApprovalRequest(approved=True, approver=approver))
 
 
-@router.get("/cards", summary="Payment cards with risk class, scores, LIME factors, legitimacy and policy decision")
+@router.get(
+    "/cards", summary="Payment cards with risk class, scores, LIME factors, legitimacy and policy decision"
+)
 def list_cards(
     run_id: str | None = None, lane: Lane | None = None, status: CardStatus | None = None
 ) -> list[dict[str, Any]]:
@@ -258,7 +271,11 @@ def _resolve(card_id: str, resolution: Resolution, phone_called: str | None = No
         return get_engine().resolve(card_id, resolution, phone_called=phone_called)
 
 
-@router.post("/cards/{card_id}/approve", response_model=PaymentCard, summary="Approve and pay one card (policy re-checked)")
+@router.post(
+    "/cards/{card_id}/approve",
+    response_model=PaymentCard,
+    summary="Approve and pay one card (policy re-checked)",
+)
 def approve_card(card_id: str, req: ActorNote) -> PaymentCard:
     from vouch.pipeline import approve
 
@@ -315,12 +332,18 @@ def override_limit(card_id: str, req: ActorNote) -> PaymentCard:
     return _resolve(card_id, Resolution(kind="limit_override", actor=req.actor, note=req.note))
 
 
-@router.post("/cards/{card_id}/appeal", response_model=PaymentCard, summary="Vendor appeal: recorded, prioritised for owner review")
+@router.post(
+    "/cards/{card_id}/appeal",
+    response_model=PaymentCard,
+    summary="Vendor appeal: recorded, prioritised for owner review",
+)
 def appeal_card(card_id: str, req: AppealRequest) -> PaymentCard:
     return _resolve(card_id, Resolution(kind="appeal", actor=req.vendor_contact, note=req.message))
 
 
-@router.get("/cards/{card_id}/audit", summary="Audit trail: timeline, resolutions, receipt and the stored records")
+@router.get(
+    "/cards/{card_id}/audit", summary="Audit trail: timeline, resolutions, receipt and the stored records"
+)
 def card_audit(card_id: str) -> dict[str, Any]:
     return get_service().audit(card_id)
 
@@ -352,7 +375,9 @@ def get_vendor(vendor_id: str) -> dict[str, Any]:
     return {
         "vendor": v.model_dump(mode="json"),
         "graph": svc.graph.features(vendor_id),
-        "linked_vendors": {k: [svc.vendors[o].name for o in ids] for k, ids in svc.graph.shared(vendor_id).items()},
+        "linked_vendors": {
+            k: [svc.vendors[o].name for o in ids] for k, ids in svc.graph.shared(vendor_id).items()
+        },
     }
 
 
@@ -380,7 +405,9 @@ def cash() -> dict[str, Any]:
     }
 
 
-@router.get("/netz", summary="Service vitals: latency per graph node, LLM calls and tokens, rate-limit headroom")
+@router.get(
+    "/netz", summary="Service vitals: latency per graph node, LLM calls and tokens, rate-limit headroom"
+)
 @router.get("/stats", include_in_schema=False)
 def netz() -> dict[str, Any]:
     return get_service().netz()

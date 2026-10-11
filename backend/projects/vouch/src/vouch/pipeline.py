@@ -30,8 +30,8 @@ from strands.multiagent import GraphBuilder
 from strands.multiagent.base import MultiAgentBase, MultiAgentResult, NodeResult, Status
 from strands.telemetry.metrics import EventLoopMetrics
 
-from vouch.engine import VouchEngine, Run
 from hm_agents_common.approval import approval_responses, normalize_approval
+from vouch.engine import Run, VouchEngine
 
 APPROVAL_INTERRUPT = "owner_approval"
 LLM_NODES = {"intake", "investigate", "explain"}

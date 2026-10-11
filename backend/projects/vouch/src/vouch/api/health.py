@@ -242,7 +242,11 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
             "XRPL testnet (atomic Batch, idempotent) · mock ledger fallback",
             "live" if adapter.name == "xrpl" else "fallback",
             f"{adapter.name} · {adapter.network}"
-            + ("" if adapter.name == "xrpl" else " · set SETTLEMENT_ADAPTER=xrpl + XRPL_WALLET_SEED for real tx ids"),
+            + (
+                ""
+                if adapter.name == "xrpl"
+                else " · set SETTLEMENT_ADAPTER=xrpl + XRPL_WALLET_SEED for real tx ids"
+            ),
         )
     )
     scorer = service.engine.scorer()

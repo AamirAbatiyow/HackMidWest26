@@ -127,8 +127,8 @@ class AkamaiInference:
         try:
             response.read()
             self._record_usage_from_body(response)
-        except Exception:  # pragma: no cover - streaming bodies
-            pass
+        except Exception as exc:  # pragma: no cover - streaming bodies
+            log.debug("usage not recorded: %s", exc)
         self._handle_errors(response)
 
     async def _after_async(self, response: httpx.Response) -> None:
@@ -138,8 +138,8 @@ class AkamaiInference:
         try:
             await response.aread()
             self._record_usage_from_body(response)
-        except Exception:  # pragma: no cover - streaming bodies
-            pass
+        except Exception as exc:  # pragma: no cover - streaming bodies
+            log.debug("usage not recorded: %s", exc)
         self._handle_errors(response)
 
     def _handle_errors(self, response: httpx.Response) -> None:

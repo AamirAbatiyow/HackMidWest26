@@ -14,16 +14,16 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+from hm_core.errors import ValidationFailedError
+from hm_settlement import MockSettlementAdapter
 from vouch.cards import PaymentCard
 from vouch.config import Settings, get_settings
 from vouch.demo import demo_vendors
 from vouch.domain import CardStatus, LineItem, Resolution
+from vouch.engine import Run, Submission, VouchEngine
 from vouch.llm import LLMRuntime
 from vouch.policy import R_BANK, R_INJECTION, R_LIMIT, R_LINES, R_LLM_AMOUNT, R_SENDER
 from vouch.scorer import Scorer
-from vouch.engine import VouchEngine, Run, Submission
-from hm_core.errors import ValidationFailedError
-from hm_settlement import MockSettlementAdapter
 
 
 @dataclass
@@ -473,7 +473,9 @@ def _facade(svc: VouchEngine) -> Any:
     from vouch.audit import AuditStore
     from vouch.service import VouchService
 
-    return VouchService(svc.settings, engine=svc, store=AuditStore("sqlite://"), seed_demo=False, restore=False)
+    return VouchService(
+        svc.settings, engine=svc, store=AuditStore("sqlite://"), seed_demo=False, restore=False
+    )
 
 
 def c_cedar_model_cannot_act(make: Callable[..., VouchEngine]) -> dict[str, Any]:
@@ -484,11 +486,22 @@ def c_cedar_model_cannot_act(make: Callable[..., VouchEngine]) -> dict[str, Any]
     allowed = []
     for lifecycle in ("pending", "approved", "held", "appealed"):
         attrs = PaymentAttrs("vouched", lifecycle, "none", 99, True, False, True, 50_000, True)
-        for action in ("approve", "settle", "fast_pay", "deny_vendor", "modify_amount", "change_bank_details"):
-            out = authorize("Model", action, attrs, {"owner_approval_recorded": True, "approval_limit_cents": 10**9})
+        for action in (
+            "approve",
+            "settle",
+            "fast_pay",
+            "deny_vendor",
+            "modify_amount",
+            "change_bank_details",
+        ):
+            out = authorize(
+                "Model", action, attrs, {"owner_approval_recorded": True, "approval_limit_cents": 10**9}
+            )
             if out.allowed:
                 allowed.append((lifecycle, action))
-    engine = authorize("Model", "explain", PaymentAttrs("vouched", "pending", "none", 90, True, False, True, 1, True)).engine
+    engine = authorize(
+        "Model", "explain", PaymentAttrs("vouched", "pending", "none", 90, True, False, True, 1, True)
+    ).engine
     return {"blocked": not allowed, "allowed": allowed, "engine": engine}
 
 
@@ -498,10 +511,16 @@ def c_cedar_system_cannot_deny_or_edit(make: Callable[..., VouchEngine]) -> dict
     from vouch.policy import PaymentAttrs, authorize
 
     attrs = PaymentAttrs("vouched", "approved", "none", 95, True, False, True, 80_000, True)
-    leaks = [a for a in ("deny_vendor", "add_fee", "round_amount", "modify_amount") if authorize("System", a, attrs).allowed]
+    leaks = [
+        a
+        for a in ("deny_vendor", "add_fee", "round_amount", "modify_amount")
+        if authorize("System", a, attrs).allowed
+    ]
     settle_without = authorize("System", "settle", attrs, {"owner_approval_recorded": False}).allowed
     settle_pending = authorize(
-        "System", "settle", PaymentAttrs("vouched", "pending", "none", 95, True, False, True, 80_000, True),
+        "System",
+        "settle",
+        PaymentAttrs("vouched", "pending", "none", 95, True, False, True, 80_000, True),
         {"owner_approval_recorded": True},
     ).allowed
     hold_ok = authorize("System", "hold", attrs).allowed
@@ -718,7 +737,9 @@ CASES: list[Case] = [
 ]
 
 
-def make_factory(settings: Settings | None = None, scorer: Scorer | None = None) -> Callable[..., VouchEngine]:
+def make_factory(
+    settings: Settings | None = None, scorer: Scorer | None = None
+) -> Callable[..., VouchEngine]:
     base = settings or get_settings()
 
     def make(llm: dict[str, list[Any]] | None = None, **overrides: Any) -> VouchEngine:

@@ -1,4 +1,4 @@
-# Installed by infra/scripts/bootstrap.sh (`uv run --all-packages pre-commit install`).
+# Install from backend/: `uv run --all-packages pre-commit install`
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -25,3 +25,9 @@ repos:
         entry: uv run --all-packages ruff format --force-exclude
         language: system
         types: [python]
+      - id: no-secrets-in-env-example
+        name: .env.example carries names only
+        entry: bash -c 'grep -nE "^(AKAMAI_INFERENCE_API_KEY|XRPL_WALLET_SEED|OBJECT_STORAGE_SECRET_KEY|LINODE_TOKEN|DATABASE_URL)=.+" .env.example && exit 1 || exit 0'
+        language: system
+        files: ^\.env\.example$
+        pass_filenames: false

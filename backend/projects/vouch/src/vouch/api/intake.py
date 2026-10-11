@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, UploadFile
-from hm_core.errors import ValidationFailedError
 
+from hm_core.errors import ValidationFailedError
 from vouch.api.cards import run_view
 from vouch.api.schemas import IntakeJsonBody, SenderCheckBody, VendorResolveBody
 from vouch.api.state import get_engine, get_service
@@ -37,7 +37,9 @@ def intake_json(body: IntakeJsonBody) -> dict[str, Any]:
 
 
 @router.post("/intake/eml", summary="Email intake from a raw .eml file (headers, body and attachments)")
-async def intake_eml(file: Annotated[UploadFile, File()], submitted_by: Annotated[str, Form()] = "ap-inbox") -> dict[str, Any]:
+async def intake_eml(
+    file: Annotated[UploadFile, File()], submitted_by: Annotated[str, Form()] = "ap-inbox"
+) -> dict[str, Any]:
     raw = await file.read()
     if not raw:
         raise ValidationFailedError("empty .eml upload")
@@ -46,7 +48,9 @@ async def intake_eml(file: Annotated[UploadFile, File()], submitted_by: Annotate
     return _result(get_service().intake_eml(raw, submitted_by=submitted_by))
 
 
-@router.post("/intake/upload", summary="Upload invoice files (PDF, image, XLSX, CSV, TXT); one invoice per request")
+@router.post(
+    "/intake/upload", summary="Upload invoice files (PDF, image, XLSX, CSV, TXT); one invoice per request"
+)
 async def intake_upload(
     files: Annotated[list[UploadFile], File()],
     submitted_by: Annotated[str, Form()] = "ap-clerk",
@@ -63,7 +67,11 @@ async def intake_upload(
     if not payload:
         raise ValidationFailedError("no files")
     run = get_service().intake_files(
-        payload, submitted_by=submitted_by, delivery_confirmed=delivery_confirmed, po_number=po_number, body_text=note
+        payload,
+        submitted_by=submitted_by,
+        delivery_confirmed=delivery_confirmed,
+        po_number=po_number,
+        body_text=note,
     )
     return _result(run)
 
@@ -83,7 +91,9 @@ def vendors_resolve(body: VendorResolveBody) -> dict[str, Any]:
     return res.model_dump()
 
 
-@router.post("/sender/check", summary="SPF/DKIM/DMARC, lookalike-domain and reply-to checks for email headers")
+@router.post(
+    "/sender/check", summary="SPF/DKIM/DMARC, lookalike-domain and reply-to checks for email headers"
+)
 def sender_check(body: SenderCheckBody) -> dict[str, Any]:
     e = get_engine()
     env = envelope_from_headers(body.headers)

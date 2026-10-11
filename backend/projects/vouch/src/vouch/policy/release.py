@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from hm_agents_common.policy import PolicyRequest, PolicySet, forbid, permit
 from vouch.cards import PaymentCard
 from vouch.domain import Lane, PolicyOutcome
 from vouch.kernel import Limits
-from hm_agents_common.policy import PolicyRequest, PolicySet, forbid, permit
 
 HIGH_RISK = 0.70  # a risk head at/above this ...
 LOW_LEGITIMACY = 0.60  # ... with legitimacy below this is "high risk" on model evidence alone

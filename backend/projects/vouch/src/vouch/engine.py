@@ -30,6 +30,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from hm_core.errors import NotFoundError, ValidationFailedError
+from hm_settlement import PaymentRequest, SettlementAdapter, get_adapter
 from vouch.agents import (
     EXPLAINER_PROMPT,
     INTAKE_PROMPT,
@@ -40,7 +42,7 @@ from vouch.agents import (
 )
 from vouch.cards import Investigation, PaymentCard, now_iso
 from vouch.config import Settings, get_settings
-from vouch.contracts import EmailEnvelope, SenderFindings, VendorClaim, VendorResolution, email_domain
+from vouch.contracts import EmailEnvelope, SenderFindings, VendorClaim, email_domain
 from vouch.domain import CardStatus, Invoice, Lane, LineItem, PastPayment, Resolution, Vendor
 from vouch.features import invoice_features
 from vouch.funding import CashForecast, recommend
@@ -67,8 +69,6 @@ from vouch.provenance import check_provenance
 from vouch.scorer import HeuristicScorer, Scorer, get_scorer
 from vouch.sender import check_sender
 from vouch.vendors import VendorDirectory, resolve_vendor
-from hm_core.errors import NotFoundError, ValidationFailedError
-from hm_settlement import PaymentRequest, SettlementAdapter, get_adapter
 
 log = logging.getLogger(__name__)
 
@@ -276,7 +276,9 @@ class VouchEngine:
                 inv.vendor_name = res.vendor_name
             else:
                 inv.vendor_id = None  # an unverified claim never inherits a master-file identity
-            card.log("vendor_resolved", status=res.status, matched_on=res.matched_on, confidence=res.confidence)
+            card.log(
+                "vendor_resolved", status=res.status, matched_on=res.matched_on, confidence=res.confidence
+            )
             for note in res.notes:
                 card.log("resolution_note", note=note)
         run.emit(
@@ -298,7 +300,9 @@ class VouchEngine:
             findings: SenderFindings = check_sender(env, vendors, claimed)
             card.sender = findings
             if findings.checked:
-                card.log("sender_checked", flags=findings.flags, risk=findings.risk, auth_pass=findings.auth_pass)
+                card.log(
+                    "sender_checked", flags=findings.flags, risk=findings.risk, auth_pass=findings.auth_pass
+                )
         run.emit(
             "sender_checked",
             checked=sum(bool(c.sender and c.sender.checked) for c in run.card_list()),

@@ -2,12 +2,13 @@
 # Shared image for every project API and inference service.
 #
 #   docker build -f infra/docker/python-app.Dockerfile \
-#     --build-arg PROJECT=vouch --build-arg EXTRAS="--extra agents" -t vouch-api .
+#     --build-arg PROJECT=vouch --build-arg EXTRAS="--extra ml --extra cedar" -t vouch-api .
 #   docker build -f infra/docker/python-app.Dockerfile \
-#     --build-arg PROJECT=vouch --build-arg EXTRAS="--extra explain" \
+#     --build-arg PROJECT=vouch --build-arg EXTRAS="--extra ml" \
 #     --build-arg APP_MODULE=vouch.services.inference:app -t vouch-inference .
 #
-# EXTRAS: "--extra agents" (Strands), "--extra explain" (LIME+sklearn), "--extra ml" (torch CPU).
+# EXTRAS: "--extra ml" (torch CPU for the trained model), "--extra cedar" (real Cedar engine; the Python
+# mirror is used otherwise), "--extra ocr-rapid" (OCR without the tesseract binary).
 
 ARG PYTHON_VERSION=3.12
 
@@ -30,11 +31,15 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 ARG PROJECT
 ARG APP_MODULE=""
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 LOG_JSON=true PORT=8000 \
-    APP_MODULE=${APP_MODULE:-${PROJECT}.main:app} MODEL_REGISTRY_DIR=/app/artifacts/models
+    APP_MODULE=${APP_MODULE:-${PROJECT}.main:app} MODEL_REGISTRY_DIR=/app/artifacts/models \
+    VOUCH_DATA_DIR=/app/data
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=build --chown=app:app /app/.venv /app/.venv
-RUN mkdir -p /app/artifacts && chown app:app /app/artifacts
+# The trained vouch-risk bundles are tiny (~240 KB) and tracked in git, so the image is self-contained
+# (no model download at boot). The Cedar policy ships inside the wheel (see projects/vouch/pyproject.toml).
+COPY --chown=app:app artifacts/models /app/artifacts/models
+RUN mkdir -p /app/data && chown app:app /app/data
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s \

@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from vouch.features import NUMERIC_FEATURES
 from hm_ml_common import ModelRegistry
+from vouch.features import NUMERIC_FEATURES
 
 
 @pytest.fixture(scope="module")

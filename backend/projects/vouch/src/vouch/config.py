@@ -19,9 +19,11 @@ from pydantic_settings import SettingsConfigDict
 
 from hm_core.config import HMSettings
 
+PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-POLICY_DIR = PROJECT_ROOT / "policies"
+# Editable installs read projects/vouch/policies; wheels (Docker) carry a copy at vouch/policies.
+POLICY_DIR = PROJECT_ROOT / "policies" if (PROJECT_ROOT / "policies").is_dir() else PACKAGE_DIR / "policies"
 SAMPLES_DIR = PROJECT_ROOT / "samples"
 
 LlmMode = Literal["live", "offline"]

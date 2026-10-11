@@ -6,10 +6,9 @@
 .env
 .env.*
 data
-artifacts
+archive
 .sessions
 infra/terraform
 docs
-templates
 *.md
 !projects/**/README.md

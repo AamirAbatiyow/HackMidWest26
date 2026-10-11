@@ -154,5 +154,7 @@ def resolve_vendor(
     if res.status == "known" and res.vendor_id:
         v = directory.get(res.vendor_id)
         if v and not v.history and not v.oob_verified:
-            res.notes.append("vendor is on file but has no completed payments and no out-of-band verification")
+            res.notes.append(
+                "vendor is on file but has no completed payments and no out-of-band verification"
+            )
     return res

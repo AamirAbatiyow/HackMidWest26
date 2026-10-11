@@ -33,7 +33,9 @@ def main() -> None:
         print("SKIP smoke-llm: AKAMAI_INFERENCE_API_KEY is not set (templates are used; nothing to call)")
         raise SystemExit(0)
     runtime = LLMRuntime.from_settings(s.model_copy(update={"llm_mode": "live"}))
-    print(f"endpoint {s.akamai_base_url} · chat {s.akamai_chat_model} · embeddings {s.akamai_embedding_model}")
+    print(
+        f"endpoint {s.akamai_base_url} · chat {s.akamai_chat_model} · embeddings {s.akamai_embedding_model}"
+    )
     print(f"client limiter {s.llm_rpm} rpm · max_tokens {s.llm_max_tokens} · provider {runtime.provider()}")
     ok = True
 
@@ -60,7 +62,9 @@ def main() -> None:
 
     # 3. embeddings -----------------------------------------------------------------------------------
     t0 = time.perf_counter()
-    vecs = runtime.embedder.embed(["Prairie Packaging Supply", "Prairie Packaging Supply Co.", "Sonora Fresh Produce"])
+    vecs = runtime.embedder.embed(
+        ["Prairie Packaging Supply", "Prairie Packaging Supply Co.", "Sonora Fresh Produce"]
+    )
     ms = int((time.perf_counter() - t0) * 1000)
     if not vecs or not all(vecs):
         print(f"[3] embeddings: FAIL · {ms} ms")

@@ -58,3 +58,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vouch"]
+
+# Ship the Cedar policy inside the wheel so non-editable installs (Docker images) run real Cedar too.
+[tool.hatch.build.targets.wheel.force-include]
+"policies" = "vouch/policies"

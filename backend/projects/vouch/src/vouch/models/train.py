@@ -16,12 +16,12 @@ from typing import Any
 
 import numpy as np
 
+from hm_ml_common import ModelRegistry
 from vouch.config import get_settings
 from vouch.dataset import Row, build_rows
 from vouch.domain import RISK_CLASSES, RiskClass
 from vouch.features import CATEGORICAL_FEATURES, NUMERIC_FEATURES
 from vouch.synth import generate_world
-from hm_ml_common import ModelRegistry
 
 TRAIN_SEED, TEST_SEED = 11, 99
 CARD_PATH = Path(__file__).resolve().parents[2] / "MODEL_CARD.md"
@@ -151,11 +151,11 @@ def _flat(metrics: dict[str, Any]) -> dict[str, float]:
 
 def evaluate(bundle: Any, rows: list[Row]) -> dict[str, Any]:
     """Model-level per-class metrics plus system-level hold rates with the real policy."""
+    from hm_ml_common.metrics import roc_auc
     from vouch.cards import PaymentCard
     from vouch.domain import Lane, ModelScores
     from vouch.kernel import Limits
     from vouch.policy import build_policy, evaluate_card
-    from hm_ml_common.metrics import roc_auc
 
     x = np.array([[r.numeric[n] for n in NUMERIC_FEATURES] for r in rows], dtype=np.float32)
     out = bundle.predict(x, bundle.encode_cats([r.categorical for r in rows]))

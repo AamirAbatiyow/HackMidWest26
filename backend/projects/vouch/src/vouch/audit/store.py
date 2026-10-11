@@ -271,7 +271,12 @@ class AuditStore:
                 )
             )
         else:
-            row.vendor_id, row.status, row.lane, row.data = card.invoice.vendor_id, card.status.value, lane, data
+            row.vendor_id, row.status, row.lane, row.data = (
+                card.invoice.vendor_id,
+                card.status.value,
+                lane,
+                data,
+            )
 
     def load_runs(self) -> list[dict[str, Any]]:
         """Runs with their cards, oldest first. The caller rebuilds `Run` objects (graph state is not kept)."""

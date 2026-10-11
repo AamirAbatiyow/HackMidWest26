@@ -125,8 +125,8 @@ def ocr_backend() -> str:
 
         if shutil.which("tesseract"):
             return "tesseract"
-    except Exception:  # pragma: no cover
-        pass
+    except Exception as exc:  # pragma: no cover
+        log.debug("pytesseract unavailable: %s", exc)
     try:
         import rapidocr_onnxruntime  # noqa: F401
 

@@ -64,12 +64,16 @@ def payment_audit(payment_id: str) -> dict[str, Any]:
     return get_service().audit(payment_id)
 
 
-@payments.post("/batch/settle", summary="Settle a batch (real XRPL testnet tx ids with SETTLEMENT_ADAPTER=xrpl)")
+@payments.post(
+    "/batch/settle", summary="Settle a batch (real XRPL testnet tx ids with SETTLEMENT_ADAPTER=xrpl)"
+)
 def settle_batch(body: SettleBody) -> dict[str, Any]:
     return get_service().settle(body.payment_ids, body.funding, body.author, body.note or "")
 
 
-@payments.get("/receipts/{tx_id}", summary="Settlement record for a transaction id (the mock ledger's 'explorer')")
+@payments.get(
+    "/receipts/{tx_id}", summary="Settlement record for a transaction id (the mock ledger's 'explorer')"
+)
 def receipt(tx_id: str) -> dict[str, Any]:
     return get_service().receipt(tx_id)
 
@@ -95,7 +99,9 @@ def fairness() -> dict[str, Any]:
         "heldShare": round(float(metrics.get("system_honest_hold_rate", 0.0)), 4),
         "newSmallVendorsOnTime": round(1.0 - float(metrics.get("system_honest_unusual_hold_rate", 0.0)), 4),
         "fraudCaught": {
-            "count": int(round(float(metrics.get("system_n_bad", 0)) * float(metrics.get("system_bad_actor_catch_rate", 0)))),
+            "count": round(
+                float(metrics.get("system_n_bad", 0)) * float(metrics.get("system_bad_actor_catch_rate", 0))
+            ),
             "amount": sum(c.payable_cents for c in held) / 100,
             "examples": [f"{c.invoice.vendor_name} {c.invoice.invoice_number}" for c in held[:3]],
         },

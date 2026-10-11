@@ -58,7 +58,9 @@ def _row(p: dict) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run the Vouch demo end to end: seed, hold, approve, settle.")
     ap.add_argument("--mode", choices=["auto", "live", "offline"], default="auto", help="LLM mode")
-    ap.add_argument("--files", action="store_true", help="feed the six invoices as files/emails through intake")
+    ap.add_argument(
+        "--files", action="store_true", help="feed the six invoices as files/emails through intake"
+    )
     ap.add_argument("--xrpl", action="store_true", help="SETTLEMENT_ADAPTER=xrpl (real testnet transactions)")
     ap.add_argument("--db", default=None, help="SQLAlchemy URL (default: DATABASE_URL or local SQLite)")
     ap.add_argument("--json", action="store_true", help="print the payments as JSON at the end")
@@ -133,7 +135,9 @@ def main() -> None:
         print(f"    Sonora stays on hold: {str(exc)[:150]}", file=out)
 
     # 4. settle ------------------------------------------------------------------------------------------
-    print("\n[4] settle: one batch for the approved cards (same approval interrupt + policy re-check)", file=out)
+    print(
+        "\n[4] settle: one batch for the approved cards (same approval interrupt + policy re-check)", file=out
+    )
     ids = [by_vendor("Rheinland")["id"], by_vendor("Bao Lin")["id"]]
     receipt = service.settle(ids, "now", "Dana Whitfield", "Friday batch")
     print(
@@ -142,13 +146,19 @@ def main() -> None:
         file=out,
     )
     for line in receipt["lines"]:
-        print(f"      {line['vendor_name']:28} {line['invoice_number']:14} ${line['amount']:>9,.2f}  {line['tx_id']}  {line['explorer_url'] or ''}", file=out)
+        print(
+            f"      {line['vendor_name']:28} {line['invoice_number']:14} ${line['amount']:>9,.2f}  {line['tx_id']}  {line['explorer_url'] or ''}",
+            file=out,
+        )
 
     # 5. summary -----------------------------------------------------------------------------------------
     print("\n[5] queue after the run", file=out)
     final = service.payments()
     for p in final:
-        print(f"  {p['vendor']['name']:28} lane={p['lane'] or '-':9} lifecycle={p['lifecycle']:9} status={p['status']:12} tx={p['settlement_tx_id'] or '-'}", file=out)
+        print(
+            f"  {p['vendor']['name']:28} lane={p['lane'] or '-':9} lifecycle={p['lifecycle']:9} status={p['status']:12} tx={p['settlement_tx_id'] or '-'}",
+            file=out,
+        )
     snap = e.llm.snapshot()
     print(
         f"\nllm: mode={snap['mode']} agent_calls={snap.get('agent_calls')} fallbacks={snap.get('fallbacks_to_template')} "

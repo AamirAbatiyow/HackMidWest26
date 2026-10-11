@@ -25,8 +25,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from vouch.domain import LineItem, PastPayment, Vendor
+from vouch.engine import Submission, VouchEngine
 from vouch.identity import make_tax_id
-from vouch.engine import VouchEngine, Submission
 from vouch.synth import generate_world
 
 OWNER_STORY = (

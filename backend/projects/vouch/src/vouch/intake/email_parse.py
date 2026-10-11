@@ -71,7 +71,7 @@ def parse_eml(raw: bytes) -> IntakeRequest:
     """Parse a raw .eml into an IntakeRequest (headers, text body, attachments)."""
     msg = message_from_bytes(raw, policy=policy.default)
     headers: dict[str, str] = {}
-    for key in msg.keys():
+    for key in msg:
         values = _header_list(msg, key)
         headers[key] = "\n".join(values) if len(values) > 1 else values[0]
     body_text, body_html = "", ""

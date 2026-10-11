@@ -11,11 +11,11 @@ from __future__ import annotations
 import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse
+
 from hm_agents_common.tracing import setup_tracing
 from hm_api_common import create_app, run
 from hm_core.config import AppSettings
 from hm_core.errors import AppError
-
 from vouch import __version__
 from vouch.api import cards, frontend, intake
 from vouch.api.state import _state, get_engine, get_service, set_service  # noqa: F401  (re-exported for tests)

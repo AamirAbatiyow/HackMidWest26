@@ -31,7 +31,7 @@ def make_pdf(lines: list[str], title: str) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=LETTER)
     c.setTitle(title)
-    width, height = LETTER
+    _width, height = LETTER
     y = height - 72
     c.setFont("Helvetica-Bold", 18)
     c.drawString(72, y, lines[0])
@@ -231,7 +231,9 @@ def build_samples(now: datetime | None = None) -> list[Sample]:
     prairie_headers = _headers(
         "Prairie Packaging AR <ar@prairiepackaging.com>", "Invoice PPS-2207", sent, "prairiepackaging.com"
     )
-    prairie_body = "Hi Dana,\n\nInvoice PPS-2207 for the October cases is attached. Thanks!\n\nPrairie Packaging AR\n"
+    prairie_body = (
+        "Hi Dana,\n\nInvoice PPS-2207 for the October cases is attached. Thanks!\n\nPrairie Packaging AR\n"
+    )
     sample(
         "prairie",
         "Prairie Packaging Supply: verified small vendor, authenticated email, PDF invoice (fast-pay lane)",
@@ -293,7 +295,13 @@ def build_samples(now: datetime | None = None) -> list[Sample]:
             "02-rheinland-RG-2026-0918.eml": make_eml(
                 rheinland_headers,
                 rheinland_body,
-                [("RG-2026-0918.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", rheinland_xlsx)],
+                [
+                    (
+                        "RG-2026-0918.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        rheinland_xlsx,
+                    )
+                ],
             ),
             "02-rheinland-RG-2026-0918.xlsx": rheinland_xlsx,
         },
@@ -391,7 +399,9 @@ def build_samples(now: datetime | None = None) -> list[Sample]:
         "sonora",
         "Sonora Fresh Produce: BEC attempt - lookalike domain, mismatched reply-to, failed SPF/DMARC, new offshore bank, injection, scanned PNG (hold)",
         files={
-            "04-sonora-SFP-88213.eml": make_eml(sonora_headers, sonora_body, [("SFP-88213.png", "image/png", sonora_png)]),
+            "04-sonora-SFP-88213.eml": make_eml(
+                sonora_headers, sonora_body, [("SFP-88213.png", "image/png", sonora_png)]
+            ),
             "04-sonora-SFP-88213.png": sonora_png,
         },
         request=IntakeRequest(
@@ -463,7 +473,9 @@ def build_samples(now: datetime | None = None) -> list[Sample]:
         "apex",
         "Apex Global Trading LLC: 9-day-old vendor, shares a bank account with two other new vendors, webmail sender, PDF (hold: identity)",
         files={
-            "06-apex-AGT-1007.eml": make_eml(apex_headers, apex_body, [("AGT-1007.pdf", "application/pdf", apex_pdf)]),
+            "06-apex-AGT-1007.eml": make_eml(
+                apex_headers, apex_body, [("AGT-1007.pdf", "application/pdf", apex_pdf)]
+            ),
             "06-apex-AGT-1007.pdf": apex_pdf,
         },
         request=IntakeRequest(
