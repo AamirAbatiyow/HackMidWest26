@@ -1,4 +1,4 @@
-"""Cedar authorization: default deny, the seven permits, and parity between the Cedar engine and the
+"""Cedar authorization: default deny, the eight permits, and parity between the Cedar engine and the
 Python mirror used when cedarpy is unavailable."""
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ ACTIONS = (
     "modify_amount",
     "add_fee",
     "round_amount",
+    "approve_kickback",
+    "decline_kickback",
     "delete",
 )
 LIFECYCLES = ("pending", "approved", "held", "appealed", "settled")
@@ -45,9 +47,9 @@ def _attrs(lifecycle="pending", **kw) -> PaymentAttrs:
     return PaymentAttrs(**base)
 
 
-def test_policy_file_declares_seven_permits():
+def test_policy_file_declares_eight_permits():
     ids = policy_ids()
-    assert ids[:7] == ["P-01", "P-02", "P-03", "P-04", "P-05", "P-06", "P-07"]
+    assert ids[:8] == ["P-01", "P-02", "P-03", "P-04", "P-05", "P-06", "P-07", "P-08"]
 
 
 def test_default_deny_for_unknown_actions_and_principals():
@@ -76,6 +78,18 @@ def test_owner_permits():
         "P-06"
     ]
     assert not authorize("Owner", "change_bank_details", _attrs()).allowed
+
+
+def test_only_the_owner_may_decide_a_kickback_email_and_only_before_settlement():
+    for lifecycle in ("pending", "approved", "held", "appealed"):
+        assert authorize("Owner", "approve_kickback", _attrs(lifecycle)).reasons == ["P-08"], lifecycle
+        assert authorize("Owner", "decline_kickback", _attrs(lifecycle)).reasons == ["P-08"], lifecycle
+    assert not authorize("Owner", "approve_kickback", _attrs("settled")).allowed
+    assert not authorize("Owner", "decline_kickback", _attrs("settled")).allowed
+    for principal in ("System", "Model", "Vendor"):
+        for action in ("approve_kickback", "decline_kickback"):
+            out = authorize(principal, action, _attrs(), {"owner_approval_recorded": True})
+            assert not out.allowed and out.reasons == ["DEFAULT-DENY"], (principal, action)
 
 
 def test_system_may_hold_and_fast_pay_but_never_deny_or_edit():

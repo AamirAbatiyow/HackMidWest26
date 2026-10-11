@@ -37,4 +37,7 @@ def service(settings) -> VouchEngine:
 
 @pytest.fixture
 def service_factory(settings):
-    return lambda **kw: make_service(settings, **kw)
+    def build(**kw) -> VouchEngine:
+        return make_service(kw.pop("settings", None) or settings, **kw)
+
+    return build
