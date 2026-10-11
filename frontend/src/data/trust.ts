@@ -40,7 +40,7 @@ export const DEMO_TRUST: TrustData = {
     },
     prompt_injection_defenses: {
       description: 'Deterministic kernel checks invoice text for instructions aimed at the payment system.',
-      hold_reason: 'R_INJECTION: invoice text contains instructions aimed at the payment system',
+      hold_reason: 'R_INJECTION: the invoice text tries to give orders to the payment system',
     },
     redteam_suite: {
       description: 'Adversarial test suite run on every deployment; all attacks must be blocked.',
@@ -68,14 +68,14 @@ export const DEMO_TRUST: TrustData = {
     policy_hold_reasons: {
       description: 'Every hold has a documented reason and resolution path.',
       reasons: [
-        { reason: 'unresolved high fraud risk', resolution: 'owner reviews the evidence and resolves with a note' },
-        { reason: 'bank details changed without confirmation', resolution: 'confirm by calling vendor at phone on file' },
-        { reason: 'amount exceeds single-payment limit', resolution: 'owner approves a one-time limit override' },
-        { reason: 'amount not verified by deterministic kernel', resolution: 're-key the amount from source document' },
-        { reason: 'possible duplicate invoice', resolution: 'owner confirms this is not a duplicate' },
-        { reason: 'vendor not on master file', resolution: 'onboard the vendor before paying' },
-        { reason: 'invoice email failed sender checks', resolution: 'confirm with vendor through channel on file' },
-        { reason: 'prompt injection detected', resolution: 'owner reviews; vendor re-sends clean invoice' },
+        { reason: 'the fraud risk score is high', resolution: 'review the evidence and clear it with a note' },
+        { reason: 'the bank account changed and nobody has confirmed it by phone', resolution: 'confirm the new bank account by calling the vendor on a number you already have' },
+        { reason: 'the amount is over your single-payment limit', resolution: 'approve a one-time limit override' },
+        { reason: 'the amount could not be read from the invoice', resolution: 'type in the amount from the original invoice' },
+        { reason: 'this looks like a duplicate invoice', resolution: 'confirm this is not a double payment' },
+        { reason: 'this vendor is not in your vendor list', resolution: 'add the vendor to your list after checking their identity and bank account' },
+        { reason: "the email did not come from the vendor's usual address", resolution: 'confirm the invoice with the vendor on a number you already have' },
+        { reason: 'the invoice text tries to give orders to the payment system', resolution: 'read the invoice text, then ask the vendor for a clean copy' },
       ],
     },
   },

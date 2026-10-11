@@ -11,7 +11,7 @@ interface MatrixRow {
   action: string
 }
 
-/** Deterministic matrix: which checks fired, their weight, and what clears them. */
+/** Which checks fired, their weight, and what clears them. */
 export function buildMatrix(p: Payment): MatrixRow[] {
   const concern = (match: RegExp) => p.evidence.find((e) => e.direction === 'concern' && match.test(e.label))
   const weight = (f?: { weight: number }) => (f ? Math.round(f.weight * 100) : 0)
@@ -23,34 +23,34 @@ export function buildMatrix(p: Payment): MatrixRow[] {
 
   return [
     {
-      check: 'Bank details',
+      check: 'Bank account',
       result: p.risk === 'changed_bank' ? 'flag' : 'pass',
       weight: p.risk === 'changed_bank' ? weight(bank) : 0,
-      action: p.risk === 'changed_bank' ? 'Call-back on number on file' : '—',
+      action: p.risk === 'changed_bank' ? 'Call the vendor on a number you already have' : '—',
     },
     {
-      check: 'Duplicate / split',
+      check: 'Duplicate or split bill',
       result: p.risk === 'duplicate_or_split' ? 'flag' : 'pass',
       weight: p.risk === 'duplicate_or_split' ? weight(dup) : 0,
-      action: p.risk === 'duplicate_or_split' ? 'Confirm intent with vendor' : '—',
+      action: p.risk === 'duplicate_or_split' ? 'Ask the vendor if this is a new order' : '—',
     },
     {
-      check: 'Vendor network',
+      check: 'Links to other vendors',
       result: p.ring ? 'flag' : 'pass',
       weight: p.ring ? weight(ring) : 0,
-      action: p.ring ? 'Verify registration + bank ownership' : '—',
+      action: p.ring ? 'Check the tax ID and who owns the bank account' : '—',
     },
     {
-      check: 'Amount vs invoice',
+      check: 'Amount matches the invoice',
       result: 'pass',
       weight: 0,
       action: '—',
     },
     {
-      check: 'History',
+      check: 'Payment history',
       result: history ? (p.status === 'vouched' ? 'na' : 'flag') : 'pass',
       weight: history ? weight(concern(/history|registered|first/i)) : 0,
-      action: history ? (p.status === 'vouched' ? 'Small first payment within limit' : 'Owner sign-off') : '—',
+      action: history ? (p.status === 'vouched' ? 'Small first payment, under the limit' : 'Your sign-off') : '—',
     },
   ]
 }
@@ -65,7 +65,7 @@ export function DecisionMatrix({ payment }: { payment: Payment }) {
   const rows = buildMatrix(payment)
   const flags = rows.filter((r) => r.result === 'flag').length
   const recommendation =
-    payment.status === 'vouched' ? 'Clear to pay' : payment.status === 'verify' ? 'Verify before release' : 'Hold for a quick check'
+    payment.status === 'vouched' ? 'Clear to pay' : payment.status === 'verify' ? 'Call the vendor before paying' : 'Quick check first'
 
   return (
     <div className="overflow-hidden rounded-sm border">
@@ -75,7 +75,7 @@ export function DecisionMatrix({ payment }: { payment: Payment }) {
             <th className="px-2 py-1 font-semibold">Check</th>
             <th className="px-2 py-1 font-semibold">Result</th>
             <th className="num px-2 py-1 text-right font-semibold">W</th>
-            <th className="px-2 py-1 font-semibold">Clears with</th>
+            <th className="px-2 py-1 font-semibold">How to clear it</th>
           </tr>
         </thead>
         <tbody>
