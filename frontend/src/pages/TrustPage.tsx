@@ -165,7 +165,7 @@ export function CedarGuardrails({ trust, redTeam, redTeamRunning = false }: Ceda
       <SectionTitle meta="System principal · the LLM (Model) holds no permit at all">What the agent may do</SectionTitle>
       <AgentMatrix rules={engine.rules} />
 
-      <SectionTitle meta="policies/vouch.cedar · parsed live from the backend">The {engine.total_rules} rules</SectionTitle>
+      <SectionTitle meta="policies/vouch.cedar · via GET /v1/trust">The {engine.total_rules} rules</SectionTitle>
       <RulesTable rules={engine.rules} />
     </section>
   )
