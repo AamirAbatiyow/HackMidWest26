@@ -10,6 +10,7 @@ import { NetworkPage } from '@/pages/NetworkPage'
 import { ReceiptPage } from '@/pages/ReceiptPage'
 import { RedTeamPage } from '@/pages/RedTeamPage'
 import { TokensPage } from '@/pages/TokensPage'
+import { TrustPage } from '@/pages/TrustPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { PaymentsProvider } from '@/store/PaymentsProvider'
 import { UiProvider } from '@/store/UiProvider'
@@ -37,6 +38,7 @@ export default function App() {
                     <Route path="network" element={<NetworkPage />} />
                     <Route path="netstats" element={<NetstatsPage />} />
                     <Route path="redteam" element={<RedTeamPage />} />
+                    <Route path="trust" element={<TrustPage />} />
                     <Route path="tokens" element={<TokensPage />} />
                     <Route path="payments/:id" element={<PaymentRedirect />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

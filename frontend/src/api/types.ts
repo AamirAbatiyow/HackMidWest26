@@ -322,6 +322,105 @@ export interface RunInfo {
   cardIds: string[]
 }
 
+// Trust Center types
+export interface CedarRule {
+  id: string
+  type: 'permit' | 'forbid'
+  principal: string
+  action: string | null
+  resource: string | null
+  description: string | null
+}
+
+export interface PolicyHoldReason {
+  reason: string
+  resolution: string
+}
+
+export interface SenderCheck {
+  check: string
+  description: string
+}
+
+export interface NotYetItem {
+  item: string
+  status: string
+  description: string
+}
+
+export interface TrustData {
+  generated_at: string
+  version: string
+  security_controls: {
+    policy_engine: {
+      type: string
+      description: string
+      total_rules: number
+      rules: CedarRule[]
+    }
+    owner_approval_required: {
+      description: string
+      owner_permitted_actions: { rule_id: string; action: string | null; description: string | null }[]
+    }
+    model_restrictions: {
+      description: string
+      model_rules: CedarRule[]
+      permitted_actions: string[]
+      forbidden_actions: string[]
+    }
+    kickback_email_controls: {
+      description: string
+      rules: string[]
+    }
+    prompt_injection_defenses: {
+      description: string
+      hold_reason: string
+    }
+    redteam_suite: {
+      description: string
+      total_cases: number
+      categories: string[]
+      endpoint: string
+    }
+    sender_verification: {
+      description: string
+      checks: SenderCheck[]
+    }
+    pydantic_validation: {
+      description: string
+      validation_on: string[]
+    }
+    policy_hold_reasons: {
+      description: string
+      reasons: PolicyHoldReason[]
+    }
+  }
+  data_handling: {
+    storage: {
+      database: { type: string; location: string; description: string }
+      object_storage: { configured: boolean; region: string; description: string }
+    }
+    network_isolation: {
+      vpc_private: Record<string, string>
+      firewall: { default_deny_inbound: boolean; allowed_inbound: string[]; description: string }
+    }
+    llm_data_handling: {
+      deterministic_path: { description: string; decider_active: boolean; llm_mode: string }
+      hosted_inference: { provider: string; base_url: string; description: string }
+    }
+    demo_data: { description: string; synthetic_vendors: boolean; synthetic_invoices: boolean }
+  }
+  infrastructure: {
+    deployment: { provider: string; region: string; products: string[] }
+    settlement: { adapter: string; network: string; description: string }
+    model: { name: string; scorer: string; description: string }
+  }
+  not_yet_implemented: {
+    description: string
+    items: NotYetItem[]
+  }
+}
+
 export interface VouchApi {
   readonly mode: 'mock' | 'live'
   listPayments(): Promise<Payment[]>
@@ -337,6 +436,7 @@ export interface VouchApi {
   getInfo(): Promise<ApiInfo>
   getLatency(): Promise<LatencyStats>
   getTopology(): Promise<TopologyData>
+  getTrust(): Promise<TrustData>
   listRuns(): Promise<RunInfo[]>
   getRunEvents(runId: string, after?: number): Promise<{ status: string; events: RunEvent[] }>
 }

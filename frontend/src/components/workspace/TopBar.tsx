@@ -12,6 +12,7 @@ export const VIEWS = [
   { to: '/network', label: 'Network', key: 'n', nav: true },
   { to: '/netstats', label: 'Latency', key: 'l', nav: true },
   { to: '/redteam', label: 'Red team', key: 'r', nav: true },
+  { to: '/trust', label: 'Trust', key: 'u', nav: true },
   { to: '/tokens', label: 'Design tokens', key: 't', nav: false },
 ] as const
 
