@@ -4,6 +4,7 @@ import type {
   CountryCode,
   EvidenceFactor,
   FairnessReport,
+  LatencyStats,
   Lifecycle,
   NetworkStatus,
   Payment,
@@ -12,6 +13,7 @@ import type {
   RiskType,
   SettlementReceipt,
   TimelineEvent,
+  TopologyData,
   VouchApi,
   VouchStatus,
 } from './types'
@@ -432,5 +434,202 @@ export function createLiveApi({ baseUrl, fetchImpl = fetch }: LiveApiOptions): V
         version: str(pick(raw, 'version'), undefined as never) || undefined,
       }
     },
+
+    async getLatency(): Promise<LatencyStats> {
+      const raw = asRecord(await request<unknown>('/latency'))
+      return normalizeLatency(raw)
+    },
+
+    async getTopology(): Promise<TopologyData> {
+      const raw = asRecord(await request<unknown>('/topology'))
+      return normalizeTopology(raw)
+    },
+  }
+}
+
+function normalizeLatency(raw: Json): LatencyStats {
+  const pipelineStepsRaw = asRecord(pick(raw, 'pipeline_steps', 'pipelineSteps'))
+  const pipelineSteps: Record<string, { p50Ms: number | null; p95Ms: number | null; count: number; latestMs: number | null }> = {}
+  for (const [key, val] of Object.entries(pipelineStepsRaw)) {
+    const step = asRecord(val)
+    pipelineSteps[key] = {
+      p50Ms: pick(step, 'p50_ms', 'p50Ms') != null ? num(pick(step, 'p50_ms', 'p50Ms')) : null,
+      p95Ms: pick(step, 'p95_ms', 'p95Ms') != null ? num(pick(step, 'p95_ms', 'p95Ms')) : null,
+      count: num(pick(step, 'count'), 0),
+      latestMs: pick(step, 'latest_ms', 'latestMs') != null ? num(pick(step, 'latest_ms', 'latestMs')) : null,
+    }
+  }
+
+  const inferenceRaw = asRecord(pick(raw, 'inference'))
+  const inference: Record<string, { model: string; baseUrl: string; live: boolean; p50Ms: number | null; p95Ms: number | null; count: number; latestMs: number | null }> = {}
+  for (const [key, val] of Object.entries(inferenceRaw)) {
+    const ep = asRecord(val)
+    inference[key] = {
+      model: str(pick(ep, 'model')),
+      baseUrl: str(pick(ep, 'base_url', 'baseUrl')),
+      live: Boolean(pick(ep, 'live')),
+      p50Ms: pick(ep, 'p50_ms', 'p50Ms') != null ? num(pick(ep, 'p50_ms', 'p50Ms')) : null,
+      p95Ms: pick(ep, 'p95_ms', 'p95Ms') != null ? num(pick(ep, 'p95_ms', 'p95Ms')) : null,
+      count: num(pick(ep, 'count'), 0),
+      latestMs: pick(ep, 'latest_ms', 'latestMs') != null ? num(pick(ep, 'latest_ms', 'latestMs')) : null,
+    }
+  }
+
+  const deciderRaw = asRecord(pick(raw, 'decider'))
+  const decider = {
+    engine: str(pick(deciderRaw, 'engine')),
+    enginesAvailable: Array.isArray(pick(deciderRaw, 'engines_available', 'enginesAvailable'))
+      ? (pick(deciderRaw, 'engines_available', 'enginesAvailable') as string[])
+      : [],
+    p50Ms: pick(deciderRaw, 'p50_ms', 'p50Ms') != null ? num(pick(deciderRaw, 'p50_ms', 'p50Ms')) : null,
+    p95Ms: pick(deciderRaw, 'p95_ms', 'p95Ms') != null ? num(pick(deciderRaw, 'p95_ms', 'p95Ms')) : null,
+    count: num(pick(deciderRaw, 'count'), 0),
+    latestMs: pick(deciderRaw, 'latest_ms', 'latestMs') != null ? num(pick(deciderRaw, 'latest_ms', 'latestMs')) : null,
+  }
+
+  const postgresRaw = asRecord(pick(raw, 'postgres'))
+  const postgres = {
+    configured: Boolean(pick(postgresRaw, 'configured')),
+    ok: pick(postgresRaw, 'ok') != null ? Boolean(pick(postgresRaw, 'ok')) : null,
+    latencyMs: pick(postgresRaw, 'latency_ms', 'latencyMs') != null ? num(pick(postgresRaw, 'latency_ms', 'latencyMs')) : null,
+    p50Ms: pick(postgresRaw, 'p50_ms', 'p50Ms') != null ? num(pick(postgresRaw, 'p50_ms', 'p50Ms')) : null,
+    p95Ms: pick(postgresRaw, 'p95_ms', 'p95Ms') != null ? num(pick(postgresRaw, 'p95_ms', 'p95Ms')) : null,
+  }
+
+  const objRaw = asRecord(pick(raw, 'object_storage', 'objectStorage'))
+  const objectStorage = {
+    configured: Boolean(pick(objRaw, 'configured')),
+    ok: pick(objRaw, 'ok') != null ? Boolean(pick(objRaw, 'ok')) : null,
+    latencyMs: pick(objRaw, 'latency_ms', 'latencyMs') != null ? num(pick(objRaw, 'latency_ms', 'latencyMs')) : null,
+    p50Ms: pick(objRaw, 'p50_ms', 'p50Ms') != null ? num(pick(objRaw, 'p50_ms', 'p50Ms')) : null,
+    p95Ms: pick(objRaw, 'p95_ms', 'p95Ms') != null ? num(pick(objRaw, 'p95_ms', 'p95Ms')) : null,
+  }
+
+  const tiersRaw = asRecord(pick(raw, 'tiers'))
+  const tiers: Record<string, { name: string; subnet: string; products: string[]; description: string; configured: boolean; healthy: boolean | null; rttMs: number | null }> = {}
+  for (const [key, val] of Object.entries(tiersRaw)) {
+    const t = asRecord(val)
+    tiers[key] = {
+      name: str(pick(t, 'name')),
+      subnet: str(pick(t, 'subnet')),
+      products: Array.isArray(pick(t, 'products')) ? (pick(t, 'products') as string[]) : [],
+      description: str(pick(t, 'description')),
+      configured: Boolean(pick(t, 'configured')),
+      healthy: pick(t, 'healthy') != null ? Boolean(pick(t, 'healthy')) : null,
+      rttMs: pick(t, 'rtt_ms', 'rttMs') != null ? num(pick(t, 'rtt_ms', 'rttMs')) : null,
+    }
+  }
+
+  const waterfallRaw = asRecord(pick(raw, 'last_run_waterfall', 'lastRunWaterfall'))
+  const lastRunWaterfall = waterfallRaw && pick(waterfallRaw, 'run_id', 'runId')
+    ? {
+        runId: str(pick(waterfallRaw, 'run_id', 'runId')),
+        steps: Array.isArray(pick(waterfallRaw, 'steps'))
+          ? (pick(waterfallRaw, 'steps') as unknown[]).map((s) => {
+              const step = asRecord(s)
+              return {
+                step: str(pick(step, 'step')),
+                latencyMs: pick(step, 'latency_ms', 'latencyMs') != null ? num(pick(step, 'latency_ms', 'latencyMs')) : null,
+              }
+            })
+          : [],
+      }
+    : null
+
+  return {
+    updatedAt: str(pick(raw, 'updated_at', 'updatedAt'), new Date().toISOString()),
+    region: str(pick(raw, 'region')),
+    pipelineSteps,
+    inference,
+    decider,
+    postgres,
+    objectStorage,
+    tiers,
+    lastRunWaterfall,
+  }
+}
+
+function normalizeTopology(raw: Json): TopologyData {
+  const vpcRaw = asRecord(pick(raw, 'vpc'))
+  const firewallRaw = asRecord(pick(raw, 'firewall'))
+  const nodebalancerRaw = asRecord(pick(raw, 'nodebalancer'))
+
+  const rulesRaw = pick(firewallRaw, 'rules')
+  const rules = Array.isArray(rulesRaw)
+    ? rulesRaw.map((r) => {
+        const rule = asRecord(r)
+        return {
+          id: str(pick(rule, 'id')),
+          direction: str(pick(rule, 'direction')),
+          protocol: str(pick(rule, 'protocol')),
+          ports: str(pick(rule, 'ports')),
+          source: pick(rule, 'source') ? str(pick(rule, 'source')) : undefined,
+          destination: pick(rule, 'destination') ? str(pick(rule, 'destination')) : undefined,
+          action: str(pick(rule, 'action')),
+          label: str(pick(rule, 'label')),
+        }
+      })
+    : []
+
+  const tiersRaw = asRecord(pick(raw, 'tiers'))
+  const tiers: Record<string, { name: string; subnet: string; products: string[]; description: string }> = {}
+  for (const [key, val] of Object.entries(tiersRaw)) {
+    const t = asRecord(val)
+    tiers[key] = {
+      name: str(pick(t, 'name')),
+      subnet: str(pick(t, 'subnet')),
+      products: Array.isArray(pick(t, 'products')) ? (pick(t, 'products') as string[]) : [],
+      description: str(pick(t, 'description')),
+    }
+  }
+
+  const nodesRaw = pick(raw, 'nodes')
+  const nodes = Array.isArray(nodesRaw)
+    ? nodesRaw.map((n) => {
+        const node = asRecord(n)
+        return {
+          id: str(pick(node, 'id')),
+          label: str(pick(node, 'label')),
+          tier: pick(node, 'tier') ? str(pick(node, 'tier')) : null,
+          product: pick(node, 'product') ? str(pick(node, 'product')) : null,
+          x: num(pick(node, 'x')),
+          y: num(pick(node, 'y')),
+          configured: pick(node, 'configured') != null ? Boolean(pick(node, 'configured')) : undefined,
+        }
+      })
+    : []
+
+  const edgesRaw = pick(raw, 'edges')
+  const edges = Array.isArray(edgesRaw)
+    ? edgesRaw.map((e) => {
+        const edge = asRecord(e)
+        return {
+          id: str(pick(edge, 'id')),
+          from: str(pick(edge, 'from')),
+          to: str(pick(edge, 'to')),
+          label: str(pick(edge, 'label')),
+          private: Boolean(pick(edge, 'private')),
+        }
+      })
+    : []
+
+  return {
+    updatedAt: str(pick(raw, 'updated_at', 'updatedAt'), new Date().toISOString()),
+    region: str(pick(raw, 'region')),
+    vpc: {
+      label: str(pick(vpcRaw, 'label')),
+      configured: Boolean(pick(vpcRaw, 'configured')),
+    },
+    firewall: {
+      label: str(pick(firewallRaw, 'label')),
+      configured: Boolean(pick(firewallRaw, 'configured')),
+      rules,
+    },
+    nodebalancer: {
+      configured: Boolean(pick(nodebalancerRaw, 'configured')),
+    },
+    tiers,
+    nodes,
+    edges,
   }
 }
