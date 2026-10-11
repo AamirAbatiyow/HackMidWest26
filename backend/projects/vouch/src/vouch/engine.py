@@ -43,6 +43,9 @@ from vouch.agents import (
 from vouch.cards import Investigation, PaymentCard, now_iso
 from vouch.config import Settings, get_settings
 from vouch.contracts import EmailEnvelope, SenderFindings, VendorClaim, email_domain
+from vouch.decider.classify import IntakeClassifier, probes_from_submission
+from vouch.decider.client import DeciderClient
+from vouch.decider.intervention import GroundingIntervention
 from vouch.domain import CardStatus, Invoice, Lane, LineItem, PastPayment, Resolution, Vendor
 from vouch.features import invoice_features
 from vouch.funding import CashForecast, recommend
@@ -158,6 +161,7 @@ class VouchEngine:
         adapter: SettlementAdapter | None = None,
         scorer: Scorer | None = None,
         today: date | None = None,
+        decider: DeciderClient | None = None,
     ):
         self.settings = settings or get_settings()
         s = self.settings
@@ -169,6 +173,9 @@ class VouchEngine:
         )
         self.policy = build_policy(self.limits)
         self.llm = llm or LLMRuntime.from_settings(s)
+        # Advisory intake routing: Strands Decider when DECIDER_ENABLED (or a client is injected), else the
+        # deterministic sniffing route. It never touches amounts, lanes or scores.
+        self.classifier = IntakeClassifier.from_settings(s, llm=self.llm, client=decider)
         self._adapter = adapter
         self._scorer = scorer
         self.today = today or date.today()
@@ -326,8 +333,55 @@ class VouchEngine:
                 )
             for note in notes:
                 card.log("intake_note", note=note)
+            if sub.text:
+                self._classify_intake(run, card, sub)
             run.cards[card_id] = card
             run.emit("card_created", card_id=card_id, vendor=inv.vendor_name, source=inv.source)
+
+    def _classify_intake(self, run: Run, card: PaymentCard, sub: Submission) -> None:
+        """Advisory routing for submissions that carry a document or text (never for pure JSON fields).
+
+        The classification is recorded on the card (audit record) and surfaced in the payment view; a
+        kickback only adds a hold whose email the owner must approve. Any failure leaves the card as is.
+        """
+        try:
+            probes = probes_from_submission(sub.documents, sub.text)
+            extractor = next(
+                (
+                    str(d["extractor"])
+                    for d in sub.documents
+                    if d.get("extractor") and d.get("kind") != "email_body"
+                ),
+                None,
+            )
+            cls = self.classifier.classify(
+                probes, self._envelope(sub), source=sub.source or "text", extractor_used=extractor
+            )
+        except Exception as exc:  # routing is advisory; it must never break intake
+            log.warning("intake classification failed for %s: %s", card.id, exc)
+            card.log("intake_classification_failed", error=f"{type(exc).__name__}: {exc}")
+            return
+        card.intake = cls
+        card.log(
+            "intake_classified",
+            engine=cls.engine,
+            format=cls.format,
+            tool=cls.tool,
+            confidence=cls.format_confidence,
+            kickback=cls.kickback,
+            fallback_reason=cls.fallback_reason,
+            decider_calls=cls.decider_calls,
+        )
+        if cls.kickback:
+            card.log("kickback_drafted", reason=cls.kickback_reason, status="awaiting_owner")
+        run.emit(
+            "intake_classified",
+            card_id=card.id,
+            engine=cls.engine,
+            format=cls.format,
+            tool=cls.tool,
+            kickback=cls.kickback,
+        )
 
     def _intake_one(self, card_id: str, sub: Submission) -> tuple[Invoice, list[str]]:
         notes: list[str] = []
@@ -339,9 +393,20 @@ class VouchEngine:
             parsed = parse_invoice_text(text)
             fields = dict(parsed.fields)
             if self.llm.enabled:
+                gate = GroundingIntervention(text)
                 ext = self.llm.structured(
-                    "intake", INTAKE_PROMPT, f"INVOICE TEXT:\n{text[:12000]}", IntakeExtraction
+                    "intake",
+                    INTAKE_PROMPT,
+                    f"INVOICE TEXT:\n{text[:12000]}",
+                    IntakeExtraction,
+                    interventions=[gate],
                 )
+                if gate.guided:
+                    fields_guided = sorted({f for entry in gate.log for f in entry["fields"]})
+                    notes.append(
+                        f"intake agent was guided back to the document {gate.guides}x "
+                        f"(ungrounded: {', '.join(fields_guided)})"
+                    )
                 if ext is not None:
                     notes += self._merge_intake(ext, text, fields)
                     injections += ext.suspicious_instructions

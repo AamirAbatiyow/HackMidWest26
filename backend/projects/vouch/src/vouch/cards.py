@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from vouch.contracts import SenderFindings, VendorResolution
+from vouch.decider.classify import IntakeClassification
 from vouch.domain import CardStatus, Invoice, ModelScores, PolicyOutcome, Resolution, Vendor
 
 
@@ -32,6 +33,7 @@ class PaymentCard(BaseModel):
     vendor: Vendor | None = None
     resolution: VendorResolution | None = None  # deterministic vendor match (known / new / uncertain)
     sender: SenderFindings | None = None  # deterministic email sender check (SPF/DKIM/DMARC, lookalikes)
+    intake: IntakeClassification | None = None  # advisory routing (decider / hackathon-chat / deterministic)
     payable_cents: int = 0
     checks: dict[str, Any] = Field(default_factory=dict)
     flags: list[str] = Field(default_factory=list)

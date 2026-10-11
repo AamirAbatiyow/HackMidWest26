@@ -94,6 +94,19 @@ class HealthProbes:
 
         return self._cached("model_server", probe)
 
+    def decider(self) -> tuple[bool, str, int | None]:
+        classifier = self.service.engine.classifier
+
+        def probe() -> tuple[bool, str]:
+            client = classifier.client
+            if client is None:
+                return False, "no decider client"
+            info = client.health()
+            model = info.get("model") or info.get("checkpoint") or "?"
+            return True, f"{model} on {info.get('device', '?')} · threshold {classifier.threshold:.2f}"
+
+        return self._cached("decider", probe)
+
 
 def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
     s = service.settings
@@ -282,6 +295,34 @@ def build_roles(service: VouchService, probes: HealthProbes) -> list[Role]:
             ocr if ocr != "none" else "no OCR backend installed; image invoices need the LLM structurer",
         )
     )
+
+    # Strands Decider (advisory intake routing; AWS sponsor model, self-hosted) ------------------------
+    classifier = service.engine.classifier
+    stats = classifier.snapshot()
+    counts = f"routed {stats['classified']} · decider {stats['decider']} · chat {stats['hackathon-chat']} · deterministic {stats['deterministic']}"
+    if classifier.enabled:
+        ok, detail, ms = probes.decider()
+        roles.append(
+            Role(
+                "decider",
+                "Intake classifier (Strands Decider 2B)",
+                "self-hosted strands-decider server (CPU Linode in the VPC) · advisory routing only",
+                "live" if ok else "error",
+                (detail if ok else f"{s.decider_url} unreachable → hackathon-chat classifier ({detail})")
+                + f" · {counts}",
+                ms,
+            )
+        )
+    else:
+        roles.append(
+            Role(
+                "decider",
+                "Intake classifier (Strands Decider 2B)",
+                "self-hosted strands-decider server (CPU Linode in the VPC) · advisory routing only",
+                "off",
+                f"DECIDER_ENABLED=false → deterministic routing (set DECIDER_URL to enable) · {counts}",
+            )
+        )
     return roles
 
 

@@ -40,6 +40,7 @@ R_VENDOR_AMBIGUOUS = "vendor could not be matched unambiguously to the master fi
 R_SENDER = "invoice email failed sender checks (authentication, lookalike domain or reply-to mismatch)"
 R_OWNER_HOLD = "owner placed a hold"
 R_NOTHING = "nothing payable after credit notes"
+R_KICKBACK = "submission could not be read; a kickback email to the sender awaits the owner's approval"
 
 REQUIRED_ACTIONS = {
     R_HIGH_RISK: "owner reviews the evidence and resolves the risk with a note (or the vendor appeals)",
@@ -56,6 +57,7 @@ REQUIRED_ACTIONS = {
     R_OWNER_HOLD: "owner releases the hold",
     R_NOTHING: "no payment needed; credit carried forward",
     R_LINES: "owner checks the line items; the vendor re-issues a corrected invoice",
+    R_KICKBACK: "owner approves the kickback email asking the sender for a readable invoice (or re-keys it from the original)",
 }
 
 
@@ -131,6 +133,13 @@ def build_policy(limits: Limits) -> PolicySet:
             forbid(
                 action="payment:release", when=lambda r: _c(r, "payable_cents", 0) <= 0, description=R_NOTHING
             ),
+            # Advisory intake routing may only add friction: an unreadable submission is held (never denied)
+            # until the owner approves the kickback email or re-keys the invoice from the original.
+            forbid(
+                action="payment:release",
+                when=lambda r: _c(r, "intake_kickback") and not resolved(r),
+                description=R_KICKBACK,
+            ),
             forbid(
                 action="payment:release",
                 when=lambda r: _c(r, "high_risk") and not resolved(r),
@@ -204,6 +213,7 @@ def card_context(card: PaymentCard) -> dict[str, Any]:
         "risk_resolved": card.has_resolution("resolve_risk"),
         "limit_override": card.has_resolution("limit_override"),
         "owner_hold": _owner_hold_active(card),
+        "intake_kickback": bool(card.intake and card.intake.kickback),
         "verified_vendor": bool(vendor and (vendor.oob_verified or len(vendor.history) >= 3)),
         "flags": card.flags,
     }

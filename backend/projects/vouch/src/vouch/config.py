@@ -86,6 +86,27 @@ class Settings(HMSettings):
     llm_timeout_s: float = 45.0
     llm_max_retries: int = 1
 
+    # --- Strands Decider (advisory intake routing; off by default) ---
+    # When enabled, intake asks a Strands Decider server which format / parse tool a submission needs.
+    # Unreachable, timed out, off-shape or low-confidence answers fall back to the hackathon-chat classifier
+    # and then to deterministic sniffing; the response records which engine decided. Never a fraud verdict.
+    decider_enabled: bool = Field(
+        False, validation_alias=AliasChoices("VOUCH_DECIDER_ENABLED", "DECIDER_ENABLED")
+    )
+    decider_url: str = Field(
+        "http://127.0.0.1:8099", validation_alias=AliasChoices("VOUCH_DECIDER_URL", "DECIDER_URL")
+    )
+    decider_timeout_s: float = Field(
+        20.0, validation_alias=AliasChoices("VOUCH_DECIDER_TIMEOUT_S", "DECIDER_TIMEOUT_S")
+    )
+    decider_min_confidence: float = Field(
+        0.6,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("VOUCH_DECIDER_MIN_CONFIDENCE", "DECIDER_MIN_CONFIDENCE"),
+    )
+    decider_cooldown_s: float = 30.0  # skip the server for this long after it was unreachable
+
     # --- money limits, integer cents ---
     approval_limit_cents: int = 500_000  # $5,000 clerk approval limit
     fast_pay_limit_cents: int = 250_000  # $2,500

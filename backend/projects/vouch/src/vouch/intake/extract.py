@@ -114,6 +114,46 @@ def extract_pdf(data: bytes, filename: str) -> ExtractedDocument:
     )
 
 
+def extract_pdf_ocr(data: bytes, filename: str, max_pages: int = 5) -> ExtractedDocument:
+    """Scanned PDF: rasterise the first pages with pdfplumber (pypdfium2) and OCR them.
+
+    Used when the text layer is empty and an OCR engine exists; otherwise ``extract_pdf``'s result with
+    its "no text layer" warning stands and the submission is kicked back to the sender.
+    """
+    doc = extract_pdf(data, filename)
+    backend = ocr_backend()
+    if doc.text or backend == "none":
+        if not doc.text:
+            doc.warnings.append("no OCR engine installed; scanned PDF left unread")
+        return doc
+    texts: list[str] = []
+    warnings = [w for w in doc.warnings if not w.startswith("no text layer")]
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            for page in pdf.pages[:max_pages]:
+                png = io.BytesIO()
+                page.to_image(resolution=200).original.save(png, format="PNG")
+                texts.append(extract_image(png.getvalue(), filename).text)
+            if len(pdf.pages) > max_pages:
+                warnings.append(f"only the first {max_pages} pages were OCRed")
+    except Exception as exc:  # pragma: no cover - depends on the local raster/OCR stack
+        warnings.append(f"PDF OCR failed: {exc}")
+    text = "\n".join(t for t in texts if t).strip()
+    if not text:
+        warnings.append("OCR found no text in the scanned PDF")
+    return ExtractedDocument(
+        filename=filename,
+        kind="pdf",
+        text=text,
+        tables=doc.tables,
+        extractor="pypdf+pdfplumber+ocr",
+        warnings=warnings,
+        sha256=doc.sha256,
+    )
+
+
 # ---------------------------------------------------------------- image ----
 
 

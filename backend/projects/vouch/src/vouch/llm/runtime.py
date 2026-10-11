@@ -228,8 +228,13 @@ class LLMRuntime:
         prompt: str,
         output_model: type[T],
         tools: list[Any] | None = None,
+        interventions: list[Any] | None = None,
     ) -> T | None:
-        """One agent invocation that must end in `output_model`. Returns None on any failure (caller falls back)."""
+        """One agent invocation that must end in `output_model`. Returns None on any failure (caller falls back).
+
+        `interventions` are Strands `InterventionHandler`s (e.g. the intake grounding gate) that may Guide
+        the model back when a tool call is off; they never change what the kernel verifies afterwards.
+        """
         if not self.enabled:
             return None
         model = self.model_factory(role) if self.model_factory else None
@@ -247,6 +252,7 @@ class LLMRuntime:
                 model=model,
                 hooks=[_call_stats_hook(self.stats)],
                 window_size=12,
+                interventions=list(interventions or []),
             )
             result = agent(prompt, structured_output_model=output_model)
             usage = dict(getattr(result.metrics, "accumulated_usage", {}) or {})

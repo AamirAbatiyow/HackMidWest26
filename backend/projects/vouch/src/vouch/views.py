@@ -20,6 +20,7 @@ from vouch.policy import (
     R_DUPLICATE,
     R_HIGH_RISK,
     R_INJECTION,
+    R_KICKBACK,
     R_LIMIT,
     R_LINES,
     R_LLM_AMOUNT,
@@ -32,7 +33,7 @@ from vouch.policy import (
 )
 from vouch.vendors import ring_graph
 
-QUICK_CHECK_REASONS = {R_DUPLICATE, R_SPLIT, R_LINES, R_LLM_AMOUNT, R_LIMIT}
+QUICK_CHECK_REASONS = {R_DUPLICATE, R_SPLIT, R_LINES, R_LLM_AMOUNT, R_LIMIT, R_KICKBACK}
 BANK_REASONS = {R_BANK}
 VENDOR_REASONS = {R_UNKNOWN_VENDOR, R_VENDOR_AMBIGUOUS, R_RING, R_SENDER, R_INJECTION}
 IDENTITY_REASONS = BANK_REASONS | VENDOR_REASONS  # "verify before release": identity, not paperwork
@@ -252,7 +253,25 @@ def timeline_of(card: PaymentCard, today: date) -> list[dict[str, Any]]:
             )
     for ev in card.timeline:
         name = ev.get("event")
-        if name == "sender_checked":
+        if name == "intake_classified":
+            k += 1
+            conf = ev.get("confidence")
+            events.append(
+                {
+                    "id": f"t{k}",
+                    "date": ev["at"],
+                    "title": f"Intake routed by {ev.get('engine')}: {ev.get('format')} → {ev.get('tool')}",
+                    "detail": (
+                        f"confidence {conf:.2f}"
+                        if isinstance(conf, int | float)
+                        else "no calibrated confidence"
+                    )
+                    + (f" · fallback: {ev['fallback_reason']}" if ev.get("fallback_reason") else "")
+                    + (" · kickback drafted for the owner" if ev.get("kickback") else ""),
+                    "kind": "check",
+                }
+            )
+        elif name == "sender_checked":
             k += 1
             flags = ev.get("flags") or []
             events.append(
@@ -482,6 +501,8 @@ def payment_view(engine: VouchEngine, run: Run, card: PaymentCard) -> dict[str, 
         "model_version": card.scores.model_version if card.scores else None,
         "vendor_match": card.resolution.model_dump() if card.resolution else None,
         "sender": card.sender.model_dump() if card.sender else None,
+        # which engine routed the document (decider / hackathon-chat / deterministic) and why; advisory only
+        "intake": card.intake.model_dump() if card.intake else None,
         "funding": card.funding,
         "investigation": card.investigation.model_dump() if card.investigation else None,
         "flags": card.flags,
