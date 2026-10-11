@@ -1,7 +1,8 @@
 """Strands Decider integration: an advisory routing classifier for invoice intake.
 
 - ``client``        strict wire models + ``HttpDeciderClient`` / ``FakeDeciderClient`` (tests, CI)
-- ``classify``      ``IntakeClassifier``: Decider -> hackathon-chat structured output -> deterministic sniffing
+- ``classify``      ``IntakeClassifier``: deterministic sniffing first; when ambiguous, the format -> tool ->
+                    kickback-reason decision chain on the Decider server or the chat ``DecisionClassifier``
 - ``intervention``  ``GroundingIntervention``: Strands ``before_tool_call`` Guide for ungrounded intake output
 
 The Decider only routes (format -> parse tool) or adds friction (a kickback hold that needs the owner's
@@ -10,24 +11,34 @@ owner keep the authority over money.
 """
 
 from .classify import (
-    CLASSIFY_PROMPT,
+    AMBIGUITY,
     DEFAULT_THRESHOLD,
     EXTRACTOR_TOOLS,
     FORMAT_CRITERIA,
+    FORMAT_QUESTION,
+    FORMATS,
+    KICKBACK_REASONS,
+    REASON_CRITERIA,
+    REASON_QUESTION,
+    REQUIRED_FIELDS,
+    TEMPLATES,
     TOOL_CRITERIA,
+    TOOL_QUESTION,
+    TOOLS,
     TOOLS_FOR_FORMAT,
+    Decision,
     DocumentProbe,
-    FormatDecision,
     IntakeClassification,
     IntakeClassifier,
     KickbackDraft,
-    LlmIntakeRouting,
-    ToolDecision,
+    Route,
+    admissible_tools,
     deterministic_route,
     extractor_for,
     probes_from_documents,
     probes_from_files,
     probes_from_submission,
+    render_kickback,
     render_state,
 )
 from .client import (
@@ -54,34 +65,43 @@ from .client import (
 from .intervention import GROUNDED_FIELDS, GroundingIntervention, ungrounded_fields
 
 __all__ = [
-    "CLASSIFY_PROMPT",
+    "AMBIGUITY",
     "DEFAULT_MODEL",
     "DEFAULT_THRESHOLD",
     "DEFAULT_URL",
     "EXTRACTOR_TOOLS",
+    "FORMATS",
     "FORMAT_CRITERIA",
+    "FORMAT_QUESTION",
     "GROUNDED_FIELDS",
+    "KICKBACK_REASONS",
+    "REASON_CRITERIA",
+    "REASON_QUESTION",
+    "REQUIRED_FIELDS",
     "SERVE_HINT",
+    "TEMPLATES",
+    "TOOLS",
     "TOOLS_FOR_FORMAT",
     "TOOL_CRITERIA",
+    "TOOL_QUESTION",
     "Answer",
     "ChoiceAnswer",
     "DeciderClient",
     "DeciderRejected",
     "DeciderUnavailable",
+    "Decision",
     "DocumentProbe",
     "FakeDeciderClient",
-    "FormatDecision",
     "GroundingIntervention",
     "HttpDeciderClient",
     "IntakeClassification",
     "IntakeClassifier",
     "KickbackDraft",
-    "LlmIntakeRouting",
     "NoulAnswer",
+    "Route",
     "ScoreAnswer",
     "SystemOneResponse",
-    "ToolDecision",
+    "admissible_tools",
     "choice",
     "choice_answer",
     "default_answer",
@@ -92,6 +112,7 @@ __all__ = [
     "probes_from_documents",
     "probes_from_files",
     "probes_from_submission",
+    "render_kickback",
     "render_state",
     "score",
     "ungrounded_fields",

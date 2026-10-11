@@ -333,16 +333,30 @@ class VouchEngine:
                 )
             for note in notes:
                 card.log("intake_note", note=note)
-            if sub.text:
+            if sub.text or sub.documents:
                 self._classify_intake(run, card, sub)
             run.cards[card_id] = card
             run.emit("card_created", card_id=card_id, vendor=inv.vendor_name, source=inv.source)
 
+    @staticmethod
+    def missing_required_fields(card: PaymentCard, sub: Submission) -> list[str]:
+        """Required invoice fields the kernel could not find in the document (structured fields count)."""
+        inv = card.invoice
+        missing: list[str] = []
+        if inv.vendor_name == "unknown vendor" and not (sub.vendor_id or sub.vendor_name):
+            missing.append("vendor_name")
+        if inv.invoice_number.startswith("UNNUMBERED-") and not sub.invoice_number:
+            missing.append("invoice_number")
+        if inv.amount_cents <= 0 and sub.amount_cents is None and not sub.amount:
+            missing.append("amount")
+        return missing
+
     def _classify_intake(self, run: Run, card: PaymentCard, sub: Submission) -> None:
         """Advisory routing for submissions that carry a document or text (never for pure JSON fields).
 
-        The classification is recorded on the card (audit record) and surfaced in the payment view; a
-        kickback only adds a hold whose email the owner must approve. Any failure leaves the card as is.
+        The decision chain (format -> extraction tool -> kickback reason) is recorded on the card, one
+        timeline entry per decision, and surfaced in the payment view; a kickback only adds a hold whose
+        draft email the owner must approve. Any failure leaves the card as is.
         """
         try:
             probes = probes_from_submission(sub.documents, sub.text)
@@ -355,25 +369,58 @@ class VouchEngine:
                 None,
             )
             cls = self.classifier.classify(
-                probes, self._envelope(sub), source=sub.source or "text", extractor_used=extractor
+                probes,
+                self._envelope(sub),
+                source=sub.source or "text",
+                extractor_used=extractor,
+                missing_fields=self.missing_required_fields(card, sub),
             )
         except Exception as exc:  # routing is advisory; it must never break intake
             log.warning("intake classification failed for %s: %s", card.id, exc)
             card.log("intake_classification_failed", error=f"{type(exc).__name__}: {exc}")
             return
         card.intake = cls
+        for d in cls.decisions:
+            card.log(
+                "intake_decision",
+                key=d.key,
+                question=d.question,
+                options=list(d.options),
+                answer=d.answer,
+                accepted=d.accepted,
+                engine=d.engine,
+                confidence=d.confidence,
+                latency_ms=d.latency_ms,
+                input_tokens=d.input_tokens,
+                output_tokens=d.output_tokens,
+                attempts=d.attempts,
+                error=d.error,
+                note=d.note,
+            )
         card.log(
             "intake_classified",
             engine=cls.engine,
             format=cls.format,
             tool=cls.tool,
             confidence=cls.format_confidence,
+            ambiguous=list(cls.ambiguous),
             kickback=cls.kickback,
+            kickback_code=cls.kickback_code,
             fallback_reason=cls.fallback_reason,
             decider_calls=cls.decider_calls,
+            llm_calls=cls.llm_calls,
+            model_latency_ms=cls.model_latency_ms,
+            tokens=cls.tokens,
         )
-        if cls.kickback:
-            card.log("kickback_drafted", reason=cls.kickback_reason, status="awaiting_owner")
+        if cls.kickback and cls.kickback_draft is not None:
+            card.log(
+                "kickback_drafted",
+                code=cls.kickback_code,
+                reason=cls.kickback_reason,
+                to=cls.kickback_draft.to,
+                chosen_by=cls.kickback_draft.chosen_by,
+                status="awaiting_owner",
+            )
         run.emit(
             "intake_classified",
             card_id=card.id,
@@ -381,6 +428,7 @@ class VouchEngine:
             format=cls.format,
             tool=cls.tool,
             kickback=cls.kickback,
+            decisions=[{"key": d.key, "answer": d.answer, "engine": d.engine} for d in cls.decisions],
         )
 
     def _intake_one(self, card_id: str, sub: Submission) -> tuple[Invoice, list[str]]:

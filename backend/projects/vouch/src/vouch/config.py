@@ -106,6 +106,14 @@ class Settings(HMSettings):
         validation_alias=AliasChoices("VOUCH_DECIDER_MIN_CONFIDENCE", "DECIDER_MIN_CONFIDENCE"),
     )
     decider_cooldown_s: float = 30.0  # skip the server for this long after it was unreachable
+    # Intake decision classifiers (format -> extraction tool -> kickback reason; one enum answer each).
+    # auto: deterministic code decides the obvious cases (MIME type / extension / bytes) and a model is asked
+    # only when the submission is ambiguous (zero model calls otherwise); always: every document submission
+    # runs the chain (demo / shadow evaluation; the deterministic route is still recorded for comparison);
+    # off: never ask a model, deterministic defaults only.
+    intake_classifier: Literal["auto", "always", "off"] = Field(
+        "auto", validation_alias=AliasChoices("VOUCH_INTAKE_CLASSIFIER", "INTAKE_CLASSIFIER")
+    )
 
     # --- money limits, integer cents ---
     approval_limit_cents: int = 500_000  # $5,000 clerk approval limit

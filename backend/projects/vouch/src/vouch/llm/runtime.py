@@ -154,7 +154,9 @@ class LLMRuntime:
         from hm_agents_common.testing import ScriptedModel
 
         def factory(role: str) -> Any:
-            turns = turns_by_role.get(role) or turns_by_role.get("*")
+            # "classify:format" falls back to "classify", then to "*"
+            keys = [role, role.split(":", 1)[0], "*"]
+            turns = next((turns_by_role[k] for k in keys if turns_by_role.get(k)), None)
             return ScriptedModel(list(turns)) if turns else None
 
         return cls("scripted", model_factory=factory, settings=settings)
@@ -267,3 +269,42 @@ class LLMRuntime:
             self.stats.record(
                 role, int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0)), ms, ok
             )
+
+    def decide(
+        self,
+        question: Any,
+        evidence: str,
+        *,
+        admissible: Any = None,
+        role: str = "classify",
+        max_tokens: int = 48,
+        max_attempts: int = 2,
+    ) -> Any | None:
+        """One decision-classifier question (``hm_agents_common.classifier``): ONE question, a fixed enum of
+        answers, exactly one back, bounded to ``max_attempts`` model calls and ``max_tokens`` output.
+        Returns None when no model is available; otherwise a ``Decision`` (rejected answers included).
+        Stats are recorded under the role's prefix (``classify:format`` -> ``classify``)."""
+        if not self.enabled:
+            return None
+        model = self.model_factory(role) if self.model_factory else None
+        if model is None:
+            return None
+        from hm_agents_common.classifier import DecisionClassifier
+
+        classifier = DecisionClassifier(
+            lambda: model,
+            name=f"vouch-{role.split(':', 1)[0]}",
+            engine=self.provider() if self.live else self.mode,
+            max_tokens=max_tokens,
+            max_attempts=max_attempts,
+            hooks=[_call_stats_hook(self.stats)],
+        )
+        decision = classifier.decide(question, evidence, admissible=admissible)
+        self.stats.record(
+            role.split(":", 1)[0],
+            decision.input_tokens,
+            decision.output_tokens,
+            decision.latency_ms,
+            decision.accepted,
+        )
+        return decision
