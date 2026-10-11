@@ -72,27 +72,27 @@ class Settings:
         out = [
             {
                 "id": "smtp",
-                "label": f"SMTP → {self.smtp_host}:{self.smtp_port}",
-                "detail": f"Direct SMTP to the mail receiver, RCPT TO {self.mail_to}",
+                "label": "Email (like a real vendor would)",
+                "detail": f"Emails {self.mail_to} via {self.smtp_host}:{self.smtp_port}",
             }
         ]
         if self.receiver_inbound_url:
             out.append(
                 {
                     "id": "receiver_http",
-                    "label": "HTTP → receiver /inbound",
-                    "detail": f"POST the .eml to {self.receiver_inbound_url} (when SMTP is blocked)",
+                    "label": "Hand it to the mailbox directly",
+                    "detail": f"Posts the email to {self.receiver_inbound_url} (use when email is blocked)",
                 }
             )
         if self.backend_intake_url:
             out.append(
                 {
                     "id": "backend",
-                    "label": "HTTP → backend intake",
-                    "detail": f"POST {self.backend_intake_format} straight to {self.backend_intake_url}",
+                    "label": "Hand it to Vouch directly",
+                    "detail": f"Posts the {self.backend_intake_format} straight to {self.backend_intake_url}",
                 }
             )
-        out.append({"id": "none", "label": "Build only (download .eml)", "detail": "No delivery"})
+        out.append({"id": "none", "label": "Don't send, just download", "detail": "Nothing is sent"})
         return out
 
 
