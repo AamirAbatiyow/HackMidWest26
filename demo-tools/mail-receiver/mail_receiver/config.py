@@ -67,11 +67,14 @@ class Settings:
     obj_prefix: str = "mail/"
 
     # --- forwarding to the backend ---
+    # json → POST IntakeRequest JSON to e.g. http://10.0.0.5:8000/v1/intake
+    # eml  → multipart upload (field "file") to e.g. http://10.0.0.5:8000/v1/intake/eml
     backend_intake_url: str = ""
-    backend_intake_format: str = "json"  # json (IntakeRequest body) or eml (message/rfc822)
+    backend_intake_format: str = "json"
+    backend_submitted_by: str = "ap-inbox"  # the backend's "who submitted this" label
     intake_shared_secret: str = ""
     intake_secret_header: str = "X-Vouch-Intake-Secret"
-    delivery_max_attempts: int = 6
+    delivery_max_attempts: int = 10  # ≈4 min of backoff before dead-lettering (backend restarts survive)
     delivery_backoff_base_s: float = 1.0
     delivery_backoff_max_s: float = 60.0
     delivery_timeout_s: float = 20.0
@@ -145,6 +148,7 @@ def load_settings() -> Settings:
     s.obj_prefix = _env("OBJ_PREFIX", s.obj_prefix)
     s.backend_intake_url = _env("BACKEND_INTAKE_URL")
     s.backend_intake_format = _env("BACKEND_INTAKE_FORMAT", s.backend_intake_format).lower() or "json"
+    s.backend_submitted_by = _env("BACKEND_SUBMITTED_BY", s.backend_submitted_by)
     s.intake_shared_secret = _env("INTAKE_SHARED_SECRET")
     s.intake_secret_header = _env("INTAKE_SECRET_HEADER", s.intake_secret_header)
     s.delivery_max_attempts = _int("DELIVERY_MAX_ATTEMPTS", s.delivery_max_attempts)

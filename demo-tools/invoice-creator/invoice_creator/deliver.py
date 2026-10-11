@@ -103,6 +103,23 @@ def _receiver_id_from_response(r: httpx.Response) -> str:
     return ""
 
 
+def post_eml_multipart(url: str, raw: bytes, settings: Settings) -> DeliveryResult:
+    """The backend's ``/v1/intake/eml`` takes a multipart upload: ``file`` + ``submitted_by``."""
+    headers = {"X-Vouch-Demo": "invoice-creator", **_secret_headers(settings)}
+    try:
+        r = httpx.post(
+            url,
+            files={"file": ("message.eml", raw, "message/rfc822")},
+            data={"submitted_by": "ap-inbox"},
+            headers=headers,
+            timeout=settings.http_timeout_s,
+        )
+    except httpx.HTTPError as exc:
+        return DeliveryResult(False, f"POST {url} failed: {exc}")
+    body = r.text[:300].replace("\n", " ")
+    return DeliveryResult(r.is_success, f"POST {url} → HTTP {r.status_code} {body}".strip())
+
+
 def post_json(url: str, payload: dict, settings: Settings) -> DeliveryResult:
     headers = {"X-Vouch-Demo": "invoice-creator", **_secret_headers(settings)}
     try:
@@ -134,5 +151,5 @@ def deliver(
             return DeliveryResult(False, "BACKEND_INTAKE_URL is not configured")
         if settings.backend_intake_format == "json":
             return post_json(settings.backend_intake_url, eml_to_intake_json(raw), settings)
-        return post_eml(settings.backend_intake_url, raw, settings)
+        return post_eml_multipart(settings.backend_intake_url, raw, settings)
     return DeliveryResult(False, f"unknown delivery {delivery!r}")

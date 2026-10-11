@@ -83,14 +83,26 @@ def build_app(record_path: Path, secret: str, fail_first: int) -> web.Applicatio
         if state["failures_left"] > 0:
             state["failures_left"] -= 1
             return web.json_response({"error": "simulated outage"}, status=503)
-        raw = await request.read()
-        if request.content_type == "message/rfc822":
-            intake_body, mode = _eml_to_intake(raw), "eml"
+        if request.content_type == "multipart/form-data":
+            # mirrors the real backend's /v1/intake/eml: multipart with a ``file`` field
+            form = await request.post()
+            field = form.get("file")
+            if field is None or not hasattr(field, "file"):
+                return web.json_response({"error": "multipart body has no 'file' field"}, status=422)
+            intake_body, mode = _eml_to_intake(field.file.read()), "eml"
+            intake_body["submitted_by"] = str(form.get("submitted_by", "ap-inbox"))
         else:
-            try:
-                intake_body, mode = json.loads(raw), "json"
-            except json.JSONDecodeError:
-                return web.json_response({"error": "body is neither JSON nor message/rfc822"}, status=400)
+            raw = await request.read()
+            if request.content_type == "message/rfc822":
+                intake_body, mode = _eml_to_intake(raw), "eml"
+            else:
+                try:
+                    intake_body, mode = json.loads(raw), "json"
+                except json.JSONDecodeError:
+                    return web.json_response(
+                        {"error": "body is neither JSON, multipart 'file' nor message/rfc822"},
+                        status=400,
+                    )
         card = _summarize(intake_body)
         record = {
             "n": state["n"],
@@ -113,12 +125,18 @@ def build_app(record_path: Path, secret: str, fail_first: int) -> web.Applicatio
 
     async def health(_r: web.Request) -> web.Response:
         return web.json_response(
-            {"ok": True, "requests": state["n"], "failures_left": state["failures_left"]}
+            {
+                "ok": True,
+                "requests": state["n"],
+                "failures_left": state["failures_left"],
+            }
         )
 
     app.add_routes(
         [
-            web.post("/v1/intake/email", intake),
+            web.post("/v1/intake", intake),  # real backend: JSON IntakeRequest
+            web.post("/v1/intake/eml", intake),  # real backend: multipart .eml upload
+            web.post("/v1/intake/email", intake),  # older name used by early docs
             web.post("/v1/intake/upload", intake),
             web.get("/health", health),
         ]

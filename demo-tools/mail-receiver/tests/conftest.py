@@ -39,18 +39,32 @@ class StubBackend:
             if self.fail_first > 0:
                 self.fail_first -= 1
                 return web.json_response({"error": "outage"}, status=503)
-            raw = await request.read()
-            body = json.loads(raw) if request.content_type == "application/json" else {"raw_len": len(raw)}
+            if request.content_type == "multipart/form-data":
+                # the real backend's /v1/intake/eml: multipart with a ``file`` field + submitted_by
+                form = await request.post()
+                field = form["file"]
+                body = {
+                    "file_len": len(field.file.read()),
+                    "filename": field.filename,
+                    "file_content_type": field.content_type,
+                    "submitted_by": form.get("submitted_by"),
+                }
+            else:
+                raw = await request.read()
+                body = (
+                    json.loads(raw) if request.content_type == "application/json" else {"raw_len": len(raw)}
+                )
             self.requests.append({"headers": headers, "body": body, "content_type": request.content_type})
             return web.json_response({"cards": [{"id": f"pay-{len(self.requests)}"}]})
 
-        app.add_routes([web.post("/v1/intake/email", intake)])
+        app.add_routes([web.post("/v1/intake", intake), web.post("/v1/intake/eml", intake)])
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
         await site.start()
         port = self.runner.addresses[0][1]
-        self.url = f"http://127.0.0.1:{port}/v1/intake/email"
+        self.url = f"http://127.0.0.1:{port}/v1/intake"
+        self.eml_url = f"http://127.0.0.1:{port}/v1/intake/eml"
         return self
 
     async def stop(self) -> None:
@@ -121,7 +135,9 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
 
 def demo_message(subject: str = "Invoice RP-10517", attach_pdf: bool = True) -> EmailMessage:
     msg = EmailMessage()
-    msg["Received"] = "from mail.reyespackaging.mx ([203.0.113.10]) by mx.vouch.local (demo-simulated hop) with ESMTPS id x"
+    msg["Received"] = (
+        "from mail.reyespackaging.mx ([203.0.113.10]) by mx.vouch.local (demo-simulated hop) with ESMTPS id x"
+    )
     msg["Authentication-Results"] = (
         "mx.vouch.local (demo-simulated); spf=pass smtp.mailfrom=reyespackaging.mx; "
         "dkim=pass header.d=reyespackaging.mx; dmarc=pass header.from=reyespackaging.mx"

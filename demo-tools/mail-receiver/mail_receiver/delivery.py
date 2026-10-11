@@ -143,14 +143,18 @@ class DeliveryWorker:
             headers["X-Vouch-Envelope-From"] = str(meta["envelope_from"])
         try:
             if self.settings.backend_intake_format == "eml":
-                headers["Content-Type"] = "message/rfc822"
-                resp_cm = self._session.post(
-                    self.settings.backend_intake_url, data=self.store.load_raw(msg_id), headers=headers
+                # The backend's /v1/intake/eml is a multipart upload: field ``file`` + ``submitted_by``.
+                form = aiohttp.FormData()
+                form.add_field(
+                    "file", self.store.load_raw(msg_id), filename="message.eml", content_type="message/rfc822"
                 )
+                form.add_field("submitted_by", self.settings.backend_submitted_by)
+                resp_cm = self._session.post(self.settings.backend_intake_url, data=form, headers=headers)
             else:
-                resp_cm = self._session.post(
-                    self.settings.backend_intake_url, json=self.store.load_intake(msg_id), headers=headers
-                )
+                # /v1/intake takes the IntakeRequest JSON (headers, body_text, body_html, attachments).
+                payload = self.store.load_intake(msg_id)
+                payload.setdefault("submitted_by", self.settings.backend_submitted_by)
+                resp_cm = self._session.post(self.settings.backend_intake_url, json=payload, headers=headers)
             async with resp_cm as resp:
                 text = (await resp.text())[:300].replace("\n", " ")
                 if 200 <= resp.status < 300:

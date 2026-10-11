@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import smtplib
 
@@ -184,15 +185,19 @@ async def test_store_only_when_no_backend_configured(tmp_path):
 async def test_eml_forwarding_format(tmp_path):
     stub = await StubBackend().start()
     try:
-        settings = make_settings(tmp_path, backend_intake_url=stub.url, backend_intake_format="eml")
+        settings = make_settings(tmp_path, backend_intake_url=stub.eml_url, backend_intake_format="eml")
         rr = await RunningReceiver(settings).start()
         try:
             await rr.send(demo_message())
             (meta,) = await _recent(rr)
             await rr.wait_for_delivery(meta["id"])
             (req,) = stub.requests
-            assert req["content_type"] == "message/rfc822"
-            assert req["body"]["raw_len"] == meta["size"]
+            # the backend's /v1/intake/eml contract: multipart upload, field "file", + submitted_by
+            assert req["content_type"] == "multipart/form-data"
+            assert req["body"]["file_len"] == meta["size"]
+            assert req["body"]["filename"] == "message.eml"
+            assert req["body"]["file_content_type"] == "message/rfc822"
+            assert req["body"]["submitted_by"] == "ap-inbox"
         finally:
             await rr.stop()
     finally:
@@ -202,9 +207,15 @@ async def test_eml_forwarding_format(tmp_path):
 async def test_http_inbound_fallback(running: RunningReceiver, stub_backend: StubBackend):
     raw = demo_message(subject="Invoice via HTTP").as_bytes()
     async with aiohttp.ClientSession() as http:
-        async with http.post(f"{running.http_url}/inbound", data=raw, headers={"Content-Type": "message/rfc822"}) as r:
+        async with http.post(
+            f"{running.http_url}/inbound", data=raw, headers={"Content-Type": "message/rfc822"}
+        ) as r:
             assert r.status == 401  # secret required
-        headers = {"Content-Type": "message/rfc822", "X-Vouch-Intake-Secret": "s3cret", "X-Vouch-Rcpt-To": "x@y.test"}
+        headers = {
+            "Content-Type": "message/rfc822",
+            "X-Vouch-Intake-Secret": "s3cret",
+            "X-Vouch-Rcpt-To": "x@y.test",
+        }
         async with http.post(f"{running.http_url}/inbound", data=raw, headers=headers) as r:
             assert r.status == 550
         headers["X-Vouch-Rcpt-To"] = "business@vouch.local"
@@ -214,7 +225,9 @@ async def test_http_inbound_fallback(running: RunningReceiver, stub_backend: Stu
             msg_id = (await r.json())["id"]
         async with http.post(f"{running.http_url}/inbound", data=b"", headers=headers) as r:
             assert r.status == 400
-        async with http.post(f"{running.http_url}/inbound", json={"x": 1}, headers={"X-Vouch-Intake-Secret": "s3cret"}) as r:
+        async with http.post(
+            f"{running.http_url}/inbound", json={"x": 1}, headers={"X-Vouch-Intake-Secret": "s3cret"}
+        ) as r:
             assert r.status == 415
     meta = await running.wait_for_delivery(msg_id)
     assert meta["via"] == "http:inbound"
@@ -224,8 +237,85 @@ async def test_http_inbound_fallback(running: RunningReceiver, stub_backend: Stu
     assert stub_backend.requests[-1]["body"]["headers"]["Subject"] == "Invoice via HTTP"
 
 
+async def test_http_inbound_accepts_multipart_file(running: RunningReceiver, stub_backend: StubBackend):
+    """The same multipart shape the backend's /v1/intake/eml takes works against /inbound."""
+    raw = demo_message(subject="Invoice via multipart").as_bytes()
+    form = aiohttp.FormData()
+    form.add_field("file", raw, filename="message.eml", content_type="message/rfc822")
+    form.add_field("submitted_by", "ap-inbox")
+    async with aiohttp.ClientSession() as http:
+        async with http.post(
+            f"{running.http_url}/inbound", data=form, headers={"X-Vouch-Intake-Secret": "s3cret"}
+        ) as r:
+            assert r.status == 202
+            msg_id = (await r.json())["id"]
+        empty = aiohttp.FormData()
+        empty.add_field("other", b"not the file field", filename="x.bin")  # multipart without "file"
+        async with http.post(
+            f"{running.http_url}/inbound", data=empty, headers={"X-Vouch-Intake-Secret": "s3cret"}
+        ) as r:
+            assert r.status == 400
+    meta = await running.wait_for_delivery(msg_id)
+    assert meta["size"] == len(raw)
+    assert meta["subject"] == "Invoice via multipart"
+    assert meta["delivery"]["status"] == "delivered"
+
+
+async def test_restart_requeues_unfinished_and_serves_recent_by_id(tmp_path):
+    """Forwards that were still queued when the process stopped are replayed on the next start,
+    and /recent/{id} exposes metadata + the forwarded intake with attachment bytes elided."""
+    dead_url = "http://127.0.0.1:9/v1/intake"  # nothing listens here
+    settings = make_settings(
+        tmp_path,
+        backend_intake_url=dead_url,
+        delivery_max_attempts=10,
+        delivery_backoff_base_s=30.0,
+        shutdown_drain_s=0.0,
+    )
+    rr = await RunningReceiver(settings).start()
+    try:
+        await rr.send(demo_message(subject="Replay me"))
+        (meta,) = await _recent(rr)
+        for _ in range(50):
+            m = rr.receiver.store.load_meta(meta["id"])
+            if m and m["delivery"]["status"] in ("retrying", "queued"):
+                break
+            await asyncio.sleep(0.05)
+        assert (await _health(rr))["queue_depth"] == 1
+    finally:
+        await rr.stop()
+
+    stub = await StubBackend().start()
+    try:
+        settings2 = make_settings(tmp_path, backend_intake_url=stub.url)
+        rr2 = await RunningReceiver(settings2).start()
+        try:
+            replayed = await rr2.wait_for_delivery(meta["id"])
+            assert replayed["delivery"]["status"] == "delivered"
+            assert (await _health(rr2))["requeued_on_start"] == 1
+            assert stub.requests[-1]["body"]["headers"]["Subject"] == "Replay me"
+            async with aiohttp.ClientSession() as http:
+                async with http.get(f"{rr2.http_url}/recent/{meta['id']}") as r:
+                    assert r.status == 200
+                    assert r.headers["Access-Control-Allow-Origin"] == "*"
+                    view = await r.json()
+                async with http.get(f"{rr2.http_url}/recent/not-an-id") as r:
+                    assert r.status == 404
+            assert view["meta"]["id"] == meta["id"]
+            assert view["meta"]["receiver_trace"].startswith("from ")
+            assert view["intake"]["headers"]["Subject"] == "Replay me"
+            for att in view["intake"]["attachments"]:
+                assert att["data_b64"].endswith("bytes elided>")
+        finally:
+            await rr2.stop()
+    finally:
+        await stub.stop()
+
+
 async def test_recent_is_bounded_and_newest_first(tmp_path, stub_backend: StubBackend):
-    settings = make_settings(tmp_path, backend_intake_url=stub_backend.url, intake_shared_secret="s3cret", recent_limit=3)
+    settings = make_settings(
+        tmp_path, backend_intake_url=stub_backend.url, intake_shared_secret="s3cret", recent_limit=3
+    )
     rr = await RunningReceiver(settings).start()
     try:
         for i in range(5):

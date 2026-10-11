@@ -36,8 +36,10 @@ class Settings:
     smtp_timeout_s: float = 15.0
 
     # --- HTTP fallbacks ---
-    backend_intake_url: str = ""  # e.g. http://10.0.0.5:8101/v1/intake/email
-    backend_intake_format: str = "eml"  # eml (message/rfc822) or json (IntakeRequest body)
+    # eml  → multipart upload (field "file") to e.g. http://127.0.0.1:8000/v1/intake/eml
+    # json → IntakeRequest JSON to e.g. http://127.0.0.1:8000/v1/intake
+    backend_intake_url: str = ""
+    backend_intake_format: str = "eml"
     receiver_inbound_url: str = ""  # e.g. http://127.0.0.1:8025/inbound
     receiver_api_url: str = ""  # receiver HTTP API base for /health and /recent; derived when empty
     intake_shared_secret: str = ""

@@ -39,6 +39,26 @@ def _json(data, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers=READ_ONLY_CORS)
 
 
+async def _multipart_file(request: web.Request, limit: int) -> bytes | None:
+    """The bytes of the first ``file`` field of a multipart upload (bounded), or None."""
+    reader = await request.multipart()
+    while True:
+        part = await reader.next()
+        if part is None:
+            return None
+        if part.name != "file":
+            await part.release()
+            continue
+        chunks: list[bytes] = []
+        total = 0
+        while chunk := await part.read_chunk(64 * 1024):
+            total += len(chunk)
+            if total > limit:
+                raise web.HTTPRequestEntityTooLarge(max_size=limit, actual_size=total)
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+
 def build_app(receiver: Receiver) -> web.Application:
     app = web.Application(client_max_size=receiver.settings.max_message_bytes + MAX_INBOUND_BYTES_MARGIN)
 
@@ -76,11 +96,18 @@ def build_app(receiver: Receiver) -> web.Application:
         if not _authorized(request, receiver):
             return web.json_response({"error": "unauthorized"}, status=401)
         ctype = request.content_type
-        if ctype not in ("message/rfc822", "application/octet-stream", "text/plain"):
+        if ctype == "multipart/form-data":
+            # Same shape as the backend's /v1/intake/eml: a ``file`` field holding the .eml.
+            raw = await _multipart_file(request, receiver.settings.max_message_bytes)
+            if raw is None:
+                return web.json_response({"error": "multipart body has no 'file' field"}, status=400)
+        elif ctype in ("message/rfc822", "application/octet-stream", "text/plain"):
+            raw = await request.read()
+        else:
             return web.json_response(
-                {"error": f"unsupported content type {ctype!r}; send message/rfc822"}, status=415
+                {"error": f"unsupported content type {ctype!r}; send message/rfc822 or multipart 'file'"},
+                status=415,
             )
-        raw = await request.read()
         if not raw.strip():
             return web.json_response({"error": "empty body"}, status=400)
         if len(raw) > receiver.settings.max_message_bytes:
