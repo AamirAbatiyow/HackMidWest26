@@ -1,6 +1,27 @@
-# Vouch
+<p align="center">
+  <img src="frontend/public/favicon.svg" alt="Vouch logo" width="120" height="120" />
+</p>
 
-**Every payment, vouched for.**
+<h1 align="center">Vouch</h1>
+
+<p align="center">
+  <em>Every payment, vouched for.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/1st_Place_Undergraduate-WINNER-gold?style=for-the-badge&labelColor=3a3f47" alt="1st Place Undergraduate Winner" />
+  <img src="https://img.shields.io/badge/Best_Use_of_AWS_Strands_SDK-WINNER-gold?style=for-the-badge&labelColor=3a3f47" alt="Best Use of AWS Strands SDK Winner" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Top_6_Best_in_Show-FINALIST-blueviolet?style=for-the-badge&labelColor=3a3f47" alt="Top 6 Best in Show Finalist" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/HackMidwest-2026-555555?style=for-the-badge&labelColor=3a3f47" alt="HackMidwest 2026" />
+</p>
+
+---
 
 Vouch is a fintech trust layer for small businesses (fewer than 100 employees) that pay vendors. It sits between your inbox and your payment rails, reads invoices from email or file uploads, classifies risk, explains every decision, and settles approved payments on the XRPL testnet—but only after you approve.
 
